@@ -247,7 +247,7 @@ const zh: Dict = {
 	"Ignored ({count})": "忽略 ({count})",
 	"Ignored {path} — won't sync until restored from Sync Center.":
 		"已忽略 {path} — 在同步中心恢复后才会同步。",
-	"Info (default)": "信息 (默认)",
+	Info: "信息",
 	"Invalid API key": "API密钥无效",
 	"It's OK to email me about this": "您可以通过邮件与我联系",
 	"Join our Discord": "加入我们的 Discord",
@@ -263,8 +263,8 @@ const zh: Dict = {
 	"Love it": "喜欢",
 	"Make new vault": "创建新仓库",
 	"Manage account": "管理账号",
-	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
-		"启用诊断时，发送的最低严重级别。级别越高，发送的行数越少。默认：Info。",
+	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
+		"启用诊断时，默认的最低严重级别。更高的级别发送的行数更少。默认：警告和错误。",
 	"Missing on the server": "服务器未找到",
 	"Needs attention ({count})": "需要注意 ({count})",
 	"Network unavailable": "网络不可用",
@@ -380,8 +380,8 @@ const zh: Dict = {
 	"Semantic search": "语义搜索",
 	Send: "发送",
 	"Send debug logs. Note content stays private.": "发送调试日志。笔记内容保持私有。",
-	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
-		"将详细的同步、仓库和连接活动发送到服务器以进行故障排除，并对请求启用分布式跟踪。仅发送元数据，绝不发送笔记内容。正常使用时请禁用此项。",
+	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Turns itself off after 24 hours.":
+		"将详细的同步、仓库和连接活动发送到服务器以进行故障排除，请求使用分布式跟踪。仅发送元数据，绝不发送笔记内容。24小时后自动关闭。",
 	"Send feedback": "提交反馈",
 	"Sending…": "发送中…",
 	"Server error": "服务器错误",
@@ -503,7 +503,7 @@ const zh: Dict = {
 		"等待授权 — 已连接，将立即完成。",
 	"Waiting for authorization — no live connection, checking every 30s.":
 		"等待授权 — 未连接，每30秒检查一次。",
-	"Warnings and errors": "警告和错误",
+	"Warnings and errors (default)": "警告和错误（默认）",
 	"WebSocket connected — live sync active": "WebSocket 已连接 — 实时同步已启用",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"Engram 的功能以及如何连接您的仓库，从头到尾。",

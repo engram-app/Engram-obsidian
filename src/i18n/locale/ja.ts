@@ -271,7 +271,7 @@ const ja: Dict = {
 	"Ignored ({count})": "除外 ({count})",
 	"Ignored {path} — won't sync until restored from Sync Center.":
 		"{path} を除外しました。同期センターから復元するまで同期されません。",
-	"Info (default)": "情報（デフォルト）",
+	Info: "情報",
 	"Invalid API key": "無効なAPIキー",
 	"It's OK to email me about this": "この件について、メールでご連絡いただいても構いません",
 	"Join our Discord": "Discordに参加",
@@ -288,8 +288,8 @@ const ja: Dict = {
 	"Love it": "素晴らしい",
 	"Make new vault": "新しい保管庫を作成",
 	"Manage account": "アカウントの管理",
-	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
-		"診断が有効な場合に送信される最小の重要度。レベルが高いほど、送信される行数が少なくなります。デフォルト: Info",
+	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
+		"診断が有効な場合の、最低限の重要度。より高いレベルでは、送信される行数が少なくなります。デフォルト：警告とエラー。",
 	"Missing on the server": "サーバーに存在しません",
 	"Needs attention ({count})": "注意が必要です ({count})",
 	"Network unavailable": "ネットワークに接続できません",
@@ -414,8 +414,8 @@ const ja: Dict = {
 	Send: "送信する",
 	"Send debug logs. Note content stays private.":
 		"デバッグログを送信します。ノートの内容は非公開です。",
-	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
-		"トラブルシューティングのため、詳細な同期、保管庫、接続の情報をサーバーに送信します。リクエストには分散トレーシングが含まれます。メタデータのみ送信し、ノートの内容は送信しません。通常の使用ではオフにしてください。",
+	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Turns itself off after 24 hours.":
+		"トラブルシューティングのため、詳細な同期、保管庫、接続情報をサーバーに送信します。リクエストには分散トレーシングを使用します。メタデータのみを送信し、ノートの内容は送信しません。24時間後に自動的に停止します。",
 	"Send feedback": "フィードバックを送信",
 	"Sending…": "送信中…",
 	"Server error": "サーバーエラー",
@@ -547,7 +547,7 @@ const ja: Dict = {
 		"認証待ち — 接続済み。すぐに完了します。",
 	"Waiting for authorization — no live connection, checking every 30s.":
 		"認証待ち — ライブ接続なし。30秒ごとに確認しています。",
-	"Warnings and errors": "警告とエラー",
+	"Warnings and errors (default)": "警告とエラー（デフォルト）",
 	"WebSocket connected — live sync active": "WebSocket 接続済み — リアルタイム同期中",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"Engramの機能と、保管庫の接続方法を最初から最後まで説明します。",

@@ -12942,11 +12942,11 @@ export class SyncEngine {
 		);
 		const aborted = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
 		if (aborted) throw aborted.reason;
-		// ONE line per sweep, at warn so it reaches Loki (client info does not).
-		// This is the loop's actual signature: the same sweep firing over and
-		// over with pushed=0 and everything skipped. Per-file logs cannot show
-		// that shape without emitting one entry per file.
-		rlog().warn(
+		// ONE line per sweep. warn (reaches Loki) only for the loop's signature,
+		// the same sweep firing with pushed=0 and everything skipped, or for a
+		// failure; a sweep that did its job is info.
+		const sweepSuspect = failed > 0 || (total > 0 && pushed === 0);
+		rlog()[sweepSuspect ? "warn" : "info"](
 			"push",
 			`Sweep done (${mode}) — pushed=${pushed} skipped=${total - pushed - failed} failed=${failed} of ${total}`,
 		);
@@ -13789,7 +13789,7 @@ export class SyncEngine {
 			this.firstFailureMessageThisBatch ??= classified.userMessage;
 			this.firstFailureCategoryThisBatch ??= classified.category;
 		}
-		await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+		await this.queue.remove(entry);
 	}
 
 	/** The CRDT op queue gave up on an op. Creates are counted by the drop
@@ -13849,7 +13849,7 @@ export class SyncEngine {
 		for (const e of this.queue.all()) {
 			const owner = this.entryVaultId(e);
 			const drop = vaultId ? owner === vaultId : this.isHeldDelete(e);
-			if (drop && this.queue.cancel(e.path, owner)) n++;
+			if (drop && this.queue.cancel(e.path, e.vaultId)) n++;
 		}
 		if (n > 0) rlog().warn("queue", `Dropped ${n} queued deletes: ${reason}`);
 		this.emitStatus();
@@ -14198,7 +14198,7 @@ export class SyncEngine {
 					`Dropping queued op for ${noteRef(entry.path)} — queued under a different ` +
 						`vault (${owner.slice(0, 8)}), active is ${active.slice(0, 8)}`,
 				);
-				await this.queue.dequeue(entry.path, owner);
+				await this.queue.remove(entry);
 				continue;
 			}
 
@@ -14251,7 +14251,7 @@ export class SyncEngine {
 					if (!content) {
 						const file = this.app.vault.getFileByPath(entry.path);
 						if (!file) {
-							await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+							await this.queue.remove(entry);
 							this.issues.clear(entry.path);
 							flushed++;
 							continue;
@@ -14283,9 +14283,10 @@ export class SyncEngine {
 					const queuedNp = normalizePath(entry.path);
 					const queuedRow = this.syncState.get(queuedNp);
 					if (queuedRow !== undefined && queuedHash === queuedRow.hash) {
-						// warn, not info: client `info` never reaches Loki, which is
-						// why this loop was undiagnosable from the server side.
-						rlog().warn(
+						// info: a dedupe hit is the healthy outcome. It was warn while
+						// #675 was undiagnosed; the queue now dequeues unstamped
+						// entries, and remote-log coalesces any repeat that remains.
+						rlog().info(
 							"queue",
 							`Echo skip (attachment): ${noteRef(entry.path)} | hash=${queuedHash}`,
 						);
@@ -14330,7 +14331,7 @@ export class SyncEngine {
 						// fails, the fallback enroll no-ops for a removed id, and no
 						// inbound frame ever settles it. A rename keeps the id mapped.
 						if (this.noteIdMap && this.noteIdMap.pathForId(entry.noteId) === null) {
-							await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+							await this.queue.remove(entry);
 							continue;
 						}
 						// The socket is the ONLY delivery path for a crdt entry — the
@@ -14356,7 +14357,7 @@ export class SyncEngine {
 								(await this.deliverQueuedOpsRoomFree(entry))
 							) {
 								this.resetHealBackoff(entry.noteId);
-								await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+								await this.queue.remove(entry);
 								this.issues.clear(entry.path);
 								flushed++;
 								continue;
@@ -14364,7 +14365,9 @@ export class SyncEngine {
 
 							this.pendingQueueDeliveries.set(entry.noteId, {
 								path: entry.path,
-								vaultId: this.entryVaultId(entry),
+								// The entry's own stamp, not the active vault: the settle
+								// dequeue must hit the key this entry is stored under.
+								vaultId: entry.vaultId,
 							});
 							this.socketConverge(
 								normalizePath(entry.path),
@@ -14389,7 +14392,7 @@ export class SyncEngine {
 							// non-crdt entry has nothing left to send.
 							if (entry.crdt && entry.noteId)
 								this.openRoomPooled(entry.path, entry.noteId, "undelivered");
-							await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+							await this.queue.remove(entry);
 							this.issues.clear(entry.path);
 							flushed++;
 							continue;
@@ -14485,7 +14488,7 @@ export class SyncEngine {
 						}
 					}
 				}
-				await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+				await this.queue.remove(entry);
 				this.issues.clear(entry.path);
 				this.rateLimitStreak = 0;
 				flushed++;

@@ -63,11 +63,15 @@ import { notifyLimitExceeded } from "./limit-toast";
 import { parsePlanState } from "./plan-state";
 import { atomicWriteJson, resilientReadJson } from "./plugin-data-io";
 import { setPluginVersion } from "./plugin-version";
-import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
+import { DEFAULT_LINE_BUDGET, destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
 import { SearchModal } from "./search-modal";
 import { SEARCH_VIEW_TYPE, SearchView } from "./search-view";
 import { EngramSyncSettingTab } from "./settings";
-import { migrateDiagnosticsEnabled, stripRetiredSettings } from "./settings-migrate";
+import {
+	migrateDiagnosticsEnabled,
+	reconcileDiagnosticsWindow,
+	stripRetiredSettings,
+} from "./settings-migrate";
 import { createSingleFlight } from "./single-flight";
 import { type GateEvent, reconcileColdStart, SyncEngine } from "./sync";
 import { channelConnectionKey, computeSyncFingerprint } from "./sync-fingerprint";
@@ -663,7 +667,13 @@ export default class EngramSyncPlugin extends Plugin {
 			Platform.isMobile ? "mobile" : "desktop",
 		);
 		remoteLogger.setLevelThreshold(this.settings.remoteLogLevel);
+		remoteLogger.setLineBudget(this.settings.remoteLogBudget ?? DEFAULT_LINE_BUDGET);
 		remoteLogger.setEnabled(this.settings.diagnosticsEnabled);
+		// Diagnostics expires on its own (reconcileDiagnosticsWindow); a desktop
+		// session can stay open for days, so check while running, not just on load.
+		this.registerInterval(
+			window.setInterval(() => void this.expireDiagnosticsIfDue(), 10 * 60_000),
+		);
 		remoteLogger.setClientContext(this.deviceId, this.settings.vaultId);
 		rlog().info(
 			"lifecycle",
@@ -1606,6 +1616,8 @@ export default class EngramSyncPlugin extends Plugin {
 		// then drop the stale keys so the next save persists only the new shape.
 		const rawSettings = data?.settings as Record<string, unknown> | undefined;
 		this.settings.diagnosticsEnabled = migrateDiagnosticsEnabled(rawSettings);
+		// Stamp (or expire) the 24h diagnostics window. Persisted by the next save.
+		reconcileDiagnosticsWindow(this.settings, Date.now());
 		// Retired keys (see RETIRED_SETTING_KEYS for what and why) are dropped
 		// here so the next save persists only the current shape.
 		stripRetiredSettings(this.settings as unknown as Record<string, unknown>);
@@ -1747,6 +1759,7 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	async saveSettings(): Promise<void> {
+		reconcileDiagnosticsWindow(this.settings, Date.now());
 		this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey);
 		this.api.setVaultId(this.settings.vaultId);
 		this.api.setTracingEnabled(this.settings.diagnosticsEnabled);
@@ -1965,9 +1978,20 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  identical reason (main.ts ~3106). */
 	private async applyDiagnosticsToggle(enabled: boolean): Promise<void> {
 		this.settings.diagnosticsEnabled = enabled;
+		reconcileDiagnosticsWindow(this.settings, Date.now());
 		this.api.setTracingEnabled(enabled);
+		rlog().setLevelThreshold(this.settings.remoteLogLevel);
 		rlog().setEnabled(enabled);
+		this.refreshDebugApi();
 		await this.savePluginData(this.syncEngine.getLastSync());
+	}
+
+	/** Turn diagnostics off once its 24h window has passed. Same narrow apply
+	 *  as the first-run toggle: nothing the gate or vault registration cares
+	 *  about changes. */
+	private async expireDiagnosticsIfDue(): Promise<void> {
+		if (!reconcileDiagnosticsWindow(this.settings, Date.now())) return;
+		await this.applyDiagnosticsToggle(false);
 	}
 
 	/** Startup, gate open: reconcile the id map from the manifest, THEN apply
@@ -2676,7 +2700,8 @@ export default class EngramSyncPlugin extends Plugin {
 				if (!channelIdentityMatches(this.settings.userEmail, user.email)) {
 					rlog().warn(
 						"channel",
-						`connectChannel identity mismatch: getMe()=${user.email} but connecting as ${this.settings.userEmail}; provider not yet swapped, retrying`,
+						// No addresses: an email is PII and nothing downstream scrubs it.
+						"connectChannel identity mismatch: getMe() differs from the configured account; provider not yet swapped, retrying",
 					);
 					if (epoch === this.channelEpoch) {
 						window.setTimeout(

@@ -251,7 +251,7 @@ const zhTW: Dict = {
 	"Ignored ({count})": "已忽略 ({count})",
 	"Ignored {path} — won't sync until restored from Sync Center.":
 		"已忽略 {path} — 除非從同步中心恢復，否則不會同步。",
-	"Info (default)": "資訊 (預設)",
+	Info: "資訊",
 	"Invalid API key": "API 金鑰無效",
 	"It's OK to email me about this": "您可以透過電子郵件與我聯繫",
 	"Join our Discord": "加入我們的 Discord",
@@ -267,8 +267,8 @@ const zhTW: Dict = {
 	"Love it": "非常喜歡",
 	"Make new vault": "建立新的儲存庫",
 	"Manage account": "管理帳戶",
-	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
-		"診斷啟用時，顯示的最低嚴重程度。較高的等級會減少顯示的行數。預設：Info。",
+	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
+		"診斷功能啟用時，顯示的最低嚴重程度。較高的等級會傳送較少的資訊。預設：警告和錯誤。",
 	"Missing on the server": "伺服器上遺失",
 	"Needs attention ({count})": "需要注意 ({count})",
 	"Network unavailable": "無法連線網路",
@@ -386,8 +386,8 @@ const zhTW: Dict = {
 	"Semantic search": "語意搜尋",
 	Send: "傳送",
 	"Send debug logs. Note content stays private.": "發送除錯日誌。筆記內容保持私有。",
-	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
-		"將詳細的同步、儲存庫和連線資訊發送到伺服器以進行故障排除，並對請求進行分散式追蹤。僅限元數據，絕不包含筆記內容。一般使用時請關閉此功能。",
+	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Turns itself off after 24 hours.":
+		"將詳細的同步、儲存庫和連線資訊發送到伺服器以供除錯，並對請求進行分散式追蹤。僅傳送元數據，絕不傳送筆記內容。啟用後 24 小時自動關閉。",
 	"Send feedback": "提供回饋",
 	"Sending…": "傳送中…",
 	"Server error": "伺服器錯誤",
@@ -509,7 +509,7 @@ const zhTW: Dict = {
 		"等待授權 — 已連線，將立即完成。",
 	"Waiting for authorization — no live connection, checking every 30s.":
 		"等待授權 — 未建立連線，每 30 秒檢查一次。",
-	"Warnings and errors": "警告和錯誤",
+	"Warnings and errors (default)": "警告和錯誤 (預設)",
 	"WebSocket connected — live sync active": "WebSocket 連線成功 — 啟用即時同步",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"Engram 的功能，以及如何連接您的儲存庫，從頭到尾的說明。",

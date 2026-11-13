@@ -331,7 +331,7 @@ const ptBR: Dict = {
 	"Ignored ({count})": "Ignorados ({count})",
 	"Ignored {path} — won't sync until restored from Sync Center.":
 		"Ignorado {path} — não será sincronizado até ser restaurado na Central de sincronização.",
-	"Info (default)": "Info (padrão)",
+	Info: "Informações",
 	"Invalid API key": "Chave de API inválida",
 	"It's OK to email me about this": "Tudo bem enviar um e-mail sobre isso",
 	"Join our Discord": "Participe do nosso Discord",
@@ -347,8 +347,8 @@ const ptBR: Dict = {
 	"Love it": "Adorei",
 	"Make new vault": "Criar novo cofre",
 	"Manage account": "Gerenciar conta",
-	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
-		"Nível mínimo de severidade quando os diagnósticos estão ativados. Níveis mais altos enviam menos linhas. Padrão: Info.",
+	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
+		"Nível mínimo de severidade quando os diagnósticos estão ativados. Níveis mais altos enviam menos linhas. Padrão: Avisos e erros.",
 	"Missing on the server": "Ausente no servidor",
 	"Needs attention ({count})": "Precisa de atenção ({count})",
 	"Network unavailable": "Rede indisponível",
@@ -476,8 +476,8 @@ const ptBR: Dict = {
 	Send: "Enviar",
 	"Send debug logs. Note content stays private.":
 		"Enviar logs de depuração. O conteúdo das notas permanece privado.",
-	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
-		"Envie informações detalhadas sobre a sincronização, o cofre e a conexão para o servidor para solucionar problemas, com rastreamento distribuído nas requisições. Apenas metadados, nunca o conteúdo das notas. Desative para uso normal.",
+	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Turns itself off after 24 hours.":
+		"Envie informações detalhadas sobre a sincronização, o cofre e a conexão para o servidor para solucionar problemas, com rastreamento distribuído nas requisições. Apenas metadados, nunca o conteúdo das notas. Desativa-se após 24 horas.",
 	"Send feedback": "Enviar feedback",
 	"Sending…": "Enviando…",
 	"Server error": "Erro no servidor",
@@ -622,7 +622,7 @@ const ptBR: Dict = {
 		"Aguardando autorização — conectado, isso será concluído instantaneamente.",
 	"Waiting for authorization — no live connection, checking every 30s.":
 		"Aguardando autorização — sem conexão ativa, verificando a cada 30 segundos.",
-	"Warnings and errors": "Avisos e erros",
+	"Warnings and errors (default)": "Avisos e erros (padrão)",
 	"WebSocket connected — live sync active": "WebSocket conectado — sincronização ativa",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"O que o Engram faz e como conectar seu cofre, do início ao fim.",

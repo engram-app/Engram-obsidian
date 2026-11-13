@@ -272,7 +272,7 @@ const id: Dict = {
 	"Ignored ({count})": "Diabaikan ({count})",
 	"Ignored {path} — won't sync until restored from Sync Center.":
 		"Diabaikan {path} — tidak akan disinkronkan sampai dipulihkan dari Pusat Sinkronisasi.",
-	"Info (default)": "Info (bawaan)",
+	Info: "Informasi",
 	"Invalid API key": "Kunci API tidak valid",
 	"It's OK to email me about this": "Tidak apa-apa untuk mengirim email kepada saya tentang ini",
 	"Join our Discord": "Bergabunglah dengan Discord kami",
@@ -288,8 +288,8 @@ const id: Dict = {
 	"Love it": "Suka sekali",
 	"Make new vault": "Buat Vault baru",
 	"Manage account": "Kelola akun",
-	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
-		"Tingkat keparahan minimum yang dikirim saat diagnostik aktif. Tingkat yang lebih tinggi mengirim lebih sedikit baris. Default: Info.",
+	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
+		"Tingkat keparahan minimum saat diagnostik aktif. Tingkat yang lebih tinggi mengirim lebih sedikit baris. Default: Peringatan dan kesalahan.",
 	"Missing on the server": "Tidak ada di server",
 	"Needs attention ({count})": "Membutuhkan perhatian ({count})",
 	"Network unavailable": "Jaringan tidak tersedia",
@@ -418,8 +418,8 @@ const id: Dict = {
 	Send: "Kirim",
 	"Send debug logs. Note content stays private.":
 		"Kirim log debug. Konten catatan tetap pribadi.",
-	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
-		"Kirim aktivitas sinkronisasi, Vault, dan koneksi secara detail ke server untuk pemecahan masalah, dengan pelacakan terdistribusi pada permintaan. Hanya metadata, tidak ada konten catatan. Nonaktifkan untuk penggunaan normal.",
+	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Turns itself off after 24 hours.":
+		"Kirim informasi rinci tentang sinkronisasi, Vault, dan aktivitas koneksi ke server untuk pemecahan masalah, dengan pelacakan terdistribusi pada permintaan. Hanya metadata, tidak ada konten catatan. Secara otomatis mati setelah 24 jam.",
 	"Send feedback": "Kirim umpan balik",
 	"Sending…": "Mengirim…",
 	"Server error": "Kesalahan server",
@@ -552,7 +552,7 @@ const id: Dict = {
 		"Menunggu otorisasi — terhubung, ini akan selesai dengan cepat.",
 	"Waiting for authorization — no live connection, checking every 30s.":
 		"Menunggu otorisasi — tidak ada koneksi aktif, memeriksa setiap 30 detik.",
-	"Warnings and errors": "Peringatan dan kesalahan",
+	"Warnings and errors (default)": "Peringatan dan kesalahan (default)",
 	"WebSocket connected — live sync active": "WebSocket terhubung — sinkronisasi aktif",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"Apa yang dilakukan oleh Engram, dan cara menghubungkan Vault Anda, dari awal hingga akhir.",

@@ -347,7 +347,7 @@ const ru: Dict = {
 	"Ignored ({count})": "Исключено ({count})",
 	"Ignored {path} — won't sync until restored from Sync Center.":
 		"Игнорировано {path} — синхронизация будет возобновлена после восстановления из Центра синхронизации.",
-	"Info (default)": "Информация (по умолчанию)",
+	Info: "Информация",
 	"Invalid API key": "Неверный ключ API",
 	"It's OK to email me about this": "Вы можете написать мне об этом по электронной почте",
 	"Join our Discord": "Присоединяйтесь к нашему Discord",
@@ -363,8 +363,8 @@ const ru: Dict = {
 	"Love it": "Очень нравится",
 	"Make new vault": "Создать новое хранилище",
 	"Manage account": "Управление аккаунтом",
-	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
-		"Минимальный уровень серьёзности, при котором отправляются данные при включенной диагностике. Более высокие уровни отправляют меньше строк. По умолчанию: Info.",
+	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
+		"Минимальный уровень серьёзности, который передаётся, когда включена диагностика. Более высокие уровни передают меньше информации. По умолчанию: предупреждения и ошибки.",
 	"Missing on the server": "Отсутствует на сервере",
 	"Needs attention ({count})": "Требует внимания ({count})",
 	"Network unavailable": "Сеть недоступна",
@@ -493,8 +493,8 @@ const ru: Dict = {
 	Send: "Отправить",
 	"Send debug logs. Note content stays private.":
 		"Отправить отладочные журналы. Содержимое заметок остаётся конфиденциальным.",
-	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
-		"Отправляйте подробную информацию о синхронизации, хранилище и подключениях на сервер для отладки, с распределённой трассировкой запросов. Только метаданные, никогда содержимое заметок. Отключите для обычной работы.",
+	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Turns itself off after 24 hours.":
+		"Отправляйте подробную информацию о синхронизации, хранилище и подключениях на сервер для отладки, с распределённым отслеживанием запросов. Только метаданные, никогда содержимое заметок. Автоматически отключается через 24 часа.",
 	"Send feedback": "Отправить отзыв",
 	"Sending…": "Отправляется…",
 	"Server error": "Ошибка сервера",
@@ -640,7 +640,7 @@ const ru: Dict = {
 		"Ожидание авторизации — подключено, процесс завершится мгновенно.",
 	"Waiting for authorization — no live connection, checking every 30s.":
 		"Ожидание авторизации — нет активного соединения, проверка каждые 30 секунд.",
-	"Warnings and errors": "Предупреждения и ошибки",
+	"Warnings and errors (default)": "Предупреждения и ошибки (по умолчанию)",
 	"WebSocket connected — live sync active":
 		"WebSocket подключен — активная синхронизация в реальном времени",
 	"What Engram does, and how to connect your vault, start to finish.":
