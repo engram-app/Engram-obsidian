@@ -1,5 +1,6 @@
 import { diff_match_patch } from "diff-match-patch";
 import type * as Y from "yjs";
+import { lfView } from "./line-endings";
 
 const dmp = new diff_match_patch();
 
@@ -30,22 +31,30 @@ export function seedOnce(text: Y.Text, disk: string, hasLca: boolean): boolean {
  * truncated intermediate state to disk (e2e test_83 corruption class).
  */
 export function diffIntoYText(text: Y.Text, incoming: string): void {
-	const current = text.toJSON();
+	// Diff against the doc's LF view and map back to raw offsets, so a CR
+	// already in the doc is never deleted-and-reinserted: only the server room
+	// removes those (one healer, ./line-endings.ts). Identity for an LF doc.
+	const { view: current, rawAt } = lfView(text.toJSON());
 	if (current === incoming) return;
 
 	const diffs = dmp.diff_main(current, incoming);
 	dmp.diff_cleanupSemantic(diffs);
 
 	const apply = (): void => {
-		let cursor = 0;
+		let cursor = 0; // in the view
+		let shift = 0; // raw length change applied so far
 		for (const [op, data] of diffs) {
 			if (op === 0) {
 				cursor += data.length; // EQUAL — advance cursor
 			} else if (op === 1) {
-				text.insert(cursor, data); // INSERT
-				cursor += data.length;
+				text.insert(rawAt(cursor) + shift, data); // INSERT
+				shift += data.length;
 			} else {
-				text.delete(cursor, data.length); // DELETE — cursor stays
+				const from = rawAt(cursor);
+				const len = rawAt(cursor + data.length) - from;
+				text.delete(from + shift, len); // DELETE
+				shift -= len;
+				cursor += data.length;
 			}
 		}
 	};

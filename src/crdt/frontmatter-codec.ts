@@ -4,6 +4,7 @@
 
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import type * as Y from "yjs";
+import { toLf } from "./line-endings";
 
 // ---------------------------------------------------------------------------
 // Y.Doc shared-type keys + accessors — the single source of truth (was
@@ -22,9 +23,20 @@ export const ORDER_KEY = "frontmatter_order";
 /** Y.Doc shared-type key for the note body text. */
 export const CONTENT_KEY = "content";
 
+/** The frontmatter key order as every reader must see it: each key once, at
+ *  its first position. `frontmatter_order` is a Y.Array, so two concurrent
+ *  lifts of one key (the server's normalize_doc and a plugin seed) both
+ *  survive a merge; values are a Y.Map and already one per key. Y.Array order
+ *  is identical on every replica, so first-position-wins agrees everywhere.
+ *  The duplicate stays in the Y.Array, harmless, until a real order change
+ *  rewrites it. Same rule as the canvas `orderedElements`. */
+export function uniqueKeyOrder(order: readonly string[]): string[] {
+	return [...new Set(order)];
+}
+
 /** Read the frontmatter structure from a Y.Doc ({order:[],values:{}} when empty). */
 export function frontmatterOf(doc: Y.Doc): { order: string[]; values: Record<string, string> } {
-	const order = doc.getArray<string>(ORDER_KEY).toArray();
+	const order = uniqueKeyOrder(doc.getArray<string>(ORDER_KEY).toArray());
 	const values = doc.getMap<string>(FRONTMATTER_KEY).toJSON() as Record<string, string>;
 	return { order, values };
 }
@@ -39,11 +51,25 @@ const FENCE = "---";
 const CLOSE_MID = /\n---[ \t]*\r?\n/;
 const CLOSE_EOF = /\n---[ \t]*\r?$/;
 
+// Length of an opening fence (`---` then LF or CRLF) at the start of `s`, else 0.
+function openFence(s: string): number {
+	if (s.startsWith(`${FENCE}\r\n`)) return FENCE.length + 2;
+	return s.startsWith(`${FENCE}\n`) ? FENCE.length + 1 : 0;
+}
+
+/** The one frontmatter fence rule in the plugin; every caller routes here. A
+ *  copy of the backend's (engram_core::frontmatter::split) and the web app's
+ *  splitFrontmatter: opens at byte 0 on a bare `---` line (LF or CRLF), closes
+ *  on `---` plus optional spaces/tabs, or at end of text. `---foo`/`----` never
+ *  close; a leading BOM is NOT skipped. tests/frontmatter-fence-table.test.ts
+ *  asserts the backend's shared fixture table. */
 export function splitFrontmatter(raw: string): { fmBlock: string | null; body: string } {
-	if (!raw.startsWith(`${FENCE}\n`)) return { fmBlock: null, body: raw };
-	const rest = raw.slice(FENCE.length + 1);
+	const start = openFence(raw);
+	if (start === 0) return { fmBlock: null, body: raw };
+	const rest = raw.slice(start);
 	// Empty frontmatter fast path: rest begins with the closing fence.
-	if (rest.startsWith(`${FENCE}\n`)) return { fmBlock: "", body: rest.slice(FENCE.length + 1) };
+	const empty = openFence(rest);
+	if (empty > 0) return { fmBlock: "", body: rest.slice(empty) };
 	const mid = rest.match(CLOSE_MID);
 	if (mid && mid.index !== undefined) {
 		const block = `${rest.slice(0, mid.index)}\n`;
@@ -169,7 +195,7 @@ export function emitFrontmatter(
 	const has = (m: Record<string, string>, k: string) =>
 		// biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn needs lib ES2022, we target ES2021
 		Object.prototype.hasOwnProperty.call(m, k);
-	const present = order.filter((k) => has(raws, k) || has(values, k));
+	const present = uniqueKeyOrder(order).filter((k) => has(raws, k) || has(values, k));
 	if (present.length === 0) return "";
 	let out = "";
 	for (const key of present) {
@@ -212,7 +238,11 @@ function sameFrontmatterMeaning(a: string | null, b: string | null): boolean {
  *  same (see `sameFrontmatterMeaning`); otherwise `next` unchanged. A write
  *  built from the doc's projection then never rewrites YAML the user wrote
  *  (comments, flow lists, spacing) that the doc only re-serialised. */
-export function keepDiskFrontmatter(next: string, disk: string): string {
+export function keepDiskFrontmatter(rawNext: string, rawDisk: string): string {
+	// Compare and keep in LF, the doc's form, so a CRLF file never comes back
+	// as a CRLF block over an LF body (line-endings.ts).
+	const next = toLf(rawNext);
+	const disk = toLf(rawDisk);
 	if (next === disk) return next;
 	const n = splitFrontmatter(next);
 	const d = splitFrontmatter(disk);
@@ -242,5 +272,5 @@ export function flushTarget(
 /** Do two note texts mean the same: identical bodies and frontmatter that
  *  differs only in YAML formatting? */
 export function sameNoteMeaning(a: string, b: string): boolean {
-	return keepDiskFrontmatter(a, b) === b;
+	return keepDiskFrontmatter(a, b) === toLf(b);
 }

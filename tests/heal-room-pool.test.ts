@@ -21,7 +21,12 @@ import { IDLE_HEAL_ROOMS, SyncEngine } from "../src/sync";
 import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS, type SyncNoteChange } from "../src/types";
 
-const N = 500;
+// Pooling is a per-slot invariant: N only has to outrun the pool
+// (IDLE_HEAL_ROOMS) and the 20-starts-per-minute budget several times over to
+// prove the bound. It was 500; each simulated pacing step is a real macrotask,
+// so 500 cost ~2.5 s per test and timed out under bun's 5 s default on a
+// loaded box. The 805-heal start-budget test below keeps the incident's scale.
+const N = 60;
 
 const mockApp = {
 	vault: {

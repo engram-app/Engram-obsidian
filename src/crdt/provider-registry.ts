@@ -31,6 +31,7 @@ import {
 	splitFrontmatter,
 } from "./frontmatter-codec";
 import { diskOnlyText, merge3, mergeDiskOntoDoc } from "./lca-merge";
+import { toLf } from "./line-endings";
 import { type FrameKind, NoteProvider } from "./note-provider";
 import { docHasAnyHistory, docHasHistory, seedContentInto, seedFrontmatterInto } from "./note-seed";
 import { fromB64, MESSAGE_SYNC } from "./wire";
@@ -467,7 +468,9 @@ export class ProviderRegistry {
 	private project(e: Entry): string {
 		if (e.kind === "canvas") return projectCanvas(e.doc);
 		const { order, values } = frontmatterOf(e.doc);
-		return projectNote(order, values, e.text.toJSON(), rawFrontmatterOf(e.doc));
+		// LF even while the doc still holds CRs the room has not healed yet
+		// (line-endings.ts): every merge guard and disk flush reads this.
+		return projectNote(order, values, toLf(e.text.toJSON()), rawFrontmatterOf(e.doc));
 	}
 
 	/** Liveness: a tombstoned note is dead until the server brings the same id
@@ -893,8 +896,9 @@ export class ProviderRegistry {
 			// never a doc-side edit that clashes with a disk edit to the block.
 			const current = keepDiskFrontmatter(this.project(e), base);
 			// diff3, never fuzzy: a conflicting region is re-merged by character
-			// and only a true overlap is dirty (see `merge3`).
-			const merged = merge3(base, diskContent, current);
+			// and only a true overlap is dirty (see `merge3`). All three in LF,
+			// the doc's form: a CRLF base reads every line as changed.
+			const merged = merge3(toLf(base), toLf(diskContent), toLf(current));
 			if (merged.clean) {
 				this.seedFromDisk(e, merged.text, docHasHistory(e.doc, e.kind));
 				return this.writeBack(noteId, e, diskContent);
@@ -1003,7 +1007,7 @@ export class ProviderRegistry {
 		if (!e.lifetime.active) return diskContent;
 		if (!copied) {
 			const current = this.project(e);
-			const only = diskOnlyText(current, diskContent);
+			const only = diskOnlyText(current, toLf(diskContent));
 			if (only !== "") {
 				rlog().error(
 					"crdt",
@@ -1209,12 +1213,14 @@ export class ProviderRegistry {
 		const e = await this.entry(noteId);
 		if (!e.lifetime.active || e.kind !== "note") return null;
 		const current = this.project(e);
-		if (current !== expected && !force) return null;
-		const merged = merge3(base, disk, current);
+		if (current !== toLf(expected) && !force) return null;
+		// In LF, the doc's form (line-endings.ts).
+		const [b, d] = [toLf(base), toLf(disk)];
+		const merged = merge3(b, d, current);
 		if (!merged.clean && !force) return null;
 		// Forced past a conflict: merge3 returns `current` untouched, so fall to
 		// the fuzzy patch, which at least lands the disk edit.
-		const text = merged.clean ? merged.text : mergeDiskOntoDoc(base, disk, current).text;
+		const text = merged.clean ? merged.text : mergeDiskOntoDoc(b, d, current).text;
 		this.seedFromDisk(e, text, true);
 		return text;
 	}

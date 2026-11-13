@@ -39,12 +39,12 @@ describe("frontmatterPrefixLen", () => {
 	// exactly splitFrontmatter(raw).body, so any input where the two disagree
 	// shifts every mapped edit by the disagreement — silent offset corruption.
 	// The old regex diverged on two inputs, one in each direction:
-	//  - CRLF opening fence: regex matched, codec does not (backend is LF-only)
+	//  - CRLF opening fence (the codec now opens on it too, like the backend)
 	//  - trailing spaces on the closing fence: codec splits, regex did not
-	it("agrees with splitFrontmatter on a CRLF-opened file (treated as body, like the backend)", () => {
+	it("agrees with splitFrontmatter on a CRLF-opened file (frontmatter, like the backend)", () => {
 		const text = "---\r\nfoo: bar\r\n---\r\nbody";
-		expect(splitFrontmatter(text).fmBlock).toBeNull(); // codec: not frontmatter
-		expect(frontmatterPrefixLen(text)).toBe(0); // editor must agree
+		expect(splitFrontmatter(text).fmBlock).toBe("foo: bar\r\n");
+		expect(text.slice(frontmatterPrefixLen(text))).toBe("body"); // editor must agree
 	});
 
 	it("agrees with splitFrontmatter on a closing fence with trailing spaces", () => {

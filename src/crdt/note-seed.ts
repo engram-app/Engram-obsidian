@@ -16,7 +16,9 @@ import {
 	parseFrontmatterBlock,
 	RAW_FRONTMATTER_KEY,
 	splitFrontmatter,
+	uniqueKeyOrder,
 } from "./frontmatter-codec";
+import { toLf } from "./line-endings";
 
 /** True when a body Y.Text already carries CRDT history (non-empty after IDB
  *  rehydration). A history-less doc must adopt server state, never seed disk
@@ -98,7 +100,10 @@ export function applyFrontmatterInto(
 		// `toArray()` is a plain string[] and equality here means "the same keys in
 		// the same positions", which is exactly what the delete+insert would have
 		// re-established.
-		const currentOrder = arr.toArray();
+		// Deduped like every other reader (`uniqueKeyOrder`): a doc left holding a
+		// key twice projects it once, so comparing the raw array would see an
+		// edit in every echo of its own projection.
+		const currentOrder = uniqueKeyOrder(arr.toArray());
 		const orderUnchanged =
 			currentOrder.length === order.length && currentOrder.every((k, i) => k === order[i]);
 		if (!orderUnchanged) {
@@ -113,7 +118,9 @@ export function applyFrontmatterInto(
  *  minimal-diff body gate). ONE transaction so bare ops don't ship a truncated
  *  intermediate state (e2e test_83). `lca` = the doc already has history →
  *  diff; otherwise seed once. */
-export function seedContentInto(doc: Y.Doc, text: Y.Text, content: string, lca: boolean): void {
+export function seedContentInto(doc: Y.Doc, text: Y.Text, raw: string, lca: boolean): void {
+	// Where markdown enters the doc: LF only from here on (line-endings.ts).
+	const content = toLf(raw);
 	const { fmBlock, body: splitBody } = splitFrontmatter(content);
 	const parsed: FrontmatterParse =
 		fmBlock === null ? { kind: "empty" } : parseFrontmatterBlock(fmBlock);
@@ -180,10 +187,51 @@ function hasFrontmatter(doc: Y.Doc): boolean {
  *  — and an emptied one must still clear, or properties could never be deleted
  *  from an open note. */
 export function seedFrontmatterInto(doc: Y.Doc, content: string): void {
-	const { fmBlock } = splitFrontmatter(content);
+	const { fmBlock } = splitFrontmatter(toLf(content));
 	const parsed: FrontmatterParse =
 		fmBlock === null ? { kind: "empty" } : parseFrontmatterBlock(fmBlock);
 	if (parsed.kind === "degraded") return;
 	if (parsed.kind === "empty") applyFrontmatterInto(doc, [], {});
 	else applyFrontmatterInto(doc, parsed.order, parsed.values);
+}
+
+/** Heal a doc whose body Y.Text starts with a frontmatter fence (the shape an
+ *  old plugin or a pre-#1645 server left): lift the block's keys into the
+ *  frontmatter map and strip the fence from the body, in ONE transaction. The
+ *  plugin twin of the server's `CrdtBridge.normalize_doc`, same rules: the map
+ *  wins on a key both hold, fence-only keys are appended to the order, a block
+ *  that is not a readable mapping is left alone (no strip, nothing lost), and
+ *  stacked fences heal in one call. A lift racing the server's appends the
+ *  same key twice to the order; every reader dedupes it (`uniqueKeyOrder`).
+ *  It never touches the body's other CRs: only the server room removes CRs
+ *  already in a doc (one healer, ./line-endings.ts). Returns whether it
+ *  changed the doc. */
+export function liftBodyFence(doc: Y.Doc, origin: unknown): boolean {
+	const text = doc.getText(CONTENT_KEY);
+	let healed = false;
+	doc.transact(() => {
+		for (;;) {
+			const body = text.toJSON();
+			const { fmBlock, body: rest } = splitFrontmatter(body);
+			if (fmBlock === null) return;
+			const parsed = parseFrontmatterBlock(fmBlock);
+			if (parsed.kind === "degraded") return;
+			const map = doc.getMap<string>(FRONTMATTER_KEY);
+			const raws = doc.getMap<string>(RAW_FRONTMATTER_KEY);
+			const arr = doc.getArray<string>(ORDER_KEY);
+			if (parsed.kind === "ok") {
+				const fresh = parsed.order.filter((k) => !map.has(k) && !raws.has(k));
+				for (const k of fresh) {
+					const v = parsed.values[k];
+					if (v !== undefined) map.set(k, v);
+				}
+				const known = new Set(arr.toArray());
+				const append = fresh.filter((k) => !known.has(k));
+				if (append.length > 0) arr.insert(arr.length, append);
+			}
+			text.delete(0, body.length - rest.length);
+			healed = true;
+		}
+	}, origin);
+	return healed;
 }

@@ -86,6 +86,28 @@ jobs:
         # for us. See the script header for the two-month version of this.
         run: node scripts/check-lockfile-registry.mjs
 
+  frontmatter-fence-table:
+    name: frontmatter fence table
+    runs-on: [self-hosted, linux, x64, isolated]
+    steps:
+      - uses: actions/checkout@v7
+
+      # tests/fixtures/frontmatter_fence.json is copied from engram-app/Engram;
+      # the plugin's splitFrontmatter must follow the same table as the backend
+      # and web app. A drifted copy fails here so the re-copy is not forgotten.
+      # It compares against main, not a pinned SHA: an upstream fixture change
+      # turns every plugin PR red until the copy is refreshed, on purpose.
+      - name: Fence table matches engram-app/Engram main
+        run: |
+          set -euo pipefail
+          code=$(curl -sS --retry 3 --retry-all-errors --max-time 20 -o "$RUNNER_TEMP/fence.json" -w '%{http_code}' \
+            "https://raw.githubusercontent.com/engram-app/Engram/main/native/engram_core/fixtures/frontmatter_fence.json")
+          [ "$code" = "200" ] || { echo "::error::fetching the upstream fence table returned HTTP $code"; exit 1; }
+          if ! cmp -s "$RUNNER_TEMP/fence.json" tests/fixtures/frontmatter_fence.json; then
+            echo "::error::tests/fixtures/frontmatter_fence.json differs from engram-app/Engram main. Re-copy it, bump the SHA in tests/frontmatter-fence-table.test.ts, and make the tests pass."
+            exit 1
+          fi
+
   wasm-core:
     name: wasm core
     runs-on: [self-hosted, linux, x64, isolated]
