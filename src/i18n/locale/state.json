@@ -961,7 +961,6 @@
 			"{count} retrying": "Sync Center badge: how many files are being retried after an error."
 		},
 		"failed": {
-			"Engram: {count} attachments skipped. See Sync Center for why.": "2026-11-12",
 			"{count} attachments skipped. See Sync Center.": "2026-11-12"
 		},
 		"glossary": {
@@ -989,6 +988,7 @@
 			"Engram Sync: pushed {count} files": "Engram Sync: pushed {count} file",
 			"Engram: offline ({count} queued)": "Engram: offline ({count} queued)",
 			"Engram: plan upgraded — syncing {count} attachments…": "Engram: plan upgraded — syncing {count} attachment…",
+			"Engram: {count} attachments skipped. See Sync Center for why.": "Engram: {count} attachment skipped. See Sync Center for why.",
 			"Engram: {count} files failed to sync{detail} — open Sync Center": "Engram: {count} file failed to sync{detail} — open Sync Center",
 			"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.": "Engram: {count} note has frontmatter problems. Open Sync Center to fix.",
 			"Engram: ⚠ {count} sync errors": "Engram: ⚠ {count} sync error",

@@ -200,6 +200,8 @@ const zh: Dict = {
 	"Engram: update required": "Engram: 需要更新",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram：您的登录已过期，请在 Engram 设置中重新连接。",
+	"Engram: {count} attachments skipped. See Sync Center for why.":
+		"Engram: 跳过 {count} 个附件。详情请查看同步中心。",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
 		"Engram：{count}个文件同步失败{detail} — 打开同步中心",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
