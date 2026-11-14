@@ -103,17 +103,17 @@ as a gate — see `regressions.test.ts` docblocks for the exact commits.
 
 ## File map
 
-| File | Role |
-|---|---|
-| `clock.ts` | `SimClock` — deterministic virtual time; owns every `window.setTimeout`/`clearInterval` the engine schedules. |
-| `prng.ts` | `mulberry32` seeded PRNG — all sim randomness traces to one seed. |
-| `scheduler.ts` | `Scheduler` — owns delivery order, faults (`hold`/`release`, `dropNext`), and timer firing; `drain()` is the quiescence barrier. |
-| `vault-fs.ts` | Real-fs-backed vault adapter implementing the `SyncEngine`'s vault surface, structurally matching `mockApp`. |
-| `obsidian-shim.ts` | Re-exports the real `TFile`/`TFolder`/etc identities (so `instanceof` checks pass) with an injectable `requestUrl`. |
-| `model-server.ts` | In-process Phoenix-v2-framed model of the backend — HTTP + WS surfaces `EngramApi`/`NoteChannel` actually use, real `yjs` docs per note. MODEL, not the backend (T2 disclosure in the file header). |
-| `replica.ts` | `Replica` — boots a real `SyncEngine` headless, wired in the same order as `main.ts` production wiring. |
-| `oracle.ts` | `assertConverged` (strict 3-surface equality + reconnect) and `findWipes` (the #288 non-empty→empty write-journal detector). |
-| `scenarios.ts` | Named, seeded, deterministic scripts (`equalSeqFence`, `test85MissedDeliveryLocalPush`, `genesisWipe`) backing the differential gate. |
-| `regressions.test.ts` | The differential regression gate itself — what CI runs. |
-| `random.test.ts` | The seeded 5-replica random convergence gate — random interleaved concurrent edits under drop faults, strict oracle at quiescence. Green since fidelity gap #1 closed. |
-| `random-harness.ts` | NON-test seeded 5-replica exploration tool (see "Replaying a seed" above) — for long multi-seed runs (`SIM_ITERATIONS`) beyond what a gate should cost. |
+| File                  | Role                                                                                                                                                                                                |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `clock.ts`            | `SimClock` — deterministic virtual time; owns every `window.setTimeout`/`clearInterval` the engine schedules.                                                                                       |
+| `prng.ts`             | `mulberry32` seeded PRNG — all sim randomness traces to one seed.                                                                                                                                   |
+| `scheduler.ts`        | `Scheduler` — owns delivery order, faults (`hold`/`release`, `dropNext`), and timer firing; `drain()` is the quiescence barrier.                                                                    |
+| `vault-fs.ts`         | Real-fs-backed vault adapter implementing the `SyncEngine`'s vault surface, structurally matching `mockApp`.                                                                                        |
+| `obsidian-shim.ts`    | Re-exports the real `TFile`/`TFolder`/etc identities (so `instanceof` checks pass) with an injectable `requestUrl`.                                                                                 |
+| `model-server.ts`     | In-process Phoenix-v2-framed model of the backend — HTTP + WS surfaces `EngramApi`/`NoteChannel` actually use, real `yjs` docs per note. MODEL, not the backend (T2 disclosure in the file header). |
+| `replica.ts`          | `Replica` — boots a real `SyncEngine` headless, wired in the same order as `main.ts` production wiring.                                                                                             |
+| `oracle.ts`           | `assertConverged` (strict 3-surface equality + reconnect) and `findWipes` (the #288 non-empty→empty write-journal detector).                                                                        |
+| `scenarios.ts`        | Named, seeded, deterministic scripts (`equalSeqFence`, `test85MissedDeliveryLocalPush`, `genesisWipe`) backing the differential gate.                                                               |
+| `regressions.test.ts` | The differential regression gate itself — what CI runs.                                                                                                                                             |
+| `random.test.ts`      | The seeded 5-replica random convergence gate — random interleaved concurrent edits under drop faults, strict oracle at quiescence. Green since fidelity gap #1 closed.                              |
+| `random-harness.ts`   | NON-test seeded 5-replica exploration tool (see "Replaying a seed" above) — for long multi-seed runs (`SIM_ITERATIONS`) beyond what a gate should cost.                                             |

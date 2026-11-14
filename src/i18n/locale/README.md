@@ -24,7 +24,7 @@ A regional code falls back to its base language, so `en-GB` reaches `en`. You on
 
 ## A missing key shows English
 
-Any key a catalog lacks falls through to the English sentence, because the key *is* the English sentence. There is no `en.ts` to maintain. That is the state between merging a new string and the bot PR landing.
+Any key a catalog lacks falls through to the English sentence, because the key _is_ the English sentence. There is no `en.ts` to maintain. That is the state between merging a new string and the bot PR landing.
 
 ## Strings that change with a count
 
@@ -45,22 +45,22 @@ Leave "Engram" alone.
 
 UI surfaces ARE translated, and each locale uses ONE term for a surface everywhere (the settings tab, the command palette entry, notices that point at it, and the docs). A name the user sees on screen must match the name in the notice that tells them to open it, so change a surface name in all of those places at once. `tests/i18n-sync-center.test.ts` guards the Sync Center.
 
-| Locale | "Sync Center" |
-|---|---|
-| de | Sync-Zentrale |
-| es | Centro de sincronización |
-| fr | Centre de synchronisation |
-| id | Pusat Sinkronisasi |
-| it | Centro di sincronizzazione |
-| ja | 同期センター |
-| ko | 동기화 센터 |
-| ms | Pusat Sync |
-| pl | Centrum synchronizacji |
-| pt | Centro de sincronização |
-| pt-BR | Central de sincronização |
-| ru | Центр синхронизации |
-| tr | Senkronizasyon Merkezi |
-| zh | 同步中心 |
-| zh-TW | 同步中心 |
+| Locale | "Sync Center"              |
+| ------ | -------------------------- |
+| de     | Sync-Zentrale              |
+| es     | Centro de sincronización   |
+| fr     | Centre de synchronisation  |
+| id     | Pusat Sinkronisasi         |
+| it     | Centro di sincronizzazione |
+| ja     | 同期センター               |
+| ko     | 동기화 센터                |
+| ms     | Pusat Sync                 |
+| pl     | Centrum synchronizacji     |
+| pt     | Centro de sincronização    |
+| pt-BR  | Central de sincronização   |
+| ru     | Центр синхронизации        |
+| tr     | Senkronizasyon Merkezi     |
+| zh     | 同步中心                   |
+| zh-TW  | 同步中心                   |
 
 The marketing site docs (`engram-marketing`, `src/content/docs/<locale>/`) quote these terms. Update them together.
