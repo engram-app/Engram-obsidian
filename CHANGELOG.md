@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.39.3](https://github.com/engram-app/Engram-obsidian/compare/1.39.2...1.39.3) (2026-11-14)
+
+
+### Bug Fixes
+
+* **copy:** match plan copy to what prod enforces ([#699](https://github.com/engram-app/Engram-obsidian/issues/699)) ([1e5a05f](https://github.com/engram-app/Engram-obsidian/commit/1e5a05ff0c869b6fada64c01ec4568ac43e76bae))
+* **crdt:** open frontmatter on a CRLF fence ([#697](https://github.com/engram-app/Engram-obsidian/issues/697)) ([3916b40](https://github.com/engram-app/Engram-obsidian/commit/3916b409908fbf118243782e184dda8b33918c3e))
+* **i18n:** drop stale cap from search toast ([#695](https://github.com/engram-app/Engram-obsidian/issues/695)) ([a15a158](https://github.com/engram-app/Engram-obsidian/commit/a15a158dc76bdd0c390a72ddb068a0b5bda838ba))
+* stop the Obsidian client reverting remote edits ([#683](https://github.com/engram-app/Engram-obsidian/issues/683)) ([597289f](https://github.com/engram-app/Engram-obsidian/commit/597289f1fdaa08d243b69c5318c872415e25da74))
+
 ## [1.39.2](https://github.com/engram-app/Engram-obsidian/compare/1.39.1...1.39.2) (2026-11-03)
 
 
