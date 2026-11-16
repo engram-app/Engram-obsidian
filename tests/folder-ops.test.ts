@@ -155,12 +155,27 @@ describe("outbound folder ops", () => {
 		expect(h.sent).toHaveLength(1);
 	});
 
-	test("feature off after a reconnect: queued ops go per file", async () => {
+	// Changed contract (e2e run 43862890570): a features=false reply no longer
+	// abandons queued ops. The op is still sent; the server's answer decides.
+	test("feature off after a reconnect: a queued op is still sent, and its ack keeps it one op", async () => {
 		const h = harness();
 		h.ops.move("fa", "fb", "A", "A", "B/A");
 		await h.ops.setFeature(false);
-		expect(h.fallbacks).toEqual([["fa", "feature_off"]]);
-		expect(h.sent).toHaveLength(0);
+		expect(h.fallbacks).toEqual([]);
+		expect(h.ops.hasPending("fa")).toBe(true);
+		await h.ops.flush();
+		expect(h.sent).toHaveLength(1);
+		expect(h.acked).toEqual(["fa"]);
+		expect(h.fallbacks).toEqual([]);
+	});
+
+	test("feature off and the server really cannot take it: unknown_event goes per file at once", async () => {
+		const h = harness([{ kind: "unknown_event" }]);
+		h.ops.move("fa", "fb", "A", "A", "B/A");
+		await h.ops.setFeature(false);
+		await h.ops.flush();
+		expect(h.fallbacks).toEqual([["fa", "unknown_event"]]);
+		expect(h.ops.hasPending("fa")).toBe(false);
 	});
 
 	test("an op from another vault is never sent", async () => {
@@ -359,7 +374,9 @@ describe("the pending-op budget (round 3: MAX_ATTEMPTS / OP_TTL_MS, shared with 
 	});
 
 	test("a restored old op: its age clock starts at the reconnect, not at the enqueue", async () => {
-		const h = harness();
+		// Nothing can be delivered (crdt topic not joined): `held`. A queued op is
+		// sent whatever the features reply says, so "not sent" is modelled here.
+		const h = harness(Array.from({ length: 10 }, () => ({ kind: "held" }) as const));
 		h.ops.onSyncStatus(false);
 		h.ops.load([
 			{

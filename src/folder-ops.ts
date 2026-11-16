@@ -225,11 +225,18 @@ export class FolderOps {
 		return this.feature && !this.refusedForSession;
 	}
 
-	/** The join reply's `features.folder_ops`. Off with ops still queued means
-	 *  the server we reconnected to cannot take them: redo them per file. */
+	/** The join reply's `features.folder_ops`. Off stops NEW folder ops (a
+	 *  rename goes per file) but does not abandon queued ones: they keep being
+	 *  sent (runFlush), and the server's answer settles each. A server that
+	 *  truly cannot take them answers `unknown_event`/`bad_frame`, which falls
+	 *  back per file at once; a stale or flapping reply (the switch's 15 s
+	 *  override cache, a rolling deploy) gets an ack and stays one op. The
+	 *  op's own bounds (attempts, joined age) still end it. Falling back here
+	 *  re-keyed a pending op's bookkeeping to the old paths while its files sat
+	 *  at the new ones, so a peer's edit landed as a second file at the old path
+	 *  (e2e run 43862890570). */
 	async setFeature(on: boolean): Promise<void> {
 		this.feature = on;
-		if (!this.enabled()) await this.fallbackAll("feature_off");
 	}
 
 	hasPending(folderId: string): boolean {
@@ -386,7 +393,9 @@ export class FolderOps {
 	}
 
 	private async runFlush(): Promise<void> {
-		if (!this.enabled()) return;
+		// Queued ops are sent whatever the latest features reply said (see
+		// setFeature); only a server that refused the event stops them.
+		if (this.refusedForSession) return;
 		for (const op of [...this.queue.values()]) {
 			if (this.rateLimit.paused()) return;
 			this.creditRateLimitPause();

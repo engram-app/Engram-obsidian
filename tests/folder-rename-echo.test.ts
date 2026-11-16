@@ -129,8 +129,11 @@ function restarted(reply: FolderOpResult | null) {
 }
 
 describe("review #689: replayed op after a restart", () => {
+	// A server without folder ops answers the event `unknown_event` (or
+	// `bad_frame`, mapped to it): that answer, not the features flag, sends the
+	// replayed op per file (contract since e2e run 43862890570).
 	test("server has no folder_ops: the replayed op is redone per file", async () => {
-		const s = restarted(null);
+		const s = restarted({ kind: "unknown_event" });
 		await s.e.setFolderOpsEnabled(false);
 		await new Promise((r) => setTimeout(r, 5));
 		expect(s.e.folderOps.all()).toEqual([]);

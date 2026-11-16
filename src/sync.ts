@@ -6614,7 +6614,11 @@ export class SyncEngine {
 		for (const child of [...folder.children]) {
 			if (child instanceof TFolder) removed += await this.trashEmptyTree(child);
 		}
-		if (folder.children.length > 0) return removed;
+		// Re-read after the moves and the trashes above: the object handed in
+		// may predate them, and its children list then still names moved files.
+		const now = this.app.vault.getAbstractFileByPath(folder.path);
+		if (!(now instanceof TFolder) || now.children.length > 0) return removed;
+		folder = now;
 		await this.explicitFolders?.delete(normalizePath(folder.path));
 		try {
 			await this.app.fileManager.trashFile(folder);
@@ -6644,7 +6648,11 @@ export class SyncEngine {
 	/** `features.folder_ops` from the join reply. */
 	async setFolderOpsEnabled(on: boolean): Promise<void> {
 		await this.folderOps.setFeature(on);
-		if (this.folderOps.enabled()) await this.folderOps.onReconnect();
+		// Queued ops are probed even when the reply says off: the answer, not
+		// the flag, decides whether they go per file (FolderOps.setFeature).
+		if (this.folderOps.enabled() || this.folderOps.all().length > 0) {
+			await this.folderOps.onReconnect();
+		}
 	}
 
 	/** Learn the server's folder rows (manifest `folders`). */
