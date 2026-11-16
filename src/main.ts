@@ -3151,9 +3151,24 @@ export default class EngramSyncPlugin extends Plugin {
 							// folder op re-keys queued creates to their new paths
 							// (rekeyMoved). Re-sends unanswered ops and drops held inbound
 							// changes (this join's manifest re-teaches the server's folders).
-							await this.syncEngine.folderOps.onReconnect();
-							await this.crdtOpQueue?.onJoined();
-							await this.onCrdtTopicJoined();
+							// Each step runs even if an earlier one throws (a failing
+							// per-file fallback must not skip the note-op queue). The order
+							// holds only when `features.folder_ops` arrived before this join;
+							// if it lands later, queued creates go first and the op falls
+							// back per file (converges, loses the O(1) win on that path).
+							const step = async (
+								name: string,
+								run: () => Promise<unknown> | undefined,
+							) => {
+								try {
+									await run();
+								} catch (e) {
+									rlog().warn("crdt", `rejoin step ${name} failed: ${errMsg(e)}`);
+								}
+							};
+							await step("folder ops", () => this.syncEngine.folderOps.onReconnect());
+							await step("note ops", () => this.crdtOpQueue?.onJoined());
+							await step("catch-up", () => this.onCrdtTopicJoined());
 						})();
 					};
 					// T4 folded finding + audit F13: when the crdt: topic REJOIN fails
