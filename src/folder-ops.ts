@@ -236,6 +236,24 @@ export class FolderOps {
 		return this.queue.has(folderId);
 	}
 
+	/** Is `path` under a pending op's target (moved there, server not told
+	 *  yet)? O(pending ops), a handful. */
+	coversTarget(path: string): boolean {
+		for (const op of this.queue.values()) if (path.startsWith(`${op.to}/`)) return true;
+		return false;
+	}
+
+	/** Did a pending op move `newPath` away from `oldPath`? Then a server row
+	 *  naming `oldPath` is the server's state from before the op. Derived from
+	 *  the persisted ops, so it holds across a restart and clears with the op
+	 *  (ack, refusal, give-up), never on a timer. */
+	movedFrom(oldPath: string, newPath: string): boolean {
+		for (const op of this.queue.values()) {
+			if (newPath.startsWith(`${op.to}/`) && oldPath.startsWith(`${op.from}/`)) return true;
+		}
+		return false;
+	}
+
 	/** Pending ops, in send order (persistence). */
 	all(): FolderOp[] {
 		return [...this.queue.values()];

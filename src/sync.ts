@@ -6394,6 +6394,7 @@ export class SyncEngine {
 			const file = this.app.vault.getAbstractFileByPath(n);
 			if (file) await this.handleRenameNow(file, o);
 		}
+		this.onFolderOpLeft(to);
 	}
 
 	/** The server applied our op, so its state is ours. If the disk is not
@@ -6403,6 +6404,7 @@ export class SyncEngine {
 	private async folderOpAcked(op: FolderOp): Promise<void> {
 		rlog().info("push", `Folder op acked: ${op.op} ${op.folder_id}`);
 		await this.applyFolderChange({ id: op.folder_id, parent_id: op.parent_id, name: op.name });
+		this.onFolderOpLeft(op.to);
 	}
 
 	/** Engram#2523 S4: one op per folder rename. Exposed for main.ts wiring. */
@@ -6652,11 +6654,13 @@ export class SyncEngine {
 
 	/** Is `path` where an unconfirmed local move put a file: under a pending
 	 *  folder op's target, or a note's pending local move (the rename fence)?
-	 *  O(pending ops + pending moves). */
+	 *  O(pending folder ops) per path: the fence is looked up by the path's
+	 *  note id, never scanned, since the delete pass calls this per vault file
+	 *  and a big folder op fences thousands of notes (review LOW-6 on #689). */
 	private isPendingLocalMoveTarget(path: string): boolean {
-		for (const op of this.folderOps.all()) if (path.startsWith(`${op.to}/`)) return true;
-		for (const m of this.pendingLocalMoves.values()) if (m.path === path) return true;
-		return false;
+		if (this.folderOps.coversTarget(path)) return true;
+		const id = this.noteIdMap?.get(path);
+		return id != null && this.pendingLocalMoves.get(id)?.path === path;
 	}
 
 	/** Nothing is left at `oldPath` and the note or attachment is already
@@ -10947,14 +10951,45 @@ export class SyncEngine {
 		this.moveSweepTimer = this.time.setTimeout(() => {
 			this.moveSweepTimer = null;
 			const now = this.time.now();
+			let live = false;
 			for (const [id, pending] of this.pendingLocalMoves) {
+				// Held by its pending folder op: no clock runs (an offline op would
+				// keep this timer alive forever). The op leaving the queue restarts
+				// it (onFolderOpLeft).
+				if (this.folderOps.coversTarget(pending.path)) continue;
+				live = true;
 				if (this.crdtHasPendingOp?.(id)) pending.at = now;
 				else if (now - pending.at > SyncEngine.PENDING_MOVE_TTL_MS) {
 					this.pendingLocalMoves.delete(id);
 				}
 			}
-			if (this.pendingLocalMoves.size > 0) this.scheduleMoveSweep();
+			if (live) this.scheduleMoveSweep();
 		}, SyncEngine.PENDING_MOVE_SWEEP_MS);
+	}
+
+	/** A folder op left the queue (ack, or refusal / give-up after its
+	 *  per-file fallback): the clearing event for what it held. The fences
+	 *  under `to` start their TTL backstop now (O(fences), once per op), and
+	 *  the queued replays it held (holdsRestReplay) are sent. */
+	private onFolderOpLeft(to: string): void {
+		const now = this.time.now();
+		for (const pending of this.pendingLocalMoves.values()) {
+			if (pending.path.startsWith(`${to}/`)) pending.at = now;
+		}
+		if (this.pendingLocalMoves.size > 0) this.scheduleMoveSweep();
+		if (!this.offline && this.queue.size > 0) {
+			void this.flushQueue().catch((e: unknown) => {
+				rlog().warn("queue", `flush after folder op failed: ${errMsg(e)}`);
+			});
+		}
+	}
+
+	/** Is the move that set a fence still waiting to leave this device: the
+	 *  note's own queued relocation, or the pending folder op that moved it?
+	 *  While it is, the fence's TTL is held at "now"; the op leaving the queue
+	 *  (ack, refusal, give-up) is what starts the backstop. */
+	private moveStillQueued(id: string, path: string): boolean {
+		return this.crdtHasPendingOp?.(id) === true || this.folderOps.coversTarget(path);
 	}
 
 	/** The rename's push was refused or failed and nothing is queued to retry
@@ -10989,7 +11024,7 @@ export class SyncEngine {
 		if (pending !== undefined) {
 			const now = this.time.now();
 			// Still queued (offline): the TTL counts from when the rename leaves.
-			if (this.crdtHasPendingOp?.(id)) pending.at = now;
+			if (this.moveStillQueued(id, pending.path)) pending.at = now;
 			if (now - pending.at > SyncEngine.PENDING_MOVE_TTL_MS) {
 				this.pendingLocalMoves.delete(id);
 			} else if (pending.path === target) {
@@ -11006,9 +11041,13 @@ export class SyncEngine {
 				this.pendingLocalMoves.delete(id);
 			}
 		}
-		if (!Number.isInteger(seq)) return false;
 		const current = this.noteIdMap?.pathForId(id);
 		if (!current || normalizePath(current) === target) return false;
+		// A pending folder op moved the note from `target`: the server still
+		// has it there until the op is acked. Read from the persisted op, so it
+		// holds when the per-note fence is gone (a restart, a slow server).
+		if (this.folderOps.movedFrom(target, normalizePath(current))) return true;
+		if (!Number.isInteger(seq)) return false;
 		const mark = this.syncState.get(normalizePath(current))?.seq;
 		return mark !== undefined && (seq as number) < mark;
 	}
@@ -14726,7 +14765,23 @@ export class SyncEngine {
 	/** Is this entry held right now? No catch-up port means no catch-up can ever
 	 *  clear the gate, so nothing is held. */
 	private holdsRestReplay(e: QueueEntry): boolean {
+		if (this.isPathAddressed(e) && this.underPendingFolderOp(e)) return true;
 		return this.catchupPending && this.catchupExpected() && this.isRestReplay(e);
+	}
+
+	/** A replay that names its note by path (everything but an id-bound crdt
+	 *  entry, which rides the socket by note id). */
+	private isPathAddressed(e: QueueEntry): boolean {
+		return !(e.crdt && e.noteId);
+	}
+
+	/** The entry's file sits where a pending folder op moved it: the server
+	 *  still has it at the op's `from`, so a path-addressed replay at the new
+	 *  path is refused (409) or lands beside the real row. Held until the op
+	 *  leaves the queue (onFolderOpLeft), which the op's own bounds guarantee. */
+	private underPendingFolderOp(e: QueueEntry): boolean {
+		const cur = e.noteId ? this.noteIdMap?.pathForId(e.noteId) : null;
+		return this.folderOps.coversTarget(normalizePath(cur ?? e.path));
 	}
 
 	/** A catch-up exists or is still coming (the startup join is owed). */
@@ -14821,6 +14876,7 @@ export class SyncEngine {
 					entry.kind === "attachment" &&
 					entry.evidenced &&
 					(entry.nextAttemptAt ?? 0) <= now &&
+					!this.holdsRestReplay(entry) &&
 					!(owner && active && owner !== active)
 				) {
 					const p = this.api.deleteAttachment(entry.path, owner ?? null);
