@@ -6341,6 +6341,13 @@ export class SyncEngine {
 				if (!this.isBinaryPath(to)) {
 					this.noteIdMap?.rename(from, to);
 					this.baseStore?.rename(from, to);
+					// A create still queued (made offline) carries the path it was
+					// made at; nothing sends it per file now, so re-key it too, the
+					// way the per-file rename's re-push does (one op per docId).
+					const id = this.noteIdMap?.get(to);
+					if (id && this.crdtHasPendingOp?.(id)) {
+						this.crdtEnqueue?.({ kind: "create", docId: id, path: to });
+					}
 				}
 				this.renamePath(from, to, "remote");
 				// The rename fence: a row naming the old path is from before the move.

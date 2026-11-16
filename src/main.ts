@@ -3130,7 +3130,7 @@ export default class EngramSyncPlugin extends Plugin {
 						// so each kept room sends exactly one STEP1.
 						this.syncEngine.reopenRoomsOnRejoin(this.openCrdtNoteIds());
 						this.crdtManager?.setConnected(true);
-						// Deliver any HELD create/delete ops FIRST, then reconcile the
+						// Deliver any HELD folder ops, then create/delete ops, then reconcile the
 						// id-map, re-enroll open notes, run the socket catch-up, and
 						// finally the self-heal sweep. The sweep skips any note whose
 						// create is still pending here (pushCandidates), so flushing
@@ -3144,10 +3144,15 @@ export default class EngramSyncPlugin extends Plugin {
 						// sync-topic onStatusChange, which acks first) is what fixes the
 						// deaf-note race. See onCrdtTopicJoined.
 						void (async () => {
-							await this.crdtOpQueue?.onJoined();
-							// Re-send unanswered folder ops; drops held inbound changes
-							// (this join's manifest re-teaches the server's folders).
+							// Folder ops FIRST: a queued create under a folder this device
+							// moved offline would otherwise make the server mint a second
+							// folder row at the target, and the op is then refused as a
+							// conflict (the whole folder goes per file). Safe because a
+							// folder op re-keys queued creates to their new paths
+							// (rekeyMoved). Re-sends unanswered ops and drops held inbound
+							// changes (this join's manifest re-teaches the server's folders).
 							await this.syncEngine.folderOps.onReconnect();
+							await this.crdtOpQueue?.onJoined();
 							await this.onCrdtTopicJoined();
 						})();
 					};

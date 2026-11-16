@@ -620,8 +620,8 @@ export class Replica {
 			// flush frames buffered while offline (the reconnect convergence trigger).
 			manager.setConnected(true);
 			void (async () => {
+				await engine.folderOps.onReconnect(); // main.ts onCrdtJoined: folder ops first
 				await crdtOpQueue.onJoined();
-				await engine.folderOps.onReconnect(); // main.ts onCrdtJoined
 				await onCrdtTopicJoined();
 			})();
 		};
