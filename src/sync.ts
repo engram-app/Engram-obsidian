@@ -33,7 +33,7 @@ import {
 import type { CrdtOp } from "./crdt-op-queue";
 import { devLog } from "./dev-log";
 import { ECHO_COOLDOWN_MS } from "./echo-window";
-import { errMsg, isAlreadyGone, isHttpStatus, statusOf } from "./error-util";
+import { errMsg, isAlreadyGone, isHttpStatus, retryAfterMs, statusOf } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
 import {
@@ -7528,6 +7528,9 @@ export class SyncEngine {
 		await this.deleteFolderNow(folder.path);
 	}
 
+	/** Folders the user deleted locally whose server DELETE failed. */
+	private failedFolderDeletes = new Set<string>();
+
 	private async deleteFolderNow(path: string): Promise<void> {
 		if (this.suppressDeletes) return;
 		if (!this.explicitFolders) return;
@@ -7535,13 +7538,21 @@ export class SyncEngine {
 
 		try {
 			await this.api.deleteFolder(path);
+			this.failedFolderDeletes.delete(path);
 		} catch (e) {
+			// The server still lists the marker; remember it so the next pull does
+			// not recreate the folder the user just deleted (syncExplicitFolders).
+			this.failedFolderDeletes.add(path);
 			devLog().log("push", `deleteFolder("${path}") failed: ${errMsg(e)}`);
 			rlog().warn("push", `deleteFolder("${noteRef(path)}") failed: ${errMsg(e, path)}`);
 		} finally {
 			await this.explicitFolders.delete(path);
 		}
 	}
+
+	/** Earliest time seedEmptyFolders may POST again after a rate-limited pass. */
+	private folderSeedNotBefore = 0;
+	private folderSeedStreak = 0;
 
 	/** First-sync seeding: POST an explicit marker for every local folder whose
 	 *  entire subtree holds NO syncable file. The server derives a folder only
@@ -7553,6 +7564,9 @@ export class SyncEngine {
 	 *  error is warn-logged and seeding continues (matches handleFolderCreate). */
 	async seedEmptyFolders(): Promise<void> {
 		if (!this.explicitFolders) return;
+		// Rate-limited last pass: every catch-up calls this, so without a
+		// cooldown each pass re-POSTs every untracked folder into the limiter.
+		if (this.time.now() < this.folderSeedNotBefore) return;
 
 		const loaded = this.app.vault.getAllLoadedFiles?.() ?? [];
 		for (const f of loaded) {
@@ -7567,12 +7581,30 @@ export class SyncEngine {
 				const resp = await this.api.createFolder(path);
 				this.learnFolderChain(resp?.folders);
 				await this.explicitFolders.add(path);
+				this.folderSeedStreak = 0;
 			} catch (e) {
 				devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
 				rlog().warn(
 					"push",
 					`seedEmptyFolders("${noteRef(path)}") failed: ${errMsg(e, path)}`,
 				);
+				// Rate limited: the rest of the pass would only hit the same limiter.
+				// Stop and wait what the server asked (floored, as deferRateLimited).
+				if (categorizeError(e).rateLimited) {
+					this.folderSeedStreak += 1;
+					this.folderSeedNotBefore =
+						this.time.now() +
+						Math.max(
+							RATE_LIMIT_FLOOR_MS,
+							retryAfterMs(e, this.time.now()) ??
+								expBackoff(
+									OFFLINE_RETRY_BASE_MS,
+									this.folderSeedStreak - 1,
+									OFFLINE_RETRY_MAX_MS,
+								),
+						);
+					return;
+				}
 			}
 		}
 	}
@@ -14041,6 +14073,16 @@ export class SyncEngine {
 			// The server lists it, so the folder exists now (a user re-made it,
 			// e.g. in the web app): no moved-away record may still cover it.
 			if (this.isMovedAway(name)) this.forgetMovedAway(name);
+			// Locally deleted, server delete failed: retry it instead of resurrecting.
+			if (this.failedFolderDeletes.has(name)) {
+				try {
+					await this.api.deleteFolder(name);
+					this.failedFolderDeletes.delete(name);
+				} catch (e) {
+					devLog().log("pull", `deleteFolder retry(${name}) failed: ${errMsg(e)}`);
+				}
+				continue;
+			}
 			try {
 				await this.ensureFolder(name);
 			} catch (e) {
