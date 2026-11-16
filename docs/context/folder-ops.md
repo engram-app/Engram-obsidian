@@ -1,6 +1,6 @@
 # Context Doc: folder ops (one op per folder rename)
 
-_Last verified: 2026-11-07 (PR #689 after its first adversarial review, Engram#2523 S4)_
+_Last verified: 2026-11-15 (PR #689 after its round-5 adversarial review, Engram#2523 S4)_
 
 ## What this is
 With `features.folder_ops` on (user-topic join reply), a local folder rename or
@@ -46,6 +46,23 @@ guaranteed (mobile unverified, R4 on Engram#2523).
   are the server's state from BEFORE our op, not another writer, and their
   expiry undid the user's own move (delta review N1 on #689).
 - Same-tick batch: cleared at the end of its tick.
+- Per-note rename fences a folder op sets (`rekeyMoved`): their clock is held
+  while the op is pending, and the op leaving the queue (ack, or the per-file
+  fallback after a refusal or give-up) starts the `PENDING_MOVE_TTL_MS`
+  backstop (`onFolderOpLeft`). They are not persisted; across a restart
+  `isStalePathClaim` re-derives them from the persisted op
+  (`FolderOps.movedFrom`: a claim under the op's `from` for a note under its
+  `to` is stale). Before this, a peer's row at the old path moved the note
+  back after 120 s (round 5 MEDIUM-4).
+- Queued path-addressed replays (REST upserts, deletes) under a pending op's
+  `to`: held until `onFolderOpLeft`, which flushes the queue. The server still
+  has the file at `from`, so sending at the new path got a 409 and dropped the
+  edit.
+- Queued `crdt_create`s under the moved folder are re-keyed to the new path by
+  `rekeyMoved` (one op per docId), and on reconnect folder ops are sent BEFORE
+  the note-op queue: a create at the target first made the server mint a
+  second folder row there and refuse the op as `conflict` (round 5 HIGH-1,
+  MEDIUM-3).
 
 ## Gotchas
 - **Folder moves must apply BEFORE the manifest delete pass** in `catchUp`.
