@@ -405,3 +405,63 @@ describe("SyncEngine.seedEmptyFolders", () => {
 test("module loaded", () => {
 	expect(TFile).toBeDefined();
 });
+
+// ---------------------------------------------------------------------------
+// Mobile incident 2026-11-16: 429 hammering + failed delete resurrecting
+// ---------------------------------------------------------------------------
+
+describe("seedEmptyFolders rate limiting", () => {
+	const rateLimited = () =>
+		Object.assign(new Error("Request failed, status 429"), {
+			status: 429,
+			headers: { "Retry-After": "30" },
+		});
+
+	test("a 429 stops the pass and the next pass waits out the cooldown", async () => {
+		const { engine } = await createEngine();
+		mockApp.vault.getAllLoadedFiles = mock().mockReturnValue([
+			new TFolder("A", []),
+			new TFolder("B", []),
+			new TFolder("C", []),
+		]);
+		(mockApi.createFolder as jest.Mock).mockReset().mockRejectedValue(rateLimited());
+
+		await engine.seedEmptyFolders();
+		expect(mockApi.createFolder).toHaveBeenCalledTimes(1); // not 3
+		await engine.seedEmptyFolders(); // next catch-up pass, immediately
+		expect(mockApi.createFolder).toHaveBeenCalledTimes(1); // still cooling down
+	});
+});
+
+describe("syncExplicitFolders vs a failed local folder delete", () => {
+	test("does not recreate a folder whose server delete failed; retries the delete", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("Gone");
+		(mockApi.deleteFolder as jest.Mock)
+			.mockReset()
+			.mockRejectedValueOnce(new Error("Request timed out after 15000ms"))
+			.mockResolvedValue(undefined);
+		await engine.handleFolderDelete({ path: "Gone" });
+		// server never processed the delete, so it still lists the marker
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValue(["Gone"]);
+		mockApp.vault.createFolder.mockClear();
+
+		await engine.resyncFolders();
+
+		expect(mockApp.vault.createFolder).not.toHaveBeenCalledWith("Gone");
+		expect(mockApi.deleteFolder).toHaveBeenCalledTimes(2);
+	});
+
+	test("a server-listed empty/slash-only name never creates a folder", async () => {
+		const { engine } = await createEngine();
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValue(["", "/", "ok//sub"]);
+		mockApp.vault.createFolder.mockClear();
+
+		await engine.resyncFolders();
+
+		expect(mockApp.vault.createFolder.mock.calls.map((c: any[]) => c[0])).toEqual([
+			"ok",
+			"ok/sub",
+		]);
+	});
+});
