@@ -239,8 +239,49 @@ export class FolderOps {
 	/** Is `path` under a pending op's target (moved there, server not told
 	 *  yet)? O(pending ops), a handful. */
 	coversTarget(path: string): boolean {
-		for (const op of this.queue.values()) if (path.startsWith(`${op.to}/`)) return true;
-		return false;
+		return this.opCovering(path) !== undefined;
+	}
+
+	private opCovering(path: string): FolderOp | undefined {
+		for (const op of this.queue.values()) if (path.startsWith(`${op.to}/`)) return op;
+		return undefined;
+	}
+
+	/** When a queued path-addressed replay first waited on each op, by
+	 *  `op_id`. A hiding layer: cleared when the op leaves the queue (pruned
+	 *  here) or on reset, and bounded by `HOLD_MAX_MS` (see holdReplay). */
+	private readonly replayHeldSince = new Map<string, number>();
+
+	/** Must a queued replay at `path` wait for a pending op (the server still
+	 *  has the file at the op's `from`)? `first`: this op starts holding now.
+	 *  `expired`: held past `HOLD_MAX_MS`. That happens when the op cannot be
+	 *  sent but REST works (socket down after a restart, a proxy blocking
+	 *  WebSockets): the op's own age clock is stopped, so the caller ends it in
+	 *  the per-file fallback (`abandon`), whose clearing event releases the
+	 *  replay. */
+	holdReplay(path: string): { state: "free" | "first" | "held" | "expired"; op?: FolderOp } {
+		const op = this.opCovering(path);
+		if (!op) return { state: "free" };
+		if (this.replayHeldSince.size > this.queue.size) {
+			const live = new Set([...this.queue.values()].map((o) => o.op_id));
+			for (const id of this.replayHeldSince.keys()) {
+				if (!live.has(id)) this.replayHeldSince.delete(id);
+			}
+		}
+		const now = this.deps.now();
+		const since = this.replayHeldSince.get(op.op_id);
+		if (since === undefined) {
+			this.replayHeldSince.set(op.op_id, now);
+			return { state: "first", op };
+		}
+		return { state: now - since > HOLD_MAX_MS ? "expired" : "held", op };
+	}
+
+	/** End a still-queued op in the per-file fallback (the caller's bound ran
+	 *  out). A no-op if the op already left the queue. */
+	async abandon(op: FolderOp, why: string): Promise<void> {
+		if (this.queue.get(op.folder_id) !== op) return;
+		await this.giveUp(op, why);
 	}
 
 	/** Did a pending op move `newPath` away from `oldPath`? Then a server row
@@ -308,6 +349,7 @@ export class FolderOps {
 	reset(): void {
 		this.queue.clear();
 		this.held.clear();
+		this.replayHeldSince.clear();
 		this.index.load([]);
 		this.refusedForSession = false;
 		this.deps.persist();

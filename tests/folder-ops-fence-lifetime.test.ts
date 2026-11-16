@@ -7,17 +7,21 @@ import "fake-indexeddb/auto";
 import { TFile, TFolder } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
+import { HOLD_MAX_MS } from "../src/folder-ops";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 /** Proj/a.md synced; Proj renamed locally to Done; the server never answers. */
-async function movedPending() {
+async function movedPending(api: Record<string, unknown> = {}) {
 	const note = new TFile("Done/a.md");
 	(note as any).stat = { mtime: 1, ctime: 1, size: 4 };
-	const folder = new TFolder("Done", [note]);
+	const image = new TFile("Done/img.png");
+	(image as any).stat = { mtime: 1, ctime: 1, size: 3 };
+	const folder = new TFolder("Done", [note, image]);
 	const byPath = new Map<string, unknown>([
 		["Done", folder],
 		["Done/a.md", note],
+		["Done/img.png", image],
 	]);
 	const read = mock().mockResolvedValue("body");
 	const app = {
@@ -25,6 +29,7 @@ async function movedPending() {
 			configDir: ".obsidian",
 			cachedRead: read,
 			read,
+			readBinary: mock().mockResolvedValue(new Uint8Array([1, 2, 3]).buffer),
 			getAbstractFileByPath: (p: string) => byPath.get(p) ?? null,
 			getFileByPath: (p: string) => byPath.get(p) ?? null,
 			getName: () => "Vault",
@@ -33,7 +38,7 @@ async function movedPending() {
 	} as any;
 	const e = new SyncEngine(
 		app,
-		{} as unknown as EngramApi,
+		api as unknown as EngramApi,
 		{ ...DEFAULT_SETTINGS, vaultId: "v1", debounceMs: 1 },
 		mock().mockResolvedValue(undefined),
 	);
@@ -61,16 +66,24 @@ async function movedPending() {
 
 test("MEDIUM-4: a peer's newer row at the OLD path is stale while the folder op is pending past 120 s", async () => {
 	const { e, advance } = await movedPending();
-	advance(10 * 60 * 1000); // a slow server: the op is still queued
-	expect((e as any).isStalePathClaim("id-a", "Proj/a.md", 9)).toBe(true);
-	expect((e as any).resolvePathClaim("id-a", "Proj/a.md", 9)).toBe("Done/a.md");
+	try {
+		advance(10 * 60 * 1000); // a slow server: the op is still queued
+		expect((e as any).isStalePathClaim("id-a", "Proj/a.md", 9)).toBe(true);
+		expect((e as any).resolvePathClaim("id-a", "Proj/a.md", 9)).toBe("Done/a.md");
+	} finally {
+		e.destroy();
+	}
 });
 
 test("MEDIUM-4: after a restart (no in-memory fence) the persisted op still fences the old path", async () => {
 	const { e } = await movedPending();
-	(e as any).pendingLocalMoves.clear(); // not persisted: a restart loses it
-	expect((e as any).isStalePathClaim("id-a", "Proj/a.md", 9)).toBe(true);
-	expect((e as any).isStalePathClaim("id-a", "Proj/a.md")).toBe(true);
+	try {
+		(e as any).pendingLocalMoves.clear(); // not persisted: a restart loses it
+		expect((e as any).isStalePathClaim("id-a", "Proj/a.md", 9)).toBe(true);
+		expect((e as any).isStalePathClaim("id-a", "Proj/a.md")).toBe(true);
+	} finally {
+		e.destroy();
+	}
 });
 
 test("LOW-6: the delete-pass target check looks a fence up by id, never scans them", async () => {
@@ -91,6 +104,46 @@ test("LOW-6: the delete-pass target check looks a fence up by id, never scans th
 		// The engine's move-sweep timer is real and outlives this test: never
 		// leave it a Map that throws (it fired inside another file on CI).
 		(e as any).pendingLocalMoves = real;
+		e.destroy();
+	}
+});
+
+// Delta review of #689 @ a1029bdd, MEDIUM-2: with the socket down and REST up
+// the op can neither be sent nor age, so a replay held under it waited forever.
+test("MEDIUM-2: a replay held under an unsendable op is bounded: per-file fallback, then sent", async () => {
+	const api = {
+		pushAttachment: mock().mockResolvedValue({ hash: "h2" }),
+		renameAttachment: mock().mockResolvedValue({}),
+		deleteAttachment: mock().mockResolvedValue({}),
+		deleteNote: mock().mockResolvedValue({}),
+	};
+	const { e, advance } = await movedPending(api);
+	try {
+		e.setCrdtPorts({ folderOp: async () => ({ kind: "held" }) }); // socket down
+		await (e as any).enqueueChange({
+			path: "Done/img.png",
+			action: "upsert",
+			kind: "attachment",
+			mtime: 1,
+			timestamp: Date.now(),
+			vaultId: "v1",
+		});
+		await e.flushQueue();
+		expect(api.pushAttachment).not.toHaveBeenCalled(); // held: the server has Proj/img.png
+		expect(e.queue.size).toBe(1);
+		advance(2 * 60 * 1000);
+		await e.flushQueue();
+		expect(api.pushAttachment).not.toHaveBeenCalled(); // still inside the bound
+		advance(HOLD_MAX_MS + 3 * 60 * 1000);
+		await e.flushQueue();
+		for (let i = 0; i < 20 && e.folderOps.hasPending("f1"); i++) await Bun.sleep(1);
+		expect(e.folderOps.hasPending("f1")).toBe(false); // abandoned to the per-file fallback
+		await e.flushQueue();
+		expect(api.pushAttachment).toHaveBeenCalled(); // the held upload went out
+		expect(e.queue.all().some((q) => q.path === "Done/img.png" && q.action === "upsert")).toBe(
+			false,
+		);
+	} finally {
 		e.destroy();
 	}
 });

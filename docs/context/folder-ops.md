@@ -53,16 +53,27 @@ guaranteed (mobile unverified, R4 on Engram#2523).
   `isStalePathClaim` re-derives them from the persisted op
   (`FolderOps.movedFrom`: a claim under the op's `from` for a note under its
   `to` is stale). Before this, a peer's row at the old path moved the note
-  back after 120 s (round 5 MEDIUM-4).
+  back after 120 s (round 5 MEDIUM-4). On the ACK the op also counts as
+  each moved note's echo (`echoed = true`): otherwise the unechoed fence
+  rejected every other path, including a peer's real post-op rename of a
+  child, which then never reached this device (delta MEDIUM-1). Not on the
+  fallback: its per-file renames set fresh fences that wait for their echo.
 - Queued path-addressed replays (REST upserts, deletes) under a pending op's
   `to`: held until `onFolderOpLeft`, which flushes the queue. The server still
   has the file at `from`, so sending at the new path got a 409 and dropped the
-  edit.
+  edit. Bounded by `HOLD_MAX_MS` from the first held replay
+  (`FolderOps.holdReplay`): with the socket down and REST up the op can
+  neither be sent nor age, so past the bound it is abandoned to the per-file
+  fallback (warn logs `Replay held` and `Folder op unanswered`; delta
+  MEDIUM-2). Attachments are held too (3 minutes at most).
 - Queued `crdt_create`s under the moved folder are re-keyed to the new path by
   `rekeyMoved` (one op per docId), and on reconnect folder ops are sent BEFORE
   the note-op queue: a create at the target first made the server mint a
   second folder row there and refuse the op as `conflict` (round 5 HIGH-1,
-  MEDIUM-3).
+  MEDIUM-3). Each reconnect step is caught separately, so a failing fallback
+  cannot skip the note-op queue. Known gap: the order holds only if
+  `features.folder_ops` arrived before the crdt join; a later flag sends
+  creates first and the op falls back per file (converges, not O(1)).
 
 ## Gotchas
 - **Folder moves must apply BEFORE the manifest delete pass** in `catchUp`.

@@ -42,6 +42,7 @@ import {
 	type FolderOpResult,
 	FolderOps,
 	type FolderRow,
+	HOLD_MAX_MS,
 	isFolderRow,
 } from "./folder-ops";
 import { t } from "./i18n";
@@ -6394,7 +6395,7 @@ export class SyncEngine {
 			const file = this.app.vault.getAbstractFileByPath(n);
 			if (file) await this.handleRenameNow(file, o);
 		}
-		this.onFolderOpLeft(to);
+		this.onFolderOpLeft(to, false);
 	}
 
 	/** The server applied our op, so its state is ours. If the disk is not
@@ -6404,7 +6405,7 @@ export class SyncEngine {
 	private async folderOpAcked(op: FolderOp): Promise<void> {
 		rlog().info("push", `Folder op acked: ${op.op} ${op.folder_id}`);
 		await this.applyFolderChange({ id: op.folder_id, parent_id: op.parent_id, name: op.name });
-		this.onFolderOpLeft(op.to);
+		this.onFolderOpLeft(op.to, true);
 	}
 
 	/** Engram#2523 S4: one op per folder rename. Exposed for main.ts wiring. */
@@ -10970,11 +10971,17 @@ export class SyncEngine {
 	/** A folder op left the queue (ack, or refusal / give-up after its
 	 *  per-file fallback): the clearing event for what it held. The fences
 	 *  under `to` start their TTL backstop now (O(fences), once per op), and
-	 *  the queued replays it held (holdsRestReplay) are sent. */
-	private onFolderOpLeft(to: string): void {
+	 *  the queued replays it held (holdsRestReplay) are sent. `acked`: the ack
+	 *  counts as each moved note's echo, so only the paths a note LEFT stay
+	 *  rejected and a peer's post-op move of a child applies by seq (delta
+	 *  review MEDIUM-1 on #689). Not after a fallback: its per-file renames
+	 *  set fresh fences that must wait for their own echo. */
+	private onFolderOpLeft(to: string, acked: boolean): void {
 		const now = this.time.now();
 		for (const pending of this.pendingLocalMoves.values()) {
-			if (pending.path.startsWith(`${to}/`)) pending.at = now;
+			if (!pending.path.startsWith(`${to}/`)) continue;
+			pending.at = now;
+			if (acked) pending.echoed = true;
 		}
 		if (this.pendingLocalMoves.size > 0) this.scheduleMoveSweep();
 		if (!this.offline && this.queue.size > 0) {
@@ -14751,7 +14758,7 @@ export class SyncEngine {
 	 *  to re-resolve by, and holding them would stall uploads whenever the socket
 	 *  is slow to rejoin. */
 	private isRestReplay(e: QueueEntry): boolean {
-		return e.action === "upsert" && e.kind !== "attachment" && !(e.crdt && e.noteId);
+		return e.action === "upsert" && e.kind !== "attachment" && this.isPathAddressed(e);
 	}
 
 	/** The periodic poll's queue leg (main.ts). A REST-only or never-joined
@@ -14778,10 +14785,30 @@ export class SyncEngine {
 	/** The entry's file sits where a pending folder op moved it: the server
 	 *  still has it at the op's `from`, so a path-addressed replay at the new
 	 *  path is refused (409) or lands beside the real row. Held until the op
-	 *  leaves the queue (onFolderOpLeft), which the op's own bounds guarantee. */
+	 *  leaves the queue (onFolderOpLeft flushes), and never longer than
+	 *  `HOLD_MAX_MS`: past that the op is abandoned to the per-file fallback,
+	 *  the path a flag-off server takes (delta review MEDIUM-2 on #689). Also
+	 *  holds attachments, which the catch-up gate exempts: a 3-minute bound,
+	 *  not a stall. */
 	private underPendingFolderOp(e: QueueEntry): boolean {
 		const cur = e.noteId ? this.noteIdMap?.pathForId(e.noteId) : null;
-		return this.folderOps.coversTarget(normalizePath(cur ?? e.path));
+		const { state, op } = this.folderOps.holdReplay(normalizePath(cur ?? e.path));
+		if (state === "free" || !op) return false;
+		if (state === "first") {
+			rlog().warn(
+				"queue",
+				`Replay held: its folder op is not answered yet (${noteRef(op.from)} -> ${noteRef(op.to)})`,
+			);
+		} else if (state === "expired") {
+			rlog().warn(
+				"queue",
+				`Folder op unanswered for ${HOLD_MAX_MS / 60_000} min with replays waiting: renaming per file`,
+			);
+			void this.folderOps.abandon(op, "replay_held").catch((err: unknown) => {
+				rlog().warn("queue", `per-file fallback for a held replay failed: ${errMsg(err)}`);
+			});
+		}
+		return true;
 	}
 
 	/** A catch-up exists or is still coming (the startup join is owed). */
