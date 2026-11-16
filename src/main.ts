@@ -3152,6 +3152,7 @@ export default class EngramSyncPlugin extends Plugin {
 					// backend this never fires and setCrdtManager stays null → every
 					// markdown save uses the legacy pushNote path (graceful degradation).
 					channel.onCrdtJoined = () => {
+						this.syncEngine.setCrdtJoinRejected(null);
 						rlog().info(
 							"crdt",
 							"crdt: topic joined — activating CRDT routing in SyncEngine",
@@ -3226,6 +3227,8 @@ export default class EngramSyncPlugin extends Plugin {
 					// retains the manager, routing every md edit into a dead transport
 					// where frames are silently dropped and legacy never engages.
 					channel.onCrdtJoinError = (reason, min) => {
+						// Tell the preview so it fails fast with the real reason.
+						this.syncEngine.setCrdtJoinRejected(reason ?? "unknown");
 						rlog().warn(
 							"crdt",
 							`crdt: topic join rejected (reason=${reason ?? "unknown"}) — degrading to legacy pushNote path`,
@@ -3704,7 +3707,7 @@ export default class EngramSyncPlugin extends Plugin {
 					.computeSyncPlan("full")
 					.then((plan) => modal.setPlan(plan))
 					.catch((e) => {
-						modal.setPlanError(planLoadErrorMessage(this.hasAuthConfigured()));
+						modal.setPlanError(planLoadErrorMessage(this.hasAuthConfigured(), e));
 						rlog().error("lifecycle", `Sync plan compute failed: ${errMsg(e)}`);
 					});
 

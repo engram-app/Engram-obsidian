@@ -66,7 +66,7 @@ function createEngine(overrides = {}): SyncEngine {
 	const engine = new SyncEngine(
 		mockApp,
 		mockApi,
-		{ ...DEFAULT_SETTINGS, debounceMs: 10, ...overrides },
+		{ ...DEFAULT_SETTINGS, vaultId: "v1", debounceMs: 10, ...overrides },
 		mockSaveData,
 	);
 	engine.setReady();
@@ -272,6 +272,51 @@ describe("SyncEngine.enumerateServerState", () => {
 		engine.setCrdtLiveCheck(() => false);
 		engine.setCrdtCatchupSince(async () => ({ changes: [], has_more: false, next_seq: null }));
 		await expect((engine as any).enumerateServerState()).rejects.toThrow(/live socket/);
+	});
+
+	test("fails fast with join_rejected instead of burning the wait budget", async () => {
+		const engine = createEngine();
+		(engine as any).enumerateWaitMs = 5000;
+		engine.setCrdtManager({} as any);
+		engine.setCrdtLiveCheck(() => false);
+		engine.setCrdtJoinRejected("plan_required");
+		const t0 = Date.now();
+		await expect((engine as any).enumerateServerState()).rejects.toMatchObject({
+			name: "PreviewUnavailableError",
+			reason: "join_rejected",
+		});
+		expect(Date.now() - t0).toBeLessThan(500);
+	});
+
+	test("a join rejection that arrives mid-wait aborts the wait", async () => {
+		const engine = createEngine();
+		(engine as any).enumerateWaitMs = 5000;
+		engine.setCrdtLiveCheck(() => false);
+		setTimeout(() => engine.setCrdtJoinRejected("crdt_proto_too_old"), 150);
+		const t0 = Date.now();
+		await expect((engine as any).enumerateServerState()).rejects.toMatchObject({
+			reason: "join_rejected",
+		});
+		expect(Date.now() - t0).toBeLessThan(1000);
+	});
+
+	test("fails fast with no_vault when no vault is selected", async () => {
+		const engine = createEngine({ vaultId: null });
+		(engine as any).enumerateWaitMs = 5000;
+		const t0 = Date.now();
+		await expect((engine as any).enumerateServerState()).rejects.toMatchObject({
+			reason: "no_vault",
+		});
+		expect(Date.now() - t0).toBeLessThan(500);
+	});
+
+	test("a socket that never goes live fails as timeout", async () => {
+		const engine = createEngine();
+		(engine as any).enumerateWaitMs = 150;
+		engine.setCrdtLiveCheck(() => false);
+		await expect((engine as any).enumerateServerState()).rejects.toMatchObject({
+			reason: "timeout",
+		});
 	});
 
 	test("threads the composite {seq,id} cursor to page past an equal-seq move pair (#312)", async () => {
@@ -1341,5 +1386,30 @@ describe("destructive passes vs ignored server rows", () => {
 			(c) => (c[0] as TFile).path,
 		);
 		expect(trashed).toEqual(localOnly);
+	});
+});
+
+describe("folder creation never makes an empty-named folder", () => {
+	test("ensureFolder skips empty/slash-only paths and drops empty segments", async () => {
+		const engine = createEngine();
+		mockApp.vault.createFolder.mockClear();
+		for (const p of ["", "/", "//"]) await (engine as any).ensureFolder(p);
+		expect(mockApp.vault.createFolder).not.toHaveBeenCalled();
+		await (engine as any).ensureFolder("a//b/");
+		expect(mockApp.vault.createFolder.mock.calls.map((c: any[]) => c[0])).toEqual(["a", "a/b"]);
+	});
+
+	test("createFolderNow skips an empty path and cleans doubled slashes", async () => {
+		const engine = createEngine();
+		const added: string[] = [];
+		(engine as any).explicitFolders = {
+			has: () => false,
+			add: async (p: string) => void added.push(p),
+		};
+		(mockApi as any).createFolder = mock().mockResolvedValue({});
+		for (const p of ["", "/"]) await (engine as any).createFolderNow(p);
+		expect((mockApi as any).createFolder).not.toHaveBeenCalled();
+		await (engine as any).createFolderNow("x//y/");
+		expect(added).toEqual(["x/y"]);
 	});
 });

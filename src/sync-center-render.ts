@@ -235,7 +235,9 @@ function renderActions(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: (
 			void plugin.syncEngine
 				.computeSyncPlan("full")
 				.then((p) => modal.setPlan(p))
-				.catch(() => modal.setPlanError(planLoadErrorMessage(plugin.hasAuthConfigured())));
+				.catch((e) =>
+					modal.setPlanError(planLoadErrorMessage(plugin.hasAuthConfigured(), e)),
+				);
 			// Registered so auth invalidation can flip this modal to the sign-in
 			// error too, not just the first-sync command's modal.
 			plugin.trackPreviewModal(modal);

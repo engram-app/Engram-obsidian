@@ -6,6 +6,7 @@ import { userErrorMessage } from "./i18n/user-error";
 import { toastFor } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
 import { isTextAttachment } from "./mime";
+import { PreviewUnavailableError } from "./preview-error";
 import {
 	buildDeletionTree,
 	computeMatchPercent,
@@ -183,10 +184,24 @@ export function shouldOfferDiagnosticsOptIn(context: SyncPreviewContext): boolea
  *  message: blaming the connection when the real problem is a dead login sent
  *  the 2026-08-12 incident user into a retry limbo — the signed-out copy must
  *  say "sign in", never "check your connection". Pure for testing. */
-export function planLoadErrorMessage(hasAuth: boolean): string {
-	return hasAuth
-		? t("Could not compare with the cloud. Check your connection.")
-		: t("Your login expired. Sign in again in Engram settings to continue.");
+export function planLoadErrorMessage(hasAuth: boolean, e?: unknown): string {
+	if (!hasAuth) return t("Your login expired. Sign in again in Engram settings to continue.");
+	if (e instanceof PreviewUnavailableError) {
+		// Literal keys on purpose: src/i18n/keys-scan.ts only sees `t("...")`.
+		switch (e.reason) {
+			case "join_rejected":
+				return t(
+					"Live sync was refused for this account, so the comparison can't run. Check your plan or update the plugin.",
+				);
+			case "no_vault":
+				return t("No vault is selected. Pick a vault in Engram settings.");
+			case "identity_mismatch":
+				return t("The vault changed while loading. Close this and try again.");
+			case "timeout":
+				return t("Live sync did not connect in time. Try again in a moment.");
+		}
+	}
+	return t("Could not compare with the cloud. Check your connection.");
 }
 
 /** Map a createVault rejection to a short human label. LimitExceededError =
