@@ -13070,6 +13070,49 @@ export class SyncEngine {
 		return text;
 	}
 
+	/** A file that just followed its identity from `from` to `to` may carry
+	 *  an edit this device has not pushed. The id map moves first and the file
+	 *  after, so an edit seen in between finds the old path unmapped: its push
+	 *  is refused and queued with no note id ("Mint refused but edit
+	 *  PRESERVED"). Writing the server's text over the moved file then lost that
+	 *  edit (e2e test_107, restart case). The 3-way rule against the synced
+	 *  baseline:
+	 *  - disk clean, or no baseline to judge by: null, the caller writes the
+	 *    server's text as before;
+	 *  - only the path changed on the server: keep disk, re-key the queued edit
+	 *    to the new path and push it; returns what disk holds;
+	 *  - both changed: null (the server's text is written) after the local text
+	 *    is kept beside it as a conflict copy. */
+	private async keepUnpushedEditOnMove(
+		from: string,
+		to: string,
+		file: TFile,
+		serverText: string,
+	): Promise<string | null> {
+		const disk = await this.app.vault.cachedRead(file);
+		if (disk === serverText) return null;
+		const base = this.syncState.get(from) ?? this.syncState.get(to);
+		if (base === undefined || base.hash === fnv1a(disk)) return null;
+		if (base.hash !== fnv1a(serverText)) {
+			const copy = await this.writeDriftConflictCopy(to, disk);
+			rlog().warn(
+				"conflict",
+				`Moved note had an unpushed edit and the server changed too: keep-both | ${noteRef(to)} copy=${noteRef(copy)}`,
+			);
+			return null;
+		}
+		rlog().warn(
+			"push",
+			`Moved note kept its unpushed edit: ${noteRef(from)} -> ${noteRef(to)}`,
+		);
+		const queued = this.queue.get(from, this.settings.vaultId ?? undefined);
+		const id = this.noteIdMap?.get(to);
+		if (queued && id) await this.requeueAtCurrentPath({ ...queued, noteId: id });
+		this.rememberFileFor(to);
+		this.handleModify(file);
+		return disk;
+	}
+
 	/** Returns the text written, or null when the create race was lost by an
 	 *  empty body (nothing written). `latest`/`mark`: see `textForWrite`; every
 	 *  disk call here (the move, the create, the race fallback) uses it. */
@@ -13099,6 +13142,13 @@ export class SyncEngine {
 				// create below, which is the old behaviour and still converges.
 				const moved = this.app.vault.getFileByPath?.(normalized);
 				if (moved) {
+					const kept = await this.keepUnpushedEditOnMove(
+						cameFrom,
+						normalized,
+						moved,
+						content,
+					);
+					if (kept !== null) return kept;
 					const text = await this.textForWrite(content, latest, mark);
 					await this.modifyFile(moved, text);
 					this.rememberFileFor(normalized);

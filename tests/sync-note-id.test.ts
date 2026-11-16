@@ -9,6 +9,7 @@ import { MarkdownView, TFile } from "obsidian";
 import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
 import { BaseStore } from "../src/base-store";
+import { fnv1a } from "../src/content-hash";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncStore } from "../src/crdt/sync-store";
 import { destroyRemoteLog, initRemoteLog } from "../src/remote-log";
@@ -1924,8 +1925,10 @@ describe("the origin survives a move the store never announced", () => {
 		map.seed({ "Old.md": "id-1" });
 		// A note this engine synced carries bookkeeping for its path; the cached
 		// origin is only trusted for such a path, so the harness must model it.
+		// A real baseline (what was synced): a stub hash reads as an unpushed
+		// local edit, which a move must keep instead of overwriting.
 		(engine as unknown as { syncState: Map<string, unknown> }).syncState.set("Old.md", {
-			hash: 1,
+			hash: fnv1a("old body"),
 		});
 		// Move the map BEFORE the engine is watching. That is the state the trace
 		// showed -- the map already at the new path, no record of the old one --
