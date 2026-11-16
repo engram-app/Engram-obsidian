@@ -8,6 +8,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import EngramSyncPlugin from "../src/main";
+import { PreviewUnavailableError } from "../src/preview-error";
 import { destroyRemoteLog, initRemoteLog } from "../src/remote-log";
 import { computeSyncFingerprint } from "../src/sync-fingerprint";
 import { planLoadErrorMessage } from "../src/sync-preview-modal";
@@ -20,6 +21,20 @@ describe("planLoadErrorMessage", () => {
 		// The signed-out copy must never blame the network — that's the lie the
 		// incident shipped.
 		expect(planLoadErrorMessage(false)).not.toMatch(/connection/i);
+	});
+});
+
+describe("planLoadErrorMessage by failure reason", () => {
+	test("each typed reason gets its own copy; only untyped errors blame the connection", () => {
+		const msg = (r: any) => planLoadErrorMessage(true, new PreviewUnavailableError(r));
+		const all = ["join_rejected", "no_vault", "identity_mismatch", "timeout"].map(msg);
+		expect(new Set(all).size).toBe(4);
+		for (const m of all) expect(m).not.toMatch(/connection/i);
+		expect(planLoadErrorMessage(true, new Error("fetch failed"))).toMatch(/connection/i);
+		// signed out still wins over the reason
+		expect(planLoadErrorMessage(false, new PreviewUnavailableError("timeout"))).toMatch(
+			/sign in/i,
+		);
 	});
 });
 

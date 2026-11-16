@@ -49,6 +49,7 @@ import {
 	isFolderRow,
 	parentFolder,
 } from "./folder-ops";
+import { cleanFolderPath } from "./folder-path";
 import { t } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
 import { IgnoredFiles } from "./ignored-files";
@@ -77,6 +78,7 @@ import {
 } from "./offline-queue";
 import { attachmentCapabilityGained, type PlanState, samePlanState } from "./plan-state";
 import { formatBytes } from "./plan-usage";
+import { PreviewUnavailableError } from "./preview-error";
 import { rlog } from "./remote-log";
 import { Semaphore } from "./semaphore";
 import type { SyncLog } from "./sync-log";
@@ -2499,6 +2501,11 @@ export class SyncEngine {
 	 *  compatible with callers/tests that never wire it). */
 	private crdtLive: (() => boolean) | null = null;
 
+	/** Record (reason) or clear (null) a rejected crdt: topic join; see crdtJoinRejected. */
+	setCrdtJoinRejected(reason: string | null): void {
+		this.crdtJoinRejected = reason;
+	}
+
 	setCrdtLiveCheck(fn: (() => boolean) | null): void {
 		this.setCrdtPorts({ live: fn });
 	}
@@ -2523,6 +2530,10 @@ export class SyncEngine {
 	 *  the preview. Covers the startup join race and the vault-switch rebuild.
 	 *  A field so tests can shrink it. */
 	private enumerateWaitMs = 8000;
+	/** Set while the crdt: topic join is known-rejected, so the preview fails
+	 *  fast with the real reason instead of burning the wait budget. Cleared on
+	 *  the next successful join. */
+	private crdtJoinRejected: string | null = null;
 
 	/** Adopt-first seed gate input (CrdtManager.isUnchangedSynced): true when
 	 *  `content` hashes to exactly what this engine last synced for `path` —
@@ -7550,7 +7561,9 @@ export class SyncEngine {
 		await this.createFolderNow(folder.path);
 	}
 
-	private async createFolderNow(path: string): Promise<void> {
+	private async createFolderNow(rawPath: string): Promise<void> {
+		const path = cleanFolderPath(rawPath);
+		if (!path) return;
 		if (!this.explicitFolders) return;
 		if (this.shouldIgnore(path)) return;
 		if (this.explicitFolders.has(path)) return;
@@ -9268,14 +9281,26 @@ export class SyncEngine {
 		// outright (a vault-switch/startup false-negative is worse than a short
 		// spinner). Falls through to the offline error only after the budget.
 		const deadline = Date.now() + this.enumerateWaitMs;
-		while (
-			(!this.crdtCatchupSince || !this.crdt || !(this.crdtLive?.() ?? false)) &&
-			Date.now() < deadline
-		) {
+		const socketReady = () =>
+			!!this.crdtCatchupSince && !!this.crdt && (this.crdtLive?.() ?? false);
+		// Fail fast on states no waiting can fix.
+		const hardBlock = () => {
+			if (!this.settings.vaultId) throw new PreviewUnavailableError("no_vault");
+			if (this.crdtJoinRejected !== null)
+				throw new PreviewUnavailableError("join_rejected", this.crdtJoinRejected);
+		};
+		hardBlock();
+		while (!socketReady() && Date.now() < deadline) {
 			await this.sleep(100);
+			hardBlock();
 		}
-		if (!this.crdtCatchupSince || !this.crdt || !(this.crdtLive?.() ?? false)) {
-			throw new Error("Sync preview needs the live socket (op-log enumeration)");
+		if (!socketReady()) {
+			const missing = [
+				!this.crdtCatchupSince && "catchup",
+				!this.crdt && "manager",
+				!(this.crdtLive?.() ?? false) && "live",
+			].filter(Boolean);
+			throw new PreviewUnavailableError("timeout", `missing ${missing.join(",")}`);
 		}
 		const byId = new Map<string, Extract<SyncChange, { type: "note" }>>();
 		const attachments = new Map<string, { deleted: boolean }>();
@@ -13996,7 +14021,9 @@ export class SyncEngine {
 	}
 
 	/** Recursively create folder if it doesn't exist. */
-	private async ensureFolder(path: string): Promise<void> {
+	private async ensureFolder(rawPath: string): Promise<void> {
+		const path = cleanFolderPath(rawPath);
+		if (!path) return;
 		const existing = this.app.vault.getAbstractFileByPath(path);
 		if (existing) return;
 
