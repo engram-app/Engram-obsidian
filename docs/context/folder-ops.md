@@ -6,10 +6,32 @@ _Last verified: 2026-11-15 (PR #689 after its round-5 adversarial review, Engram
 With `features.folder_ops` on (user-topic join reply), a local folder rename or
 move is ONE `folder_op {op, op_id, folder_id, parent_id, name}` on the crdt
 socket instead of one `crdt_create` relocation per note plus a delete and
-re-upload per attachment. Inbound, `folder_changed` and the manifest `folders`
-list move a folder with ONE `vault.rename`. Code: `src/folder-ops.ts` (folder
-index, pending queue, held inbound) and the folder section of
-`SyncEngine.handleRename` in `src/sync.ts`.
+re-upload per attachment. Code: `src/folder-ops.ts` (folder index, pending
+queue, held inbound) and the folder section of `SyncEngine.handleRename` in
+`src/sync.ts`.
+
+**Narrowed S4 (2026-11-16, after paired e2e runs 43846246580 to 43881468416).**
+The SENDER is O(1). The RECEIVER is not:
+- A live `folder_changed` moves the folder INDEX only (`applyFolderChange`).
+  The server still announces every moved note and attachment, and those
+  converge per note exactly as plugin main does. The old one-rename follow and
+  the occupied-target merge raced those events and kept leaving wrong end
+  states.
+- A manifest-detected move (an offline or closed device catching up) still
+  follows with ONE `vault.rename` (`followFolderMoveOnDisk`). It runs before
+  the manifest delete pass, which would otherwise trash the moved folder's
+  files.
+- An emptied old folder is removed (`removeEmptyFolders`, called after every
+  per-note move). A folder the server moved is in `movedAwayFolders`, so it is
+  removed even if it is still in the local explicit-folder set, and that path
+  leaves the set first, so no folder DELETE is sent.
+- Follow-as-one-move on the receiver returns when the backend sends
+  `folder_changed` before the per-note events, or with S5.
+
+Sender, while its op is pending: a features-off reply never abandons the op
+(it is still sent; the server's answer decides). Any inbound create under the
+op's `from` lands in the moved file (`fileMovedByPendingOp`), never a second
+file at the old path.
 
 ## How the per-item events are absorbed
 Obsidian fires a `rename` for the folder AND every descendant, order not

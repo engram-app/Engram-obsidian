@@ -147,3 +147,30 @@ test("MEDIUM-2: a replay held under an unsendable op is bounded: per-file fallba
 		e.destroy();
 	}
 });
+
+// e2e runs 43862890570 / 43881468416: with A's op pending, a peer's edit for
+// the note's OLD path reached A and was written as a second file there.
+test("an inbound write for a path our pending op moved lands in the moved file, never a second one", async () => {
+	const { e } = await movedPending();
+	try {
+		const app = (e as any).app;
+		const created: string[] = [];
+		const modified: [string, string][] = [];
+		app.vault.create = async (p: string) => {
+			created.push(p);
+		};
+		app.vault.createFolder = async () => {};
+		app.vault.modify = async (f: TFile, text: string) => {
+			modified.push([f.path, text]);
+		};
+		await (e as any).createFileWithFolders("Proj/a.md", "alpha 107\n\npeer edit");
+		expect(created).toEqual([]);
+		expect(modified).toEqual([["Done/a.md", "alpha 107\n\npeer edit"]]);
+		// Once the op has left the queue, the old path is an ordinary path again.
+		e.folderOps.reset();
+		await (e as any).createFileWithFolders("Proj/a.md", "fresh");
+		expect(created).toEqual(["Proj/a.md"]);
+	} finally {
+		e.destroy();
+	}
+});

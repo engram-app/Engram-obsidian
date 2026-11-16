@@ -143,15 +143,10 @@ describe("Engram#2523 S4: a folder rename is one folder op", () => {
 		});
 	}
 
-	test("S5 server (no per-note cascade broadcasts): the peer follows folder_changed", async () => {
-		const t = await seeded(2530, { folderOps: true, cascadeBroadcasts: false });
-		try {
-			const before = await renameAndCheck(t, "folder-first");
-			expect(delta(t, before, "folder_op")).toBe(1);
-		} finally {
-			cleanup(t);
-		}
-	});
+	// Removed with the narrowed S4: "S5 server (no per-note cascade broadcasts):
+	// the peer follows folder_changed". The narrowed receiver does not follow a
+	// live folder_changed on disk, so an S5-shaped server (no per-note events)
+	// needs the receiver follow back. Re-add this test with S5 (PR 689 body).
 
 	test("server without folder ops: per-file fallback, attachments moved not re-uploaded", async () => {
 		const t = await seeded(2531, { folderOps: false });
@@ -251,26 +246,24 @@ describe("Engram#2523 S4: a folder rename is one folder op", () => {
 		}
 	});
 
-	test("cascading server: the peer absorbs the per-note events after the one folder event", async () => {
-		// The order the O(1) peer path needs: attachment legs AFTER
-		// folder_changed, like the note pairs. Today's backend sends them first,
-		// and the peer then converges per file (folder-ops-attachment-cascade).
-		const t = await seeded(2535, {
-			folderOps: true,
-			cascadeBroadcasts: true,
-			attachmentLegsFirst: false,
-		});
+	// Narrowed S4 (e2e runs 43846246580 to 43881468416): the receiver does not
+	// follow a live folder_changed as one vault.rename; it converges per note,
+	// as plugin main does, and removes the emptied old folder. Following as one
+	// move returns with backend ordering (folder_changed first) or S5.
+	test("cascading server: the peer converges per note, moves files (no rewrite), and drops the old folder", async () => {
+		const t = await seeded(2535, { folderOps: true, cascadeBroadcasts: true });
 		try {
 			const [a, b] = t.replicas;
-			const renames = b.renamed().length;
 			const writes = b.writeJournal().length;
 			await a.renameFolder("Proj", "Done", "folder-first");
 			await t.scheduler.drain();
-			// One folder rename on B's disk: no per-file move, no rewrite, no trash.
-			expect(b.renamed().slice(renames)).toEqual(["Proj -> Done"]);
+			// Notes moved, not rewritten. The attachment takes main's receiver
+			// path for a move (trash old, download new); no note is trashed.
 			expect(b.writeJournal().length - writes).toBe(0);
-			expect(b.trashed()).toEqual([]);
+			expect(b.trashed().filter((p) => p.endsWith(".md"))).toEqual([]);
+			expect(onDisk(b, "Done/img.png")).toBe(true);
 			expect(read(b, "Done/a.md")).toBe(NOTES["Proj/a.md"]);
+			expect(onDisk(b, "Proj")).toBe(false);
 		} finally {
 			cleanup(t);
 		}

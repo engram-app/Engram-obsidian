@@ -7,6 +7,9 @@ import { boot, cleanup } from "./scenarios";
 
 afterAll(() => Replica.restoreGlobals());
 const onDisk = (r: Replica, rel: string) => fs.existsSync(path.join(r.vaultDir, rel));
+/** Trashed FILES. An emptied old folder is removed on purpose (narrowed S4
+ *  cleanup), so a folder in the trash list is not a lost file. */
+const trashedFiles = (r: Replica) => r.trashed().filter((p) => /\.[^/]+$/.test(p));
 
 for (const cascadeBroadcasts of [true, false])
 	test(`server applied, every reply lost: the cap's fallback loses nothing (cascade=${cascadeBroadcasts})`, async () => {
@@ -51,8 +54,8 @@ for (const cascadeBroadcasts of [true, false])
 			const server = [...t.server.state().notes.keys()].sort();
 			expect(server).toEqual(["Done/a.md", "Done/sub/b.md"]);
 			for (const r of [a, b]) for (const p of server) expect(onDisk(r, p)).toBe(true);
-			expect(a.trashed()).toEqual([]);
-			expect(b.trashed()).toEqual([]);
+			expect(trashedFiles(a)).toEqual([]);
+			expect(trashedFiles(b)).toEqual([]);
 			expect(sends).toBeGreaterThan(1);
 		} finally {
 			cleanup(t);

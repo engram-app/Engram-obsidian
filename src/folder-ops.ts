@@ -254,6 +254,15 @@ export class FolderOps {
 		return undefined;
 	}
 
+	/** Where a pending op moved `path` (a path under its `from`), or null.
+	 *  The same path under several pending ops resolves through the first. */
+	movedPathFor(path: string): string | null {
+		for (const op of this.queue.values()) {
+			if (path.startsWith(`${op.from}/`)) return `${op.to}${path.slice(op.from.length)}`;
+		}
+		return null;
+	}
+
 	/** When a queued path-addressed replay first waited on each op, by
 	 *  `op_id`. A hiding layer: cleared when the op leaves the queue (pruned
 	 *  here) or on reset, and bounded by `HOLD_MAX_MS` (see holdReplay). */

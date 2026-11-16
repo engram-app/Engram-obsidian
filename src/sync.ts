@@ -1273,6 +1273,9 @@ export class SyncEngine {
 			this.renamePath(src, dest, "remote");
 			this.rememberFileFor(dest);
 			rlog().info("pull", `Followed identity move: ${noteRef(src)} -> ${noteRef(dest)}`);
+			// The move may have emptied a folder the server moved away: remove it
+			// (removeEmptyFolders keeps user-intended empty folders).
+			await this.removeEmptyFolders(src);
 		} catch (e) {
 			this.files.clearMarker(src, "remotelyRenamed");
 			this.files.clearMarker(dest, "remotelyRenamed");
@@ -6505,44 +6508,88 @@ export class SyncEngine {
 				// from before that op, not another writer. Holding it would let its
 				// expiry undo the user's own move; the op's answer settles it.
 				if (this.folderOps.hasPending(row.id)) continue;
-				if (here !== null && here !== at) await this.folderOps.inbound(row);
+				// Disk follows here (not for a live folder_changed): an offline
+				// catch-up has no per-note events racing it, and the manifest delete
+				// pass below would otherwise trash every file of the moved folder.
+				if (here !== null && here !== at) await this.followFolderMoveOnDisk(row);
 			}
 		}
 		this.learnFolders(rows);
 	}
 
-	/** Apply one server folder change to the vault: ONE `vault.rename` of the
-	 *  folder, with every descendant's bookkeeping moved first, so the child
-	 *  events Obsidian then fires hit the Relay echo rule. A move that cannot
-	 *  happen (target occupied, rename throws) leaves the index where the disk
-	 *  is, so the next manifest retries it. */
+	/** Apply one server folder change: the folder INDEX only. Narrowed S4
+	 *  (e2e runs 43846246580 to 43881468416): the receiving device does not
+	 *  follow a folder move as one vault.rename. The server still announces
+	 *  every moved note and attachment, and those converge per note exactly as
+	 *  plugin main does; a receiver-side folder follow raced them and kept
+	 *  leaving wrong end states. Following as one move returns when the
+	 *  backend sends `folder_changed` before the per-note events, or stops
+	 *  sending them (S5).
+	 *
+	 *  A move records its old path as moved away (`movedAwayFolders`), so the
+	 *  per-note moves that empty it can remove it (`removeEmptyFolders`). */
 	private async applyFolderChange(change: FolderChange): Promise<void> {
 		const index = this.folderOps.index;
-		const learn = () => {
-			index.set(change);
-			this.persistGateJournalSoon();
-		};
 		if (change.deleted) {
 			// Folder delete stays per note until the deletes overhaul (parked).
 			index.remove(change.id);
 			this.persistGateJournalSoon();
 			return;
 		}
-		const parent = index.pathFor(change.parent_id);
 		const from = index.pathFor(change.id);
-		if (parent === null || from === null) return learn(); // nothing local to move
+		const parent = index.pathFor(change.parent_id);
+		index.set(change);
+		this.persistGateJournalSoon();
+		if (from === null || parent === null) return;
 		const to = parent ? `${parent}/${change.name}` : change.name;
-		if (from === to || this.shouldIgnore(from) || this.shouldIgnore(to)) return learn();
-		const folder = this.app.vault.getAbstractFileByPath(from);
-		if (!(folder instanceof TFolder)) return learn(); // not here (per-note moves won)
-		if (this.app.vault.getAbstractFileByPath(to)) return this.mergeFolderInto(from, to, learn);
+		if (from !== to) {
+			this.movedAwayFolders.add(from);
+			// The per-note moves may already have emptied it (they can reach the
+			// stream lane first): clean up now as well as after each move.
+			const left = this.app.vault.getAbstractFileByPath(from);
+			if (left instanceof TFolder) {
+				const deepestFirst: string[] = [];
+				const walk = (f: TFolder) => {
+					for (const c of f.children) if (c instanceof TFolder) walk(c);
+					deepestFirst.push(f.path);
+				};
+				walk(left);
+				for (const f of deepestFirst) await this.removeEmptyFolders(`${f}/_`);
+			}
+		}
+	}
+
+	/** A manifest-detected folder move (this device was offline or closed):
+	 *  ONE vault.rename of the folder, every descendant's bookkeeping moved
+	 *  first, so the child events Obsidian then fires hit the Relay echo rule.
+	 *  Runs before the manifest delete pass, which would otherwise trash every
+	 *  file of a folder moved elsewhere. Target already on disk, or a rename
+	 *  that throws: the index learns the move, the folder's files converge per
+	 *  note, and the emptied old folder is removed as moved away. */
+	private async followFolderMoveOnDisk(change: FolderChange): Promise<void> {
+		const index = this.folderOps.index;
+		const from = index.pathFor(change.id);
+		const parent = index.pathFor(change.parent_id);
+		const to = parent === null ? null : parent ? `${parent}/${change.name}` : change.name;
+		const folder = from === null ? null : this.app.vault.getAbstractFileByPath(from);
+		if (
+			from === null ||
+			to === null ||
+			from === to ||
+			!(folder instanceof TFolder) ||
+			this.shouldIgnore(from) ||
+			this.shouldIgnore(to) ||
+			this.app.vault.getAbstractFileByPath(to)
+		) {
+			return this.applyFolderChange(change);
+		}
 		const moved = this.descendantMoves(from, to);
 		this.rekeyMoved(moved, false);
 		// The index moves BEFORE the rename: Obsidian fires the folder's own
-		// rename event inside it, and the echo rule must already read it at
-		// `to`, or this device sends the move back as its own op.
+		// rename event inside it, and the echo rule must already read it at `to`.
 		const prior = index.all().find((r) => r.id === change.id);
-		learn();
+		index.set(change);
+		this.persistGateJournalSoon();
 		try {
 			if (parent) await this.ensureFolder(parent);
 			await this.app.vault.rename(folder, to);
@@ -6551,8 +6598,8 @@ export class SyncEngine {
 				`Followed folder move: ${noteRef(from)} -> ${noteRef(to)} | ${moved.length} files`,
 			);
 		} catch (e) {
-			// Not moved: put the index and the bookkeeping back, so the next
-			// manifest retries it and the per-note events converge meanwhile.
+			// Not moved: index and bookkeeping back where the disk is; the files
+			// converge per note.
 			if (prior) index.set(prior);
 			this.persistGateJournalSoon();
 			this.rekeyMoved(
@@ -6566,67 +6613,18 @@ export class SyncEngine {
 		}
 	}
 
-	/** `folder_changed` found its target already on disk: the server's
-	 *  per-note events (they reach the stream lane first) moved some or all of
-	 *  the children there, creating the folder. The move is still true, so
-	 *  finish it as a merge instead of giving up: move what is still under
-	 *  `from`, file by file (bookkeeping first, so each child's own rename event
-	 *  is an echo), leave anything the target already holds to the per-note
-	 *  events, then remove the emptied old tree. Its paths leave the explicit
-	 *  folder set first: the server already moved that folder, so its vault
-	 *  delete events must not send a folder DELETE. Giving up here left the
-	 *  empty old folder on every device (e2e run 43846246580). */
-	private async mergeFolderInto(from: string, to: string, learn: () => void): Promise<void> {
-		// Every descendant whose new path is still free: its bookkeeping moves
-		// (a tracked note not on disk too), and its file if it is here.
-		const moved = this.descendantMoves(from, to).filter(
-			([, n]) =>
-				!this.app.vault.getAbstractFileByPath(n) &&
-				!this.syncState.has(n) &&
-				!this.noteIdMap?.get(n),
-		);
-		this.rekeyMoved(moved, false);
-		learn();
-		for (const [o, n] of moved) {
-			const file = this.app.vault.getAbstractFileByPath(o);
-			if (!(file instanceof TFile)) continue;
-			try {
-				const cut = n.lastIndexOf("/");
-				if (cut > 0) await this.ensureFolder(n.slice(0, cut));
-				await this.app.vault.rename(file, n);
-			} catch (e) {
-				rlog().warn("pull", `Folder merge could not move ${noteRef(o)}: ${errMsg(e, n)}`);
-			}
-		}
-		const left = this.app.vault.getAbstractFileByPath(from);
-		const removed = left instanceof TFolder ? await this.trashEmptyTree(left) : 0;
-		rlog().info(
-			"pull",
-			`Followed folder move into an existing folder: ${noteRef(from)} -> ${noteRef(to)} | ${moved.length} files, ${removed} empty folders removed`,
-		);
-	}
+	/** Old paths of folders the server moved (folder_changed or the manifest
+	 *  list). A hiding layer for `removeEmptyFolders`: it lets an emptied
+	 *  folder be removed even though it is still in the local explicit-folder
+	 *  set (the server already moved it). Cleared per path when the folder is
+	 *  removed, and on vault switch. */
+	private movedAwayFolders = this.track(["vault", "destroy"], new Set<string>());
 
-	/** Trash `folder` and every folder under it that holds no file, deepest
-	 *  first, without a server folder DELETE. Returns how many were removed;
-	 *  a folder still holding a file is kept. */
-	private async trashEmptyTree(folder: TFolder): Promise<number> {
-		let removed = 0;
-		for (const child of [...folder.children]) {
-			if (child instanceof TFolder) removed += await this.trashEmptyTree(child);
+	private isMovedAway(folder: string): boolean {
+		for (const p of this.movedAwayFolders) {
+			if (folder === p || folder.startsWith(`${p}/`)) return true;
 		}
-		// Re-read after the moves and the trashes above: the object handed in
-		// may predate them, and its children list then still names moved files.
-		const now = this.app.vault.getAbstractFileByPath(folder.path);
-		if (!(now instanceof TFolder) || now.children.length > 0) return removed;
-		folder = now;
-		await this.explicitFolders?.delete(normalizePath(folder.path));
-		try {
-			await this.app.fileManager.trashFile(folder);
-			removed++;
-		} catch (e) {
-			devLog().log("pull", `trash emptied folder(${folder.path}) failed: ${errMsg(e)}`);
-		}
-		return removed;
+		return false;
 	}
 
 	/** A manifest `folders` list arrived this session: the server speaks
@@ -11390,6 +11388,9 @@ export class SyncEngine {
 					"pull",
 					`Id-keyed move (true rename): ${noteRef(priorPath)} -> ${noteRef(newPath)} (id=${id})`,
 				);
+				// The per-note half of a server folder move: remove the folder it
+				// emptied (removeEmptyFolders keeps user-intended empty folders).
+				await this.removeEmptyFolders(normalizePath(priorPath));
 				return;
 			} catch (e) {
 				// Destination appeared underneath us, a permission error, whatever —
@@ -13224,6 +13225,13 @@ export class SyncEngine {
 		latest?: () => Promise<string | null>,
 		mark?: (text: string) => void,
 	): Promise<string | null> {
+		const moved = this.fileMovedByPendingOp(normalized);
+		if (moved) {
+			const text = await this.textForWrite(content, latest, mark);
+			await this.modifyFile(moved, text);
+			this.rememberFileFor(moved.path);
+			return text;
+		}
 		const folder = normalized.includes("/")
 			? normalized.substring(0, normalized.lastIndexOf("/"))
 			: "";
@@ -13305,6 +13313,11 @@ export class SyncEngine {
 		normalized: string,
 		data: ArrayBuffer,
 	): Promise<void> {
+		const moved = this.fileMovedByPendingOp(normalized);
+		if (moved) {
+			await this.app.vault.modifyBinary(moved, data);
+			return;
+		}
 		const folder = normalized.includes("/")
 			? normalized.substring(0, normalized.lastIndexOf("/"))
 			: "";
@@ -13312,6 +13325,27 @@ export class SyncEngine {
 			await this.ensureFolder(folder);
 		}
 		await this.app.vault.createBinary(normalized, data);
+	}
+
+	/** The file a pending folder op of ours moved away from `path`, if any.
+	 *  Until the op is acked the server still names the old path, so an
+	 *  inbound write (a peer's edit, a fan-out flush, a catch-up row) can
+	 *  arrive for it. Creating a file there forked the note: a second file at
+	 *  the old path while the moved one lacked the edit, and a non-bijective
+	 *  id map (e2e runs 43862890570, 43881468416). Every inbound create goes
+	 *  through the two create helpers, so this one check covers them all: the
+	 *  write lands in the moved file instead. */
+	private fileMovedByPendingOp(path: string): TFile | null {
+		const to = this.folderOps.movedPathFor(normalizePath(path));
+		if (to === null || this.app.vault.getAbstractFileByPath(path)) return null;
+		const file = this.app.vault.getAbstractFileByPath(to);
+		if (!(file instanceof TFile)) return null;
+		rlog().anomaly("sync", "pending_op_old_path_write");
+		rlog().warn(
+			"pull",
+			`Write for a path our pending folder op moved, applied to the moved file: ${noteRef(path)} -> ${noteRef(to)}`,
+		);
+		return file;
 	}
 
 	/** Recursively create folder if it doesn't exist. */
@@ -13417,10 +13451,17 @@ export class SyncEngine {
 
 			// User has marked this folder as intentionally empty (created in the
 			// web app or via Obsidian's New folder). Don't strip it; the marker
-			// would just come back on the next pull.
-			if (this.explicitFolders?.has(folder)) break;
+			// would just come back on the next pull. Unless the server MOVED it
+			// (folder ops): the marker went with the folder, so the emptied old
+			// path is dropped from the local set first, and its trash then sends
+			// no folder DELETE (deleteFolderNow only deletes tracked folders).
+			if (this.explicitFolders?.has(folder)) {
+				if (!this.isMovedAway(folder)) break;
+				await this.explicitFolders.delete(folder);
+			}
 
 			await this.app.fileManager.trashFile(existing);
+			this.movedAwayFolders.delete(folder);
 
 			// Walk up to parent
 			folder = folder.includes("/") ? folder.substring(0, folder.lastIndexOf("/")) : "";
