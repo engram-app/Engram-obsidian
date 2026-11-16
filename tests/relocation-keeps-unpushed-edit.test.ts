@@ -95,3 +95,56 @@ test("a clean file is still overwritten by the server text (unchanged behaviour)
 		e.destroy();
 	}
 });
+
+/** The e2e shape: a merge base holds the text this device synced, and the
+ *  recorded hash does NOT match it (a CRDT note records its own projection). */
+function withBase(e: SyncEngine, text: string) {
+	const store = new Map([["Done/a.md", { content: text, version: 1, ts: 0 }]]);
+	(e as any).baseStore = {
+		get: (p: string) => store.get(p),
+		set: () => {},
+		rename: () => {},
+		delete: () => {},
+	};
+	(e as any).syncState.set("Proj/a.md", { hash: 12345, crdtHead: "h", seq: 3 });
+}
+
+const conflictCopies = (disk: Map<string, string>) =>
+	[...disk.keys()].filter((k) => k.includes("conflict"));
+
+test("e2e run 43846246580: a path-only move keeps the edit even when the recorded hash disagrees", async () => {
+	const { e, disk } = setup();
+	try {
+		withBase(e, ORIGINAL);
+		await (e as any).createFileWithFolders("Done/a.md", ORIGINAL);
+		expect(disk.get("Done/a.md")).toBe(EDIT);
+		expect(conflictCopies(disk)).toEqual([]);
+	} finally {
+		e.destroy();
+	}
+});
+
+test("server and device edited different lines: both land in the note, no copy", async () => {
+	const { e, disk } = setup();
+	try {
+		withBase(e, ORIGINAL);
+		await (e as any).createFileWithFolders("Done/a.md", "# A server\n\nalpha 107\n");
+		expect(disk.get("Done/a.md")).toBe("# A server\n\nalpha 107\n\npeer edit 1234\n");
+		expect(conflictCopies(disk)).toEqual([]);
+	} finally {
+		e.destroy();
+	}
+});
+
+test("overlapping edits: server text at the path, the edit kept as a copy", async () => {
+	const { e, disk } = setup();
+	try {
+		withBase(e, ORIGINAL);
+		disk.set("Proj/a.md", "# A\n\nalpha mine\n");
+		await (e as any).createFileWithFolders("Done/a.md", "# A\n\nalpha theirs\n");
+		expect(disk.get("Done/a.md")).toBe("# A\n\nalpha theirs\n");
+		expect([...disk.values()]).toContain("# A\n\nalpha mine\n");
+	} finally {
+		e.destroy();
+	}
+});

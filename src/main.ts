@@ -807,6 +807,7 @@ export default class EngramSyncPlugin extends Plugin {
 			send: makeCrdtOpSend({
 				capGate: notesCapGate,
 				capBlocksCreate: (path) => this.syncEngine.capBlocksCreate(path),
+				waitsForFolderOp: (path) => this.syncEngine.createWaitsForFolderOp(path),
 				channel: () => this.noteStream,
 				// #1409 (review H4): re-read disk and build the genesis body at SEND
 				// time so a replayed create (rate-limit backoff, pre-join hold, a

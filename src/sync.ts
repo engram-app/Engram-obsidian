@@ -19,6 +19,7 @@ import type { GenesisOutcome } from "./channel";
 import { fnv1a, fnv1aBase64 } from "./content-hash";
 import { FileMetaV1Writer } from "./crdt/filemeta-v1";
 import { flushTarget, splitFrontmatter } from "./crdt/frontmatter-codec";
+import { merge3 } from "./crdt/lca-merge";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
 import { encodeUpdateFrame, fromB64 } from "./crdt/wire";
@@ -1983,6 +1984,18 @@ export class SyncEngine {
 	 *  the gate reopens. */
 	capBlocksCreate(path: string): boolean {
 		return !!this.notesCapGate?.isClosed() && !this.syncState.has(path);
+	}
+
+	/** A queued `crdt_create` for `path` waits while this device's own folder
+	 *  op that moved it there is pending. `rekeyMoved` re-keys queued creates to
+	 *  the new path (so an offline create follows the folder), and a create for
+	 *  an id the server already holds (its ack lost or late) is a per-note
+	 *  rename on the server: sent while the op was held, it relocated the
+	 *  folder's notes one by one ahead of the op (e2e run 43846246580). The
+	 *  op's ack or fallback (`onFolderOpLeft`) releases it; the queue re-checks
+	 *  held ops on its next tick. */
+	createWaitsForFolderOp(path: string): boolean {
+		return this.folderOps.coversTarget(normalizePath(path));
 	}
 
 	/** `capBlocksCreate` for a SINGLE push of a note the user just created or
@@ -6522,10 +6535,7 @@ export class SyncEngine {
 		if (from === to || this.shouldIgnore(from) || this.shouldIgnore(to)) return learn();
 		const folder = this.app.vault.getAbstractFileByPath(from);
 		if (!(folder instanceof TFolder)) return learn(); // not here (per-note moves won)
-		if (this.app.vault.getAbstractFileByPath(to)) {
-			rlog().warn("pull", `Folder move target occupied: ${noteRef(from)} -> ${noteRef(to)}`);
-			return;
-		}
+		if (this.app.vault.getAbstractFileByPath(to)) return this.mergeFolderInto(from, to, learn);
 		const moved = this.descendantMoves(from, to);
 		this.rekeyMoved(moved, false);
 		// The index moves BEFORE the rename: Obsidian fires the folder's own
@@ -6554,6 +6564,65 @@ export class SyncEngine {
 				`Folder move could not follow on disk (${noteRef(from)} -> ${noteRef(to)}): ${errMsg(e, to)}`,
 			);
 		}
+	}
+
+	/** `folder_changed` found its target already on disk: the server's
+	 *  per-note events (they reach the stream lane first) moved some or all of
+	 *  the children there, creating the folder. The move is still true, so
+	 *  finish it as a merge instead of giving up: move what is still under
+	 *  `from`, file by file (bookkeeping first, so each child's own rename event
+	 *  is an echo), leave anything the target already holds to the per-note
+	 *  events, then remove the emptied old tree. Its paths leave the explicit
+	 *  folder set first: the server already moved that folder, so its vault
+	 *  delete events must not send a folder DELETE. Giving up here left the
+	 *  empty old folder on every device (e2e run 43846246580). */
+	private async mergeFolderInto(from: string, to: string, learn: () => void): Promise<void> {
+		// Every descendant whose new path is still free: its bookkeeping moves
+		// (a tracked note not on disk too), and its file if it is here.
+		const moved = this.descendantMoves(from, to).filter(
+			([, n]) =>
+				!this.app.vault.getAbstractFileByPath(n) &&
+				!this.syncState.has(n) &&
+				!this.noteIdMap?.get(n),
+		);
+		this.rekeyMoved(moved, false);
+		learn();
+		for (const [o, n] of moved) {
+			const file = this.app.vault.getAbstractFileByPath(o);
+			if (!(file instanceof TFile)) continue;
+			try {
+				const cut = n.lastIndexOf("/");
+				if (cut > 0) await this.ensureFolder(n.slice(0, cut));
+				await this.app.vault.rename(file, n);
+			} catch (e) {
+				rlog().warn("pull", `Folder merge could not move ${noteRef(o)}: ${errMsg(e, n)}`);
+			}
+		}
+		const left = this.app.vault.getAbstractFileByPath(from);
+		const removed = left instanceof TFolder ? await this.trashEmptyTree(left) : 0;
+		rlog().info(
+			"pull",
+			`Followed folder move into an existing folder: ${noteRef(from)} -> ${noteRef(to)} | ${moved.length} files, ${removed} empty folders removed`,
+		);
+	}
+
+	/** Trash `folder` and every folder under it that holds no file, deepest
+	 *  first, without a server folder DELETE. Returns how many were removed;
+	 *  a folder still holding a file is kept. */
+	private async trashEmptyTree(folder: TFolder): Promise<number> {
+		let removed = 0;
+		for (const child of [...folder.children]) {
+			if (child instanceof TFolder) removed += await this.trashEmptyTree(child);
+		}
+		if (folder.children.length > 0) return removed;
+		await this.explicitFolders?.delete(normalizePath(folder.path));
+		try {
+			await this.app.fileManager.trashFile(folder);
+			removed++;
+		} catch (e) {
+			devLog().log("pull", `trash emptied folder(${folder.path}) failed: ${errMsg(e)}`);
+		}
+		return removed;
 	}
 
 	/** A manifest `folders` list arrived this session: the server speaks
@@ -11019,6 +11088,14 @@ export class SyncEngine {
 			if (acked) pending.echoed = true;
 		}
 		if (this.pendingLocalMoves.size > 0) this.scheduleMoveSweep();
+		// Release the creates it held (createWaitsForFolderOp): re-enqueueing
+		// makes them due now instead of after the queue's max backoff.
+		// ponytail: walks the id map, O(vault) once per op like descendantMoves.
+		for (const [p, id] of Object.entries(this.noteIdMap?.toJSON() ?? {})) {
+			if (p.startsWith(`${to}/`) && this.crdtHasPendingOp?.(id)) {
+				this.crdtEnqueue?.({ kind: "create", docId: id, path: p });
+			}
+		}
 		if (!this.offline && this.queue.size > 0) {
 			void this.flushQueue().catch((e: unknown) => {
 				rlog().warn("queue", `flush after folder op failed: ${errMsg(e)}`);
@@ -13075,14 +13152,20 @@ export class SyncEngine {
 	 *  after, so an edit seen in between finds the old path unmapped: its push
 	 *  is refused and queued with no note id ("Mint refused but edit
 	 *  PRESERVED"). Writing the server's text over the moved file then lost that
-	 *  edit (e2e test_107, restart case). The 3-way rule against the synced
-	 *  baseline:
-	 *  - disk clean, or no baseline to judge by: null, the caller writes the
+	 *  edit (e2e test_107, restart case). Resolved like any disk-vs-server
+	 *  divergence, against the merge base (the text this device last synced):
+	 *  - disk at the base, or equal to the server: null, the caller writes the
 	 *    server's text as before;
-	 *  - only the path changed on the server: keep disk, re-key the queued edit
-	 *    to the new path and push it; returns what disk holds;
-	 *  - both changed: null (the server's text is written) after the local text
-	 *    is kept beside it as a conflict copy. */
+	 *  - a clean `merge3(base, disk, server)`: the merged text is written and
+	 *    pushed, and the queued edit follows the note to its new path. When
+	 *    only the path moved on the server, the merge IS the local edit;
+	 *  - overlapping edits: null (the server's text is written) after the local
+	 *    text is kept beside it as a conflict copy.
+	 *  No base text: the synced hash decides, but only a MATCH counts as "the
+	 *  server is unchanged". A CRDT note's recorded hash need not equal the
+	 *  text it wrote, so a mismatch proves nothing; trusting it turned a
+	 *  path-only move into a keep-both (e2e run 43846246580). The base text
+	 *  is the real answer and is preferred. */
 	private async keepUnpushedEditOnMove(
 		from: string,
 		to: string,
@@ -13091,26 +13174,37 @@ export class SyncEngine {
 	): Promise<string | null> {
 		const disk = await this.app.vault.cachedRead(file);
 		if (disk === serverText) return null;
-		const base = this.syncState.get(from) ?? this.syncState.get(to);
-		if (base === undefined || base.hash === fnv1a(disk)) return null;
-		if (base.hash !== fnv1a(serverText)) {
+		const baseText = this.baseStore?.get(to)?.content ?? this.baseStore?.get(from)?.content;
+		let merged: string | null = null;
+		if (baseText !== undefined) {
+			if (disk === baseText) return null;
+			const m = merge3(baseText, disk, serverText);
+			if (m.clean) merged = m.text;
+		} else {
+			const row = this.syncState.get(to) ?? this.syncState.get(from);
+			if (row === undefined || row.hash === fnv1a(disk)) return null;
+			// The server holds exactly what was synced: only the path moved.
+			if (row.hash === fnv1a(serverText)) merged = disk;
+		}
+		if (merged === null) {
 			const copy = await this.writeDriftConflictCopy(to, disk);
 			rlog().warn(
 				"conflict",
-				`Moved note had an unpushed edit and the server changed too: keep-both | ${noteRef(to)} copy=${noteRef(copy)}`,
+				`Moved note had an unpushed edit that does not merge: keep-both | ${noteRef(to)} copy=${noteRef(copy)}`,
 			);
 			return null;
 		}
 		rlog().warn(
 			"push",
-			`Moved note kept its unpushed edit: ${noteRef(from)} -> ${noteRef(to)}`,
+			`Moved note kept its unpushed edit (merged): ${noteRef(from)} -> ${noteRef(to)}`,
 		);
+		if (merged !== disk) await this.modifyFile(file, merged);
 		const queued = this.queue.get(from, this.settings.vaultId ?? undefined);
 		const id = this.noteIdMap?.get(to);
 		if (queued && id) await this.requeueAtCurrentPath({ ...queued, noteId: id });
 		this.rememberFileFor(to);
 		this.handleModify(file);
-		return disk;
+		return merged;
 	}
 
 	/** Returns the text written, or null when the create race was lost by an

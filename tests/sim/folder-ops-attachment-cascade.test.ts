@@ -13,6 +13,12 @@ afterAll(() => Replica.restoreGlobals());
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
 const onDisk = (r: Replica, rel: string) => fs.existsSync(path.join(r.vaultDir, rel));
+/** Every `DELETE /folders...` call (the sim tallies the raw path). */
+const folderDeletes = (t: { server: { wireCounts: Map<string, number> } }) =>
+	[...t.server.wireCounts].reduce(
+		(n, [k, v]) => (k.startsWith("DELETE /folders") ? n + v : n),
+		0,
+	);
 
 describe("folder op cascade with an attachment", () => {
 	for (const folderOps of [true, false]) {
@@ -31,6 +37,7 @@ describe("folder op cascade with an attachment", () => {
 					await t.scheduler.drain();
 					expect(onDisk(b, "Proj/img.png")).toBe(true); // B has its copy first
 					const deletes0 = t.server.count("DELETE /attachments/*");
+					const folderDeletes0 = folderDeletes(t);
 					await a.renameFolder("Proj", "Done", "folder-first");
 					await t.scheduler.drain();
 					await t.scheduler.drain();
@@ -38,8 +45,12 @@ describe("folder op cascade with an attachment", () => {
 					expect(t.server.count("DELETE /attachments/*") - deletes0).toBe(0);
 					for (const r of [a, b]) {
 						expect(onDisk(r, "Done/img.png")).toBe(true);
+						expect(onDisk(r, "Done/a.md")).toBe(true);
 						expect(onDisk(r, "Proj/img.png")).toBe(false);
+						// No emptied old folder left behind (e2e run 43846246580).
+						expect(onDisk(r, "Proj")).toBe(false);
 					}
+					expect(folderDeletes(t) - folderDeletes0).toBe(0);
 				} finally {
 					cleanup(t);
 				}

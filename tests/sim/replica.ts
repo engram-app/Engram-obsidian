@@ -459,6 +459,7 @@ export class Replica {
 		const crdtOpQueue = new CrdtOpQueue({
 			send: makeCrdtOpSend({
 				channel: () => noteStream,
+				waitsForFolderOp: (path) => engine.createWaitsForFolderOp(path), // main.ts
 				// #1409 (review H4): mirrors main.ts's wiring — without this, a
 				// replayed create in the sim never exercises the genesis-frame
 				// fast path, only the inline pushFile one.

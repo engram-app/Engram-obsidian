@@ -278,12 +278,17 @@ describe("inbound folder move that cannot happen leaves the index where the disk
 		expect(s.ids.get("Moved/a.md")).toBeNull();
 	});
 
-	test("target occupied: nothing moves, index stays", async () => {
+	// Changed contract (e2e run 43846246580): the server's per-note events reach
+	// the stream lane before folder_changed and create the target first. Giving
+	// up there left the emptied old folder on every device; the move is still
+	// true, so it is finished as a merge into the existing folder.
+	test("target occupied: merges into it, index and bookkeeping follow", async () => {
 		const s = inbound(false, true);
 		await s.e.setFolderOpsEnabled(true);
 		await s.e.onFolderChanged(change);
-		expect(s.e.folderOps.index.pathFor("f1")).toBe("Proj");
-		expect(s.ids.get("Proj/a.md")).toBe("id-a");
+		expect(s.e.folderOps.index.pathFor("f1")).toBe("Moved");
+		expect(s.ids.get("Moved/a.md")).toBe("id-a");
+		expect(s.ids.get("Proj/a.md")).toBeNull();
 	});
 
 	test("control: a clean move moves the index", async () => {

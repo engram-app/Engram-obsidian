@@ -258,6 +258,12 @@ export type CrdtSendHooks = {
 	 *  is blocked: a queued RENAME of a synced note relocates its row and must
 	 *  still go out. Production wires `SyncEngine.capBlocksCreate`. */
 	capBlocksCreate?: (path: string) => boolean;
+	/** True while a create for `path` must wait for this device's own pending
+	 *  folder op: the server still has the folder at the op's `from`, and a
+	 *  create for a known id at the new path is a per-note rename ahead of the
+	 *  op (e2e test_107). Held like the cap: kept, uncharged, re-checked.
+	 *  Production wires `SyncEngine.createWaitsForFolderOp`. */
+	waitsForFolderOp?: (path: string) => boolean;
 };
 
 /** Build the queue's `send`. */
@@ -274,6 +280,7 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 		const path = (op.payload as { path?: string })?.path ?? "";
 		// The account is at its note cap: the server would refuse this create too.
 		if (op.kind === "create" && hooks.capBlocksCreate?.(path)) return "held";
+		if (op.kind === "create" && hooks.waitsForFolderOp?.(path)) return "held";
 		try {
 			if (op.kind === "create") {
 				hooks.beginCreate?.(path);
