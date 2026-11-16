@@ -82,7 +82,15 @@ test("LOW-6: the delete-pass target check looks a fence up by id, never scans th
 			throw new Error("scanned every fence");
 		};
 	}
+	const real = (e as any).pendingLocalMoves;
 	(e as any).pendingLocalMoves = noScan;
-	expect((e as any).isPendingLocalMoveTarget("Done/a.md")).toBe(true);
-	expect((e as any).isPendingLocalMoveTarget("Done/other.md")).toBe(false);
+	try {
+		expect((e as any).isPendingLocalMoveTarget("Done/a.md")).toBe(true);
+		expect((e as any).isPendingLocalMoveTarget("Done/other.md")).toBe(false);
+	} finally {
+		// The engine's move-sweep timer is real and outlives this test: never
+		// leave it a Map that throws (it fired inside another file on CI).
+		(e as any).pendingLocalMoves = real;
+		e.destroy();
+	}
 });
