@@ -44,7 +44,7 @@ const PER_FILE = [
 
 async function seeded(
 	seed: number,
-	serverOpts: { folderOps?: boolean; cascadeBroadcasts?: boolean },
+	serverOpts: { folderOps?: boolean; cascadeBroadcasts?: boolean; attachmentLegsFirst?: boolean },
 ): Promise<Topology> {
 	const t = await boot(seed, ["A", "B"], serverOpts);
 	const [a] = t.replicas;
@@ -252,7 +252,14 @@ describe("Engram#2523 S4: a folder rename is one folder op", () => {
 	});
 
 	test("cascading server: the peer absorbs the per-note events after the one folder event", async () => {
-		const t = await seeded(2535, { folderOps: true, cascadeBroadcasts: true });
+		// The order the O(1) peer path needs: attachment legs AFTER
+		// folder_changed, like the note pairs. Today's backend sends them first,
+		// and the peer then converges per file (folder-ops-attachment-cascade).
+		const t = await seeded(2535, {
+			folderOps: true,
+			cascadeBroadcasts: true,
+			attachmentLegsFirst: false,
+		});
 		try {
 			const [a, b] = t.replicas;
 			const renames = b.renamed().length;

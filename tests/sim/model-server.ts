@@ -120,9 +120,10 @@ export class ModelServer {
 	private readonly byId = new Map<string, Note>();
 	private readonly byPath = new Map<string, string>();
 	private readonly clients = new Map<string, ClientRec>();
-	/** Attachments by path: just enough for a push to land and a server-side
-	 *  delete to be announced. Bytes are not modeled. */
-	private readonly attachments = new Map<string, { size: number; hash: string }>();
+	/** Attachments by path: enough for a push to land, a peer to download it
+	 *  (`b64`, served as an older backend's JSON body), and a server-side
+	 *  delete to be announced. */
+	private readonly attachments = new Map<string, { size: number; hash: string; b64?: string }>();
 	private vaultSeq = 0;
 	private readonly folders = new Map<string, FolderRow>();
 	private folderSeq = 0;
@@ -140,6 +141,13 @@ export class ModelServer {
 	 *  `base_hash` for a path with no row is a 409 `stale_base`. Off = the
 	 *  legacy id-first lookup the older tests rely on. */
 	strictRestPath: boolean;
+	/** Where a folder op's attachment legs (delete(old) + upsert(new)) go on
+	 *  the wire. `true` = before `folder_changed`, what the backend sends today
+	 *  (e2e run 43791484191): a peer's upsert(new) creates the target folder
+	 *  first, so it cannot follow with ONE vault.rename and moves per file.
+	 *  `false` = after it, like the note pairs: the order the O(1) peer path
+	 *  needs (a backend follow-up). */
+	attachmentLegsFirst: boolean;
 	/** Count of every client wire call, by socket event or `METHOD /route`.
 	 *  What the "1 op per folder rename" property reads. */
 	readonly wireCounts = new Map<string, number>();
@@ -151,6 +159,7 @@ export class ModelServer {
 		cascadeBroadcasts?: boolean;
 		manifestFolders?: boolean;
 		strictRestPath?: boolean;
+		attachmentLegsFirst?: boolean;
 	}) {
 		this.scheduler = opts.scheduler;
 		this.genesisEmptyDoc = opts.genesisEmptyDoc ?? true;
@@ -158,6 +167,7 @@ export class ModelServer {
 		this.cascadeBroadcasts = opts.cascadeBroadcasts ?? true;
 		this.manifestFolders = opts.manifestFolders ?? true;
 		this.strictRestPath = opts.strictRestPath ?? false;
+		this.attachmentLegsFirst = opts.attachmentLegsFirst ?? true;
 	}
 
 	/** Wire calls of `key` so far (see `wireCounts`). */
@@ -556,7 +566,28 @@ export class ModelServer {
 		const newPath = this.folderPath(folderId) ?? "";
 		this.reply(clientId, joinRef, ref, topic, "ok", { folder_id: row.id, seq: row.seq });
 		if (newPath === oldPath) return; // a no-op move cascades nothing
+		// Attachments move, each announced as the backend's move_pairs does
+		// (`Attachments.move_folder_pairs`): delete(old) then upsert(new).
+		const attLegs: (() => void)[] = [];
+		for (const [p, a] of [...this.attachments]) {
+			if (!p.startsWith(`${oldPath}/`)) continue;
+			const to = `${newPath}${p.slice(oldPath.length)}`;
+			this.attachments.delete(p);
+			this.attachments.set(to, a);
+			if (!this.cascadeBroadcasts) continue;
+			attLegs.push(() => {
+				this.broadcastNoteChanged({ event_type: "delete", kind: "attachment", path: p });
+				this.broadcastNoteChanged({
+					event_type: "upsert",
+					kind: "attachment",
+					path: to,
+					content_hash: a.hash,
+				});
+			});
+		}
+		if (this.attachmentLegsFirst) for (const leg of attLegs) leg();
 		this.broadcastFolderChanged(row, clientId);
+		if (!this.attachmentLegsFirst) for (const leg of attLegs) leg();
 		// S3 staging: today's cascading rename behind the op. Every moved note
 		// gets a fresh seq (catch-up sees it); its broadcast pair is optional.
 		for (const n of this.byId.values()) {
@@ -569,11 +600,6 @@ export class ModelServer {
 				this.byPath.set(to, n.id);
 				this.bump(n);
 			}
-		}
-		for (const [p, a] of [...this.attachments]) {
-			if (!p.startsWith(`${oldPath}/`)) continue;
-			this.attachments.delete(p);
-			this.attachments.set(`${newPath}${p.slice(oldPath.length)}`, a);
 		}
 	}
 
@@ -885,6 +911,19 @@ export class ModelServer {
 			});
 			return ok({ renamed: true, old_path: from, new_path: to });
 		}
+		if (method === "GET" && path.startsWith("/attachments/")) {
+			const p = decodePath(path.slice("/attachments/".length).split("?")[0]);
+			const a = this.attachments.get(p);
+			if (!a?.b64) return { status: 404, json: { error: "not_found" }, text: "not found" };
+			return ok({
+				path: p,
+				content_base64: a.b64,
+				mime_type: "application/octet-stream",
+				size_bytes: a.size,
+				mtime: 0,
+				content_hash: a.hash,
+			});
+		}
 		if (method === "DELETE" && path.startsWith("/attachments/")) {
 			const p = decodePath(path.slice("/attachments/".length));
 			this.serverDeleteAttachment(p);
@@ -947,9 +986,16 @@ export class ModelServer {
 		const path = body.path as string;
 		const b64 = (body.content_base64 as string) ?? "";
 		const hash = `att-${b64.length}-${this.vaultSeq + 1}`;
-		this.attachments.set(path, { size: b64.length, hash });
+		this.attachments.set(path, { size: b64.length, hash, b64 });
 		this.ensureFolderPath(folderOf(path));
 		this.vaultSeq += 1;
+		// The backend announces a pushed attachment (`broadcast_attachment`).
+		this.broadcastNoteChanged({
+			event_type: "upsert",
+			kind: "attachment",
+			path,
+			content_hash: hash,
+		});
 		const now = nowIso();
 		return ok({
 			attachment: {

@@ -5893,6 +5893,14 @@ export class SyncEngine {
 		new Map<string, number>(),
 	);
 
+	/** The file object each in-flight engine trash was asked for, and the path
+	 *  its echo state was recorded under. Every echo guard is path-keyed, but a
+	 *  rename can move the file while Obsidian's trashFile is in flight, and the
+	 *  delete event then names the NEW path. Without this, that event read as a
+	 *  user delete and went to the server (e2e test_107). Weak: cleared with
+	 *  the file object, nothing to expire. */
+	private readonly engineTrashing = new WeakMap<TAbstractFile, string>();
+
 	private consumeEngineTrash(path: string): boolean {
 		const n = this.engineTrashedPaths.get(path) ?? 0;
 		if (n <= 0) return false;
@@ -5918,6 +5926,22 @@ export class SyncEngine {
 		// swallowed genuine deletes at the same path.
 		if (!this.isSyncable(file)) return;
 		if (this.shouldIgnore(file.path)) return;
+
+		// The engine trashed this file, and it was renamed during the trash: its
+		// echo state sits at the path it was trashed from. Consume it there; this
+		// is never a user delete, so nothing reaches the server.
+		const trashedFrom = this.engineTrashing.get(file);
+		if (trashedFrom !== undefined && trashedFrom !== file.path) {
+			this.engineTrashing.delete(file);
+			this.consumeEngineTrash(trashedFrom);
+			this.files.clearMarker(trashedFrom, "remotelyDeleted");
+			rlog().warn(
+				"vault",
+				`Engine trash landed after a rename (${noteRef(trashedFrom)} -> ${noteRef(file.path)}): not sent`,
+			);
+			return;
+		}
+		this.engineTrashing.delete(file);
 
 		// Cancel any pending push for this path FIRST — even for echo events.
 		// A timer armed for the trashed file must die with it; surviving the
@@ -6429,7 +6453,16 @@ export class SyncEngine {
 			rlog().info("ws", `Echo skip (own device): folder ${change.id}`);
 			return;
 		}
-		await this.folderOps.inbound(change);
+		// On the note stream's lane, in arrival order: the server sends each
+		// moved attachment's delete(old) + upsert(new) BEFORE folder_changed. Run
+		// beside them, the folder's vault.rename landed while the delete's
+		// trashFile was in flight, so the trash hit the NEW path, whose vault
+		// delete event is not engine-marked, and went out as a real DELETE: the
+		// attachment was lost on the server and every vault (e2e test_107).
+		const vault = this.settings.vaultId;
+		await this.serial.run("stream", async () => {
+			if (vault === this.settings.vaultId) await this.folderOps.inbound(change);
+		});
 	}
 
 	/** The manifest's `folders` list: move every folder whose server path
@@ -8189,6 +8222,7 @@ export class SyncEngine {
 	 *  handleDelete — every sync-applied deletion must route through here, or
 	 *  its echo-push can tombstone a note recreated at the path since. */
 	private async trashRemotelyDeleted(file: TAbstractFile): Promise<void> {
+		this.engineTrashing.set(file, file.path);
 		this.files.mark(file.path, "remotelyDeleted", ECHO_COOLDOWN_MS);
 		// Increment BEFORE the trash (Obsidian can dispatch the delete event
 		// during the await), but roll back on a throw: a trash that failed left
@@ -8206,6 +8240,7 @@ export class SyncEngine {
 				this.consumeEngineTrash(file.path);
 			}
 			this.files.clearMarker(file.path, "remotelyDeleted");
+			this.engineTrashing.delete(file);
 			throw e;
 		}
 	}
