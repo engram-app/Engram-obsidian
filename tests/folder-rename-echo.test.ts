@@ -255,21 +255,22 @@ describe("the manifest delete pass spares unconfirmed local moves (N3)", () => {
 	});
 });
 
-// Narrowed S4 (e2e runs 43846246580 to 43881468416): a LIVE folder_changed
-// moves the folder index only. The server's per-note events move the files,
-// as on plugin main; following the folder as one vault.rename raced them and
-// left wrong end states. (Manifest-detected moves still follow on disk; see
-// the offline-peer sim tests.)
-describe("live folder_changed: index only, disk untouched (narrowed S4)", () => {
-	function inbound() {
+// A live folder_changed is followed with ONE vault.rename (the backend sends
+// it FIRST of a folder move; the per-note events after it are echoes). When the
+// disk cannot follow (target occupied, rename throws) the index learns the
+// move, the files converge per note, and the emptied old folder is removed.
+describe("live folder_changed: one rename, or index only when the disk cannot follow", () => {
+	function inbound(renameThrows: boolean, occupied: boolean) {
 		const s = setup();
 		const app = (s.e as any).app;
 		const proj = new TFolder("Proj", []);
 		const realGet = app.vault.getAbstractFileByPath;
-		app.vault.getAbstractFileByPath = (p: string) => (p === "Proj" ? proj : realGet(p));
+		app.vault.getAbstractFileByPath = (p: string) =>
+			p === "Proj" ? proj : p === "Moved" && occupied ? new TFolder("Moved", []) : realGet(p);
 		app.vault.getFileByPath = () => null;
 		const renames: string[] = [];
 		app.vault.rename = async (f: { path: string }, to: string) => {
+			if (renameThrows) throw new Error("EBUSY");
 			renames.push(`${f.path} -> ${to}`);
 		};
 		app.vault.createFolder = async () => {};
@@ -285,19 +286,30 @@ describe("live folder_changed: index only, disk untouched (narrowed S4)", () => 
 	}
 	const change = { id: "f1", parent_id: null, name: "Moved", seq: 9, device_id: "web" };
 
-	test("the index follows; no vault.rename; note bookkeeping waits for the per-note events", async () => {
-		const s = inbound();
+	test("clean move: one vault.rename, index and bookkeeping follow", async () => {
+		const s = inbound(false, false);
 		await s.e.setFolderOpsEnabled(true);
 		await s.e.onFolderChanged(change);
+		expect(s.renames).toEqual(["Proj -> Moved"]);
 		expect(s.e.folderOps.index.pathFor("f1")).toBe("Moved");
-		expect(s.renames).toEqual([]);
-		expect(s.ids.get("Proj/a.md")).toBe("id-a");
+		expect(s.ids.get("Moved/a.md")).toBe("id-a");
 	});
 
-	test("the emptied old folder is removed once the server moved it, with no folder DELETE", async () => {
-		const s = inbound();
+	test("rename throws: index and bookkeeping restored", async () => {
+		const s = inbound(true, false);
+		await s.e.setFolderOpsEnabled(true);
+		await s.e.onFolderChanged(change);
+		expect(s.e.folderOps.index.pathFor("f1")).toBe("Proj");
+		expect(s.ids.get("Proj/a.md")).toBe("id-a");
+		expect(s.ids.get("Moved/a.md")).toBeNull();
+	});
+
+	test("target occupied: no rename; the index learns it, the emptied old folder goes, no folder DELETE", async () => {
+		const s = inbound(false, true);
 		await s.e.setFolderOpsEnabled(true);
 		await s.e.onFolderChanged(change); // Proj is already empty on disk
+		expect(s.renames).toEqual([]);
+		expect(s.e.folderOps.index.pathFor("f1")).toBe("Moved");
 		expect(s.trashed).toEqual(["Proj"]);
 		expect(s.deleteFolder).not.toHaveBeenCalled();
 	});

@@ -142,11 +142,11 @@ export class ModelServer {
 	 *  legacy id-first lookup the older tests rely on. */
 	strictRestPath: boolean;
 	/** Where a folder op's attachment legs (delete(old) + upsert(new)) go on
-	 *  the wire. `true` = before `folder_changed`, what the backend sends today
-	 *  (e2e run 43791484191): a peer's upsert(new) creates the target folder
-	 *  first, so it cannot follow with ONE vault.rename and moves per file.
-	 *  `false` = after it, like the note pairs: the order the O(1) peer path
-	 *  needs (a backend follow-up). */
+	 *  the wire. `false` (default) = after `folder_changed`, like the note
+	 *  pairs: the backend with folder_changed as the FIRST event of every
+	 *  folder move (attachment legs moved to after_commit). `true` = before
+	 *  it, what the backend sent until that fix (e2e run 43791484191): the
+	 *  peer then sees the target folder appear before the folder event. */
 	attachmentLegsFirst: boolean;
 	/** Count of every client wire call, by socket event or `METHOD /route`.
 	 *  What the "1 op per folder rename" property reads. */
@@ -167,7 +167,7 @@ export class ModelServer {
 		this.cascadeBroadcasts = opts.cascadeBroadcasts ?? true;
 		this.manifestFolders = opts.manifestFolders ?? true;
 		this.strictRestPath = opts.strictRestPath ?? false;
-		this.attachmentLegsFirst = opts.attachmentLegsFirst ?? true;
+		this.attachmentLegsFirst = opts.attachmentLegsFirst ?? false;
 	}
 
 	/** Wire calls of `key` so far (see `wireCounts`). */

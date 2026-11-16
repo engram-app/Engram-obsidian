@@ -21,10 +21,16 @@ const folderDeletes = (t: { server: { wireCounts: Map<string, number> } }) =>
 	);
 
 describe("folder op cascade with an attachment", () => {
-	for (const folderOps of [true, false]) {
+	// attachmentLegsFirst: the backend's order before the folder_changed-first
+	// fix. Either order must converge with nothing lost.
+	for (const [folderOps, attachmentLegsFirst] of [
+		[true, false],
+		[true, true],
+		[false, false],
+	] as const) {
 		for (const seed of [10701, 10702]) {
-			test(`folder_ops=${folderOps} seed ${seed}: the attachment survives everywhere`, async () => {
-				const t = await boot(seed, ["A", "B"], { folderOps });
+			test(`folder_ops=${folderOps}${attachmentLegsFirst ? " (legacy order)" : ""} seed ${seed}: the attachment survives everywhere`, async () => {
+				const t = await boot(seed, ["A", "B"], { folderOps, attachmentLegsFirst });
 				try {
 					const [a, b] = t.replicas;
 					await a.createNote("Proj/a.md", "alpha body");

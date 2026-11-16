@@ -3,7 +3,8 @@
 // seeded (so B learns its ids only from live events), the folder holds a note,
 // a subfolder note and an attachment, and the server sends its real order.
 // Assert the END STATE, not a log line: no folder left at the old path on any
-// device or the server, every file at the new path, ids unchanged.
+// device or the server, every file at the new path, ids unchanged. The
+// server sends folder_changed FIRST (the backend fix to the run's order).
 import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -51,11 +52,21 @@ describe("e2e end state: folder rename with folder ops on (run 43862890570)", ()
 				const [a, b] = t.replicas;
 				expect(onDisk(b, "Proj/sub/b.md")).toBe(true);
 				const ids0 = [...t.server.state().notes.values()].map((n) => n.id).sort();
+				const renames0 = b.renamed().length;
+				const downloads0 = t.server.count("GET /attachments/*");
+				const writes0 = b.writeJournal().length;
 				await a.renameFolder("Proj", "Done", "folder-first");
 				await t.scheduler.drain();
 				await t.scheduler.drain();
 				expectMovedEverywhere(t);
 				expect([...t.server.state().notes.values()].map((n) => n.id).sort()).toEqual(ids0);
+				// The receiver follows with ONE rename (folder_changed first, backend
+				// fix); the per-note events after it are echoes: no rewrite, no trash,
+				// no attachment re-download.
+				expect(b.renamed().slice(renames0)).toEqual(["Proj -> Done"]);
+				expect(b.writeJournal().length - writes0).toBe(0);
+				expect(b.trashed()).toEqual([]);
+				expect(t.server.count("GET /attachments/*") - downloads0).toBe(0);
 			} finally {
 				cleanup(t);
 			}

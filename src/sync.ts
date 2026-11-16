@@ -3788,9 +3788,36 @@ export class SyncEngine {
 	/** Mark the engine as ready to handle vault events.
 	 *  Called after layout is ready and initial sync completes. */
 	setReady(): void {
+		this.reapplyPendingFolderOps();
 		this.ready = true;
 		devLog().log("lifecycle", "setReady — event handlers enabled");
 		rlog().info("lifecycle", "Engine ready — event handlers enabled");
+	}
+
+	/** A restart with a folder op still pending: the op is persisted with its
+	 *  from/to, but the bookkeeping restored with it (id map, base, sync rows)
+	 *  can predate the op's re-key. Left as is, every inbound row for a moved
+	 *  note targets the old path and re-creates the note there (e2e run
+	 *  43903317486). Re-derive it from the persisted op: where the folder is
+	 *  on disk at `to`, move every descendant whose bookkeeping still sits at
+	 *  `from` (and whose new path is free), fenced as our own move. Runs once
+	 *  the vault is indexed (setReady); a no-op without pending ops. */
+	private reapplyPendingFolderOps(): void {
+		for (const op of this.folderOps.all()) {
+			if (!(this.app.vault.getAbstractFileByPath(op.to) instanceof TFolder)) continue;
+			const stale = this.descendantMoves(op.from, op.to).filter(
+				([o, n]) =>
+					(this.syncState.has(o) || this.noteIdMap?.get(o) != null) &&
+					!this.syncState.has(n) &&
+					this.noteIdMap?.get(n) == null,
+			);
+			if (stale.length === 0) continue;
+			this.rekeyMoved(stale);
+			rlog().warn(
+				"lifecycle",
+				`Pending folder op re-applied after restart: ${noteRef(op.from)} -> ${noteRef(op.to)} | ${stale.length} files re-keyed`,
+			);
+		}
 	}
 
 	setSyncBlocked(blocked: boolean): void {
@@ -6444,7 +6471,11 @@ export class SyncEngine {
 	 *  in the normal case, where the index already says `to`. */
 	private async folderOpAcked(op: FolderOp): Promise<void> {
 		rlog().info("push", `Folder op acked: ${op.op} ${op.folder_id}`);
-		await this.applyFolderChange({ id: op.folder_id, parent_id: op.parent_id, name: op.name });
+		await this.followFolderMoveOnDisk({
+			id: op.folder_id,
+			parent_id: op.parent_id,
+			name: op.name,
+		});
 		this.onFolderOpLeft(op.to, true);
 	}
 
@@ -6455,7 +6486,7 @@ export class SyncEngine {
 		vaultId: () => this.settings.vaultId ?? null,
 		fallback: (op, why) => this.folderOpFallback(op, why),
 		acked: (op) => this.folderOpAcked(op),
-		apply: (change) => this.applyFolderChange(change),
+		apply: (change) => this.followFolderMoveOnDisk(change),
 		persist: () => this.persistGateJournalSoon(),
 	});
 	private folderOpPort: ((op: FolderOp) => Promise<FolderOpResult>) | null = null;
@@ -6508,26 +6539,19 @@ export class SyncEngine {
 				// from before that op, not another writer. Holding it would let its
 				// expiry undo the user's own move; the op's answer settles it.
 				if (this.folderOps.hasPending(row.id)) continue;
-				// Disk follows here (not for a live folder_changed): an offline
-				// catch-up has no per-note events racing it, and the manifest delete
-				// pass below would otherwise trash every file of the moved folder.
+				// Before the manifest delete pass, which would otherwise trash every
+				// file of the moved folder.
 				if (here !== null && here !== at) await this.followFolderMoveOnDisk(row);
 			}
 		}
 		this.learnFolders(rows);
 	}
 
-	/** Apply one server folder change: the folder INDEX only. Narrowed S4
-	 *  (e2e runs 43846246580 to 43881468416): the receiving device does not
-	 *  follow a folder move as one vault.rename. The server still announces
-	 *  every moved note and attachment, and those converge per note exactly as
-	 *  plugin main does; a receiver-side folder follow raced them and kept
-	 *  leaving wrong end states. Following as one move returns when the
-	 *  backend sends `folder_changed` before the per-note events, or stops
-	 *  sending them (S5).
-	 *
-	 *  A move records its old path as moved away (`movedAwayFolders`), so the
-	 *  per-note moves that empty it can remove it (`removeEmptyFolders`). */
+	/** The INDEX half of a server folder change, and the fallback when the
+	 *  disk cannot follow it (`followFolderMoveOnDisk`): the index learns the
+	 *  move, the files converge per note, and the old path is recorded as
+	 *  moved away (`movedAwayFolders`) so the per-note moves that empty it can
+	 *  remove it (`removeEmptyFolders`). */
 	private async applyFolderChange(change: FolderChange): Promise<void> {
 		const index = this.folderOps.index;
 		if (change.deleted) {
@@ -6559,13 +6583,18 @@ export class SyncEngine {
 		}
 	}
 
-	/** A manifest-detected folder move (this device was offline or closed):
-	 *  ONE vault.rename of the folder, every descendant's bookkeeping moved
-	 *  first, so the child events Obsidian then fires hit the Relay echo rule.
-	 *  Runs before the manifest delete pass, which would otherwise trash every
-	 *  file of a folder moved elsewhere. Target already on disk, or a rename
-	 *  that throws: the index learns the move, the folder's files converge per
-	 *  note, and the emptied old folder is removed as moved away. */
+	/** Follow a server folder move with ONE vault.rename (a live
+	 *  folder_changed, a held one released, our own ack, or a manifest-detected
+	 *  move), every descendant's bookkeeping moved first, so the child events
+	 *  Obsidian then fires hit the Relay echo rule, and the per-note events the
+	 *  server sends AFTER folder_changed find each file already at its new path
+	 *  with its bookkeeping (no rewrite, no trash, no re-download). Requires the
+	 *  backend's order with folder_changed FIRST: before that fix the attachment
+	 *  legs arrived first and created the target, which is the occupied case.
+	 *  Manifest moves run before the delete pass, which would otherwise trash
+	 *  every file of a folder moved elsewhere. Target already on disk, or a
+	 *  rename that throws: the index learns the move, the folder's files
+	 *  converge per note, and the emptied old folder is removed as moved away. */
 	private async followFolderMoveOnDisk(change: FolderChange): Promise<void> {
 		const index = this.folderOps.index;
 		const from = index.pathFor(change.id);

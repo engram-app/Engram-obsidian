@@ -49,14 +49,6 @@ for (const cascadeBroadcasts of [true, false])
 			await t.scheduler.drain();
 			await late;
 			await t.scheduler.drain();
-			if (!cascadeBroadcasts) {
-				// S5-shaped server (folder_changed only, no per-note events). The
-				// narrowed S4 receiver does not follow a live folder_changed on disk;
-				// B converges on its next catch-up (manifest folder follow).
-				await b.goOffline();
-				await b.goOnline();
-				await t.scheduler.drain();
-			}
 			const server = [...t.server.state().notes.keys()];
 			const want = server[0] as string;
 			expect(server.length).toBe(1);

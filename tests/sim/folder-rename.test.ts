@@ -109,9 +109,9 @@ async function renameAndCheck(t: Topology, order: FolderRenameOrder) {
 				srv.id,
 			]);
 		}
-		// The model serves no attachment bytes, so only A (the author) holds one.
-		const files = listFiles(r.vaultDir).filter((f) => r === a || !f.endsWith(".png"));
-		const expected = [...notes.keys(), ...(r === a ? ["Done/img.png"] : [])];
+		// Both devices hold the attachment (the model now serves its bytes).
+		const files = listFiles(r.vaultDir);
+		const expected = [...notes.keys(), "Done/img.png"];
 		expect(files.sort()).toEqual(expected.sort());
 	}
 	// No duplicate, no resurrection.
@@ -143,10 +143,15 @@ describe("Engram#2523 S4: a folder rename is one folder op", () => {
 		});
 	}
 
-	// Removed with the narrowed S4: "S5 server (no per-note cascade broadcasts):
-	// the peer follows folder_changed". The narrowed receiver does not follow a
-	// live folder_changed on disk, so an S5-shaped server (no per-note events)
-	// needs the receiver follow back. Re-add this test with S5 (PR 689 body).
+	test("S5 server (no per-note cascade broadcasts): the peer follows folder_changed", async () => {
+		const t = await seeded(2530, { folderOps: true, cascadeBroadcasts: false });
+		try {
+			const before = await renameAndCheck(t, "folder-first");
+			expect(delta(t, before, "folder_op")).toBe(1);
+		} finally {
+			cleanup(t);
+		}
+	});
 
 	test("server without folder ops: per-file fallback, attachments moved not re-uploaded", async () => {
 		const t = await seeded(2531, { folderOps: false });
@@ -246,23 +251,26 @@ describe("Engram#2523 S4: a folder rename is one folder op", () => {
 		}
 	});
 
-	// Narrowed S4 (e2e runs 43846246580 to 43881468416): the receiver does not
-	// follow a live folder_changed as one vault.rename; it converges per note,
-	// as plugin main does, and removes the emptied old folder. Following as one
-	// move returns with backend ordering (folder_changed first) or S5.
-	test("cascading server: the peer converges per note, moves files (no rewrite), and drops the old folder", async () => {
+	// The backend sends folder_changed FIRST, then every per-note leg
+	// (attachments included): the peer follows with ONE rename and the legs
+	// are echoes.
+	test("cascading server: the peer absorbs the per-note events after the one folder event", async () => {
 		const t = await seeded(2535, { folderOps: true, cascadeBroadcasts: true });
 		try {
 			const [a, b] = t.replicas;
+			const renames = b.renamed().length;
 			const writes = b.writeJournal().length;
+			const downloads = t.server.count("GET /attachments/*");
 			await a.renameFolder("Proj", "Done", "folder-first");
 			await t.scheduler.drain();
-			// Notes moved, not rewritten. The attachment takes main's receiver
-			// path for a move (trash old, download new); no note is trashed.
+			// One folder rename on B's disk: no per-file move, no rewrite, no trash,
+			// no attachment re-download, nothing left at the old path.
+			expect(b.renamed().slice(renames)).toEqual(["Proj -> Done"]);
 			expect(b.writeJournal().length - writes).toBe(0);
-			expect(b.trashed().filter((p) => p.endsWith(".md"))).toEqual([]);
-			expect(onDisk(b, "Done/img.png")).toBe(true);
+			expect(b.trashed()).toEqual([]);
+			expect(t.server.count("GET /attachments/*") - downloads).toBe(0);
 			expect(read(b, "Done/a.md")).toBe(NOTES["Proj/a.md"]);
+			expect(onDisk(b, "Done/img.png")).toBe(true);
 			expect(onDisk(b, "Proj")).toBe(false);
 		} finally {
 			cleanup(t);
