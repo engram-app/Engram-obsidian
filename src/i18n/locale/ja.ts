@@ -299,6 +299,10 @@ const ja: Dict = {
 	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
 		"Claude、Cursor、ChatGPT、またはその他のMCPアプリを連携させて、ノートの読み書きを可能にします",
 	"Link Obsidian to Engram": "EngramへのObsidian連携",
+	"Live sync did not connect in time. Try again in a moment.":
+		"ライブ同期が間に合いませんでした。しばらくしてから再度お試しください。",
+	"Live sync was refused for this account, so the comparison can't run. Check your plan or update the plugin.":
+		"このアカウントでのライブ同期は拒否されました。比較処理は実行できません。プランを確認するか、プラグインを更新してください。",
 	"Loading vaults…": "保管庫を読み込み中…",
 	"Love it": "素晴らしい",
 	"Make new vault": "新しい保管庫を作成",
@@ -319,6 +323,8 @@ const ja: Dict = {
 	"No results found": "結果が見つかりませんでした",
 	"No source path for this result": "この結果にソースパスがありません",
 	"No sync activity this session.": "このセッションでは同期の履歴がありません。",
+	"No vault is selected. Pick a vault in Engram settings.":
+		"保管庫が選択されていません。Engram の設定で保管庫を選択してください。",
 	"No vaults found — first sync will create one":
 		"保管庫が見つかりません。初回同期時に作成されます",
 	"Node.js dependencies": "Node.jsの依存関係",
@@ -510,6 +516,8 @@ const ja: Dict = {
 		"サーバーがこのファイルのデータを失い、復元を試みます。このデバイスの内容は変更されていません。",
 	"The server took too long to respond. Try again.":
 		"サーバーの応答が遅すぎます。もう一度お試しください。",
+	"The vault changed while loading. Close this and try again.":
+		"保管庫が読み込み中に変更されました。閉じ、再度お試しください。",
 	"These files are fine. Each card below says why they did not sync.":
 		"これらのファイルは問題ありません。各カードには、同期されなかった理由が記載されています。",
 	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":

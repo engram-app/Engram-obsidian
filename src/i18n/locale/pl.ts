@@ -373,6 +373,10 @@ const pl: Dict = {
 	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
 		"Połącz Claude, Cursor, ChatGPT lub dowolną aplikację MCP, aby mogła czytać i zapisywać twoje notatki. ",
 	"Link Obsidian to Engram": "Połącz Obsidian z Engram",
+	"Live sync did not connect in time. Try again in a moment.":
+		"Synchronizacja w czasie rzeczywistym nie nawiązała połączenia na czas. Spróbuj ponownie za chwilę.",
+	"Live sync was refused for this account, so the comparison can't run. Check your plan or update the plugin.":
+		"Synchronizacja w czasie rzeczywistym została odrzucona dla tego konta, więc porównanie nie może się wykonać. Sprawdź swój plan lub zaktualizuj wtyczkę.",
 	"Loading vaults…": "Ładowanie sejfów…",
 	"Love it": "Bardzo mi się podoba",
 	"Make new vault": "Utwórz nowy sejf",
@@ -393,6 +397,8 @@ const pl: Dict = {
 	"No results found": "Brak wyników",
 	"No source path for this result": "Brak ścieżki źródłowej dla tego wyniku",
 	"No sync activity this session.": "Brak aktywności synchronizacji w tej sesji.",
+	"No vault is selected. Pick a vault in Engram settings.":
+		"Nie wybrano żadnego sejfu. Wybierz sejf w ustawieniach Engram.",
 	"No vaults found — first sync will create one":
 		"Nie znaleziono żadnych sejfów — pierwsza synchronizacja utworzy jeden",
 	"Node.js dependencies": "Zależności Node.js",
@@ -592,6 +598,8 @@ const pl: Dict = {
 		"Serwer utracił zawartość tego pliku i spróbuje go odzyskać. Na tym urządzeniu nic się nie zmieniło.",
 	"The server took too long to respond. Try again.":
 		"Serwer zbyt długo odpowiadał. Spróbuj ponownie.",
+	"The vault changed while loading. Close this and try again.":
+		"Sejf został zmieniony podczas ładowania. Zamknij to okno i spróbuj ponownie.",
 	"These files are fine. Each card below says why they did not sync.":
 		"Te pliki są w porządku. Każda karta poniżej wyjaśnia, dlaczego nie zostały zsynchronizowane.",
 	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":

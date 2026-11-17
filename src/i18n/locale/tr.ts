@@ -333,6 +333,10 @@ const tr: Dict = {
 	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
 		"Claude, Cursor, ChatGPT veya herhangi bir MCP uygulamasını bağlayın, böylece notlarınızı okuyup yazabilir. ",
 	"Link Obsidian to Engram": "Obsidian ile Engram arasında bağlantı kur",
+	"Live sync did not connect in time. Try again in a moment.":
+		"Canlı senkronizasyon zamanında bağlanamadı. Bir süre sonra tekrar deneyin.",
+	"Live sync was refused for this account, so the comparison can't run. Check your plan or update the plugin.":
+		"Bu hesap için canlı senkronizasyon reddedildi, bu nedenle karşılaştırma yapılamıyor. Planınızı kontrol edin veya eklentiyi güncelleyin.",
 	"Loading vaults…": "Kasalar yükleniyor…",
 	"Love it": "Çok beğendim",
 	"Make new vault": "Yeni kasa oluştur",
@@ -353,6 +357,8 @@ const tr: Dict = {
 	"No results found": "Sonuç bulunamadı",
 	"No source path for this result": "Bu sonuç için kaynak yolu yok",
 	"No sync activity this session.": "Bu oturumda herhangi bir senkronizasyon etkinliği yok.",
+	"No vault is selected. Pick a vault in Engram settings.":
+		"Kasa seçilmedi. Engram ayarlarından bir kasa seçin.",
 	"No vaults found — first sync will create one":
 		"Kasa bulunamadı — ilk senkronizasyon bir kasa oluşturacaktır",
 	"Node.js dependencies": "Node.js bağımlılıkları",
@@ -549,6 +555,8 @@ const tr: Dict = {
 		"Sunucu bu dosyanın içeriğini kaybetti ve geri yüklemeyi deneyecek. Bu cihazda hiçbir değişiklik yapılmadı.",
 	"The server took too long to respond. Try again.":
 		"Sunucu yanıt vermekte çok yavaş. Lütfen tekrar deneyin.",
+	"The vault changed while loading. Close this and try again.":
+		"Kasa yüklenirken değişti. Bu pencereyi kapatın ve tekrar deneyin.",
 	"These files are fine. Each card below says why they did not sync.":
 		"Bu dosyalar sorunsuz. Aşağıdaki her kart, neden senkronize olmadığını belirtir.",
 	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":

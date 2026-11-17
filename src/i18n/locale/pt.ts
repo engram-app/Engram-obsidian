@@ -358,6 +358,10 @@ const pt: Dict = {
 	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
 		"Ligar o Claude, o Cursor, o ChatGPT ou qualquer aplicação MCP para que ela possa ler e escrever as suas notas. ",
 	"Link Obsidian to Engram": "Ligar Obsidian a Engram",
+	"Live sync did not connect in time. Try again in a moment.":
+		"A sincronização em tempo real não estabeleceu ligação a tempo. Tente novamente num momento.",
+	"Live sync was refused for this account, so the comparison can't run. Check your plan or update the plugin.":
+		"A sincronização em tempo real foi recusada para esta conta, pelo que a comparação não pode ser executada. Verifique o plano ou atualize o plugin.",
 	"Loading vaults…": "A carregar cofres…",
 	"Love it": "Adorei",
 	"Make new vault": "Criar novo cofre",
@@ -378,6 +382,8 @@ const pt: Dict = {
 	"No results found": "Nenhum resultado encontrado",
 	"No source path for this result": "Sem caminho de origem para este resultado",
 	"No sync activity this session.": "Sem atividade de sincronização nesta sessão.",
+	"No vault is selected. Pick a vault in Engram settings.":
+		"Nenhum cofre está selecionado. Escolha um cofre nas Engram definições.",
 	"No vaults found — first sync will create one":
 		"Nenhum cofre encontrado — a primeira sincronização irá criar um",
 	"Node.js dependencies": "Dependências Node.js",
@@ -576,6 +582,8 @@ const pt: Dict = {
 		"O servidor perdeu o conteúdo guardado deste ficheiro e tentará restaurá-lo. Nada foi alterado neste dispositivo.",
 	"The server took too long to respond. Try again.":
 		"O servidor demorou demasiado tempo a responder. Tente novamente.",
+	"The vault changed while loading. Close this and try again.":
+		"O cofre foi alterado durante o carregamento. Feche isto e tente novamente.",
 	"These files are fine. Each card below says why they did not sync.":
 		"Estes ficheiros estão bem. Cada cartão abaixo indica o motivo pelo qual não foram sincronizados.",
 	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":
