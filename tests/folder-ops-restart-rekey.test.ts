@@ -13,7 +13,7 @@ import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
-function restartedWithStaleBookkeeping() {
+function restartedWithStaleBookkeeping(wire: "main" | "setNoteIdMap" = "setNoteIdMap") {
 	const note = new TFile("Done/a.md");
 	(note as any).stat = { mtime: 1, ctime: 1, size: 4 };
 	const folder = new TFolder("Done", [note]);
@@ -40,9 +40,12 @@ function restartedWithStaleBookkeeping() {
 		mock().mockResolvedValue(undefined),
 	);
 	const ids = new NoteIdMap();
-	e.setNoteIdMap(ids);
+	// main.ts hands the map over through setCrdtPorts, not setNoteIdMap.
+	if (wire === "main") e.setCrdtPorts({ noteIdMap: ids });
+	else e.setNoteIdMap(ids);
 	// What the reload restored: bookkeeping from BEFORE the op's re-key.
 	ids.set("Proj/a.md", "id-a");
+	ids.flushNow(); // the shared index held it there before the op
 	(e as any).syncState.set("Proj/a.md", { hash: 1, crdtHead: "h", seq: 3 });
 	// The op itself was persisted (data.json folderOps) and is restored.
 	e.folderOps.load([
@@ -82,6 +85,22 @@ test("control: with no pending op nothing is re-keyed", () => {
 		e.folderOps.reset();
 		e.setReady();
 		expect(ids.get("Proj/a.md")).toBe("id-a");
+	} finally {
+		e.destroy();
+	}
+});
+
+// Run 44006602418: main.ts wires the map through setCrdtPorts, and the
+// folder-op commit hold was bound only in setNoteIdMap, so production
+// published the re-key into the shared index while the op was pending.
+test("wired as main.ts does, the pending op's re-key stays out of the shared index", () => {
+	const { e, ids } = restartedWithStaleBookkeeping("main");
+	try {
+		e.setReady();
+		expect(ids.get("Done/a.md")).toBe("id-a");
+		const shared = ids.store.doc?.getMap<{ note_id: string }>("filemeta_v0");
+		expect(shared?.get("Proj/a.md")?.note_id).toBe("id-a");
+		expect(shared?.get("Done/a.md")).toBeUndefined();
 	} finally {
 		e.destroy();
 	}

@@ -244,8 +244,6 @@ export type CrdtSendHooks = {
 	 *  read the note's own pre-create disk bytes as a local edit (SyncEngine
 	 *  `creatingPaths`). `endCreate` runs on every exit. */
 	beginCreate?: (path: string) => void;
-	/** Diagnostic: a queued crdt_create is about to be sent. */
-	traceCreate?: (path: string, docId: string) => void;
 	endCreate?: (path: string) => Promise<void>;
 	/** A terminally-failed op about to be dropped. surface it (error log). */
 	onTerminal: (op: CrdtOp, reason: string) => void;
@@ -289,7 +287,6 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 				try {
 					const genesis = await hooks.buildGenesisFrame?.(path, op.docId);
 					reachedServer = true;
-					hooks.traceCreate?.(path, op.docId);
 					const {
 						docId: serverId,
 						seeded,

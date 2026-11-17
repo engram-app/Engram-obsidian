@@ -450,7 +450,7 @@ export class Replica {
 		let noteStream: NoteChannel | null = null;
 		engine.syncLog = new SyncLog(); // main.ts:402-403
 		engine.setCrdtLiveCheck(() => noteStream?.isCrdtConnected() ?? false); // main.ts:412
-		engine.setNoteIdMap(noteIdMap); // main.ts:418
+		engine.setCrdtPorts({ noteIdMap }); // main.ts wires the map through setCrdtPorts
 		engine.setDeviceId(id); // main.ts:423
 		engine.setCrdtEditorDetach(() => {}); // main.ts:429 (no CrdtLiveViews headless)
 		engine.setCrdtEditorRebind(() => {}); // main.ts:434

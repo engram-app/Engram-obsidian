@@ -1001,7 +1001,10 @@ export class SyncEngine {
 	setCrdtPorts(ports: CrdtPorts): void {
 		if ("manager" in ports) this.crdt = ports.manager ?? null;
 		if ("deviceId" in ports) this.deviceId = ports.deviceId ?? null;
-		if ("noteIdMap" in ports) this.noteIdMap = ports.noteIdMap ?? null;
+		if ("noteIdMap" in ports) {
+			this.noteIdMap = ports.noteIdMap ?? null;
+			this.bindNoteIdMapHooks(this.noteIdMap);
+		}
 		if ("enrollment" in ports) this.crdtEnrollment = ports.enrollment ?? null;
 		if ("create" in ports) this.crdtCreate = ports.create ?? null;
 		if ("delete" in ports) this.crdtDelete = ports.delete ?? null;
@@ -1086,6 +1089,20 @@ export class SyncEngine {
 	 *  simply skipped (pre-existing legacy path-keyed behavior). */
 	private noteIdMap: NoteIdMap | null = null;
 
+	/** The id-map hooks the engine owns, wired wherever the map is: main.ts
+	 *  hands it over through `setCrdtPorts`, never `setNoteIdMap`, so a hook
+	 *  wired only there never runs in production (the folder-op commit hold
+	 *  shipped dead in 55611f45: e2e run 44006602418). Optional calls: suites
+	 *  pass structural doubles for this port. */
+	private bindNoteIdMapHooks(map: NoteIdMap | null): void {
+		// A pending folder op's moves stay local until the op leaves the queue:
+		// the shared index is what the server derives rows from and what peers
+		// read their maps from (see SyncStore.holdsCommit).
+		map?.setCommitHold?.((p) => this.folderOps.touches(p));
+	}
+
+	/** Tests only: main.ts never calls this, so the relocate handler below is
+	 *  not wired in production (see bindNoteIdMapHooks). */
 	setNoteIdMap(map: NoteIdMap | null): void {
 		this.setCrdtPorts({ noteIdMap: map });
 		// Follow identity with the bytes. The store reports a claim MOVING; this
@@ -1095,22 +1112,7 @@ export class SyncEngine {
 		// (a bare `{ tag: "map" }`, a stub with only the two methods under test),
 		// and wiring a diagnostic-adjacent hook must not be what breaks them. In
 		// production this is always a real NoteIdMap, so the method is always there.
-		// A pending folder op's moves stay local until the op leaves the queue:
-		// the shared index is what the server derives rows from and what peers
-		// read their maps from (see SyncStore.holdsCommit).
-		map?.setCommitHold?.((p) => this.folderOps.touches(p));
-		if (map && "trace" in map) {
-			map.trace = (kind, src, dst, id) =>
-				rlog().diag(
-					"idmap",
-					`idmap ${kind} ${noteRef(src)} -> ${noteRef(dst)} id=${id} via=${callerChain()}`,
-				);
-		}
-		map?.setRelocateHandler?.((from, to, id) => {
-			rlog().diag(
-				"idmap",
-				`idmap set-move ${noteRef(from)} -> ${noteRef(to)} id=${id} via=${callerChain()}`,
-			);
+		map?.setRelocateHandler?.((from, to) => {
 			// RECORD FIRST, move second. The move can lose: a concurrent flush or
 			// the discovery create may reach the new path first, and then this
 			// rename finds the target occupied and gives up -- which is exactly how
@@ -2272,14 +2274,6 @@ export class SyncEngine {
 		// Task 1's canSendLive gate held effectiveId's live update(s) (including
 		// the disk-content seed above) until this exact moment.
 		await this.adoptCreateAck(effectiveId, path, consumed);
-	}
-
-	/** Diagnostic: the durable queue is sending a crdt_create (see callerChain). */
-	traceQueuedCreate(path: string, docId: string): void {
-		rlog().diag(
-			"push",
-			`crdt_create send (queued) ${noteRef(path)} id=${docId} mapSaysIdLivesAt=${noteRef(this.noteIdMap?.pathForId(docId) ?? null)}`,
-		);
 	}
 
 	/** Where a create's ack applies: the path the create was SENT with, unless
@@ -7697,10 +7691,6 @@ export class SyncEngine {
 						);
 						const genesisUpdate = chosenGenesis?.update;
 						reachedServer = true;
-						rlog().diag(
-							"push",
-							`crdt_create send (pushFile ${mintedNow ? "minted" : "known"}) ${noteRef(pushedPath)} id=${noteId} via=${callerChain()}`,
-						);
 						const {
 							docId: serverId,
 							seeded,
@@ -15699,20 +15689,4 @@ export class SyncEngine {
 		this.queueRetryTimer = null;
 		this.queue.destroy();
 	}
-}
-
-/** Diagnostic: the engine methods on the current stack, innermost first,
- *  minus the id-map and logging frames (function names only, never paths).
- *  For the id-map and crdt_create traces (e2e test_107 restart hunt). */
-function callerChain(): string {
-	const names: string[] = [];
-	for (const line of (new Error().stack ?? "").split("\n").slice(1)) {
-		const m = /at (?:async )?([\w$.<>]+) \(/.exec(line);
-		const name = m?.[1];
-		if (!name) continue;
-		if (/callerChain|NoteIdMap|SyncStore|trace|map\.trace/.test(name)) continue;
-		names.push(name);
-		if (names.length === 4) break;
-	}
-	return names.join("<") || "?";
 }

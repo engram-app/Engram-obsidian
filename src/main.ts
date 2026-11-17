@@ -825,7 +825,6 @@ export default class EngramSyncPlugin extends Plugin {
 						genesisOutcome,
 					),
 				beginCreate: (path) => this.syncEngine.beginCreate(path),
-				traceCreate: (path, docId) => this.syncEngine.traceQueuedCreate(path, docId),
 				endCreate: (path) => this.syncEngine.endCreate(path),
 				onPostAckError: (docId, path, error) =>
 					// The row exists, so the create is not retried — but the ack's
