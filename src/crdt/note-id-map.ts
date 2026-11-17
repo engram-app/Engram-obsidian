@@ -128,10 +128,17 @@ export class NoteIdMap {
 	/** Resolve `path`'s id, minting a fresh UUIDv7 if this is the first time it
 	 *  has been seen. Throws on a garbage path — see `SyncStore.getOrMint`. */
 	getOrMint(path: string): string {
+		const known = this.store.get(path);
 		const id = this.store.getOrMint(path);
 		this.flush();
+		if (known === null) this.trace?.("getOrMint", null, path, id);
 		return id;
 	}
+
+	/** Diagnostic: every id-map write that mints an id or moves one (the
+	 *  folder-ops restart re-push hunt, e2e test_107). `set` moves are
+	 *  reported through `setRelocateHandler`. Set by the engine. */
+	trace: ((kind: string, src: string | null, dst: string, id: string) => void) | null = null;
 
 	/** Mint a fresh id for `path` unconditionally. For callers that already
 	 *  asked `get` and decided to mint (pushFile, queue replay). Pending until
@@ -139,6 +146,7 @@ export class NoteIdMap {
 	mint(path: string): string {
 		const id = this.store.mint(path);
 		this.flush();
+		this.trace?.("mint", null, path, id);
 		return id;
 	}
 
@@ -222,8 +230,10 @@ export class NoteIdMap {
 		// Unchanged contract: renaming a path this map has never seen is a no-op
 		// for the CALLER's purposes. The store still records the redirect, which
 		// is what stops a folder move minting a second id for the same file.
+		const id = this.store.get(oldPath);
 		this.store.rename(oldPath, newPath);
 		this.flush();
+		if (id !== null && oldPath !== newPath) this.trace?.("rename", oldPath, newPath, id);
 	}
 
 	/** Called when `clear()` runs, so the vault-change backstop replaces the

@@ -1099,7 +1099,18 @@ export class SyncEngine {
 		// the shared index is what the server derives rows from and what peers
 		// read their maps from (see SyncStore.holdsCommit).
 		map?.setCommitHold?.((p) => this.folderOps.touches(p));
-		map?.setRelocateHandler?.((from, to) => {
+		if (map && "trace" in map) {
+			map.trace = (kind, src, dst, id) =>
+				rlog().diag(
+					"idmap",
+					`idmap ${kind} ${noteRef(src)} -> ${noteRef(dst)} id=${id} via=${callerChain()}`,
+				);
+		}
+		map?.setRelocateHandler?.((from, to, id) => {
+			rlog().diag(
+				"idmap",
+				`idmap set-move ${noteRef(from)} -> ${noteRef(to)} id=${id} via=${callerChain()}`,
+			);
 			// RECORD FIRST, move second. The move can lose: a concurrent flush or
 			// the discovery create may reach the new path first, and then this
 			// rename finds the target occupied and gives up -- which is exactly how
@@ -2261,6 +2272,14 @@ export class SyncEngine {
 		// Task 1's canSendLive gate held effectiveId's live update(s) (including
 		// the disk-content seed above) until this exact moment.
 		await this.adoptCreateAck(effectiveId, path, consumed);
+	}
+
+	/** Diagnostic: the durable queue is sending a crdt_create (see callerChain). */
+	traceQueuedCreate(path: string, docId: string): void {
+		rlog().diag(
+			"push",
+			`crdt_create send (queued) ${noteRef(path)} id=${docId} mapSaysIdLivesAt=${noteRef(this.noteIdMap?.pathForId(docId) ?? null)}`,
+		);
 	}
 
 	/** Where a create's ack applies: the path the create was SENT with, unless
@@ -7678,6 +7697,10 @@ export class SyncEngine {
 						);
 						const genesisUpdate = chosenGenesis?.update;
 						reachedServer = true;
+						rlog().diag(
+							"push",
+							`crdt_create send (pushFile ${mintedNow ? "minted" : "known"}) ${noteRef(pushedPath)} id=${noteId} via=${callerChain()}`,
+						);
 						const {
 							docId: serverId,
 							seeded,
@@ -15676,4 +15699,20 @@ export class SyncEngine {
 		this.queueRetryTimer = null;
 		this.queue.destroy();
 	}
+}
+
+/** Diagnostic: the engine methods on the current stack, innermost first,
+ *  minus the id-map and logging frames (function names only, never paths).
+ *  For the id-map and crdt_create traces (e2e test_107 restart hunt). */
+function callerChain(): string {
+	const names: string[] = [];
+	for (const line of (new Error().stack ?? "").split("\n").slice(1)) {
+		const m = /at (?:async )?([\w$.<>]+) \(/.exec(line);
+		const name = m?.[1];
+		if (!name) continue;
+		if (/callerChain|NoteIdMap|SyncStore|trace|map\.trace/.test(name)) continue;
+		names.push(name);
+		if (names.length === 4) break;
+	}
+	return names.join("<") || "?";
 }
