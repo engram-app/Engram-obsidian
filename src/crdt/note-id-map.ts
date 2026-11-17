@@ -101,6 +101,16 @@ export class NoteIdMap {
 		// the first vault change, which is the quiet half of every "works until you
 		// switch vaults" bug.
 		if (this.relocateHandler) store.onRelocate = this.relocateHandler;
+		if (this.commitHold) store.holdsCommit = this.commitHold;
+	}
+
+	private commitHold: ((path: string) => boolean) | null = null;
+
+	/** Keep staged claims at matching paths out of the shared index until the
+	 *  predicate stops matching. See `SyncStore.holdsCommit`. */
+	setCommitHold(fn: (path: string) => boolean): void {
+		this.commitHold = fn;
+		this.store.holdsCommit = fn;
 	}
 
 	/** Warm the local cache from data.json. Never published — see

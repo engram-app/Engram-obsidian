@@ -1095,6 +1095,10 @@ export class SyncEngine {
 		// (a bare `{ tag: "map" }`, a stub with only the two methods under test),
 		// and wiring a diagnostic-adjacent hook must not be what breaks them. In
 		// production this is always a real NoteIdMap, so the method is always there.
+		// A pending folder op's moves stay local until the op leaves the queue:
+		// the shared index is what the server derives rows from and what peers
+		// read their maps from (see SyncStore.holdsCommit).
+		map?.setCommitHold?.((p) => this.folderOps.touches(p));
 		map?.setRelocateHandler?.((from, to) => {
 			// RECORD FIRST, move second. The move can lose: a concurrent flush or
 			// the discovery create may reach the new path first, and then this
@@ -6378,9 +6382,11 @@ export class SyncEngine {
 		const moved = this.descendantMoves(from, to);
 		// A child whose ignore status flips needs its own push or delete.
 		if (moved.some(([o, n]) => this.shouldIgnore(o) !== this.shouldIgnore(n))) return false;
-		this.rekeyMoved(moved);
 		const name = cut < 0 ? to : to.slice(cut + 1);
+		// Queued BEFORE the re-key: its id-map commit is synchronous, and only a
+		// queued op keeps the moved claims out of the shared index.
 		this.folderOps.move(id, parentId, name, from, to);
+		this.rekeyMoved(moved);
 		this.fileMetaV1.folder(id, parentId, name);
 		rlog().info(
 			"push",
@@ -11144,6 +11150,8 @@ export class SyncEngine {
 	 *  set fresh fences that must wait for their own echo. */
 	private onFolderOpLeft(to: string, acked: boolean): void {
 		const now = this.time.now();
+		// Publish the claims the op held back (SyncStore.holdsCommit).
+		this.noteIdMap?.flushNow?.();
 		for (const pending of this.pendingLocalMoves.values()) {
 			if (!pending.path.startsWith(`${to}/`)) continue;
 			pending.at = now;

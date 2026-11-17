@@ -121,6 +121,16 @@ export class SyncStore {
 	 *  usable headless (tests, the index room before the engine exists). */
 	onRelocate?: (from: string, to: string, note_id: string) => void;
 
+	/** Paths whose staged state `commit()` must keep LOCAL for now: the paths a
+	 *  still-pending folder op touches. This doc is authoritative for paths
+	 *  (the server derives note rows from it, peers read their id maps from
+	 *  it), so publishing an unacked folder move here moved the server's rows
+	 *  one note at a time behind the op and moved peers' maps ahead of their
+	 *  files (e2e run 44000240952). Held entries stay readable here and are
+	 *  published by the first commit after the predicate stops matching (the
+	 *  op left the queue). Optional so the store stays usable headless. */
+	holdsCommit?: (path: string) => boolean;
+
 	/** Has this note_id been permanently tombstoned by the CRDT manager?
 	 *  Injected because the store must not depend on the registry; see the
 	 *  aliveness check in `getOrMint`. Absent in tests that do not model it. */
@@ -780,21 +790,26 @@ export class SyncStore {
 	 *  map if that ever shows up in a profile. */
 	commit(origin?: unknown): void {
 		if (!this.dirty) return;
+		const held = this.holdsCommit ?? (() => false);
+		const keep = (path: string, meta: FileMeta) =>
+			this.pendingUpload.has(meta.note_id) || held(path);
 
 		this.map.doc?.transact(() => {
-			for (const from of this.renamedAway) this.map.delete(from);
-			for (const path of this.deleteSet) this.map.delete(path);
+			for (const from of this.renamedAway) if (!held(from)) this.map.delete(from);
+			for (const path of this.deleteSet) if (!held(path)) this.map.delete(path);
 			for (const [path, meta] of this.overlay) {
-				if (!this.pendingUpload.has(meta.note_id)) this.map.set(path, meta);
+				if (!keep(path, meta)) this.map.set(path, meta);
 			}
 		}, origin);
 
 		for (const [path, meta] of this.overlay) {
-			if (!this.pendingUpload.has(meta.note_id)) this.overlay.delete(path);
+			if (!keep(path, meta)) this.overlay.delete(path);
 		}
-		this.deleteSet.clear();
-		this.renames.clear();
-		this.renamedAway.clear();
+		for (const path of this.deleteSet) if (!held(path)) this.deleteSet.delete(path);
+		for (const [from, r] of this.renames) {
+			if (!held(from) && !held(r.to)) this.renames.delete(from);
+		}
+		for (const from of this.renamedAway) if (!held(from)) this.renamedAway.delete(from);
 		// Eviction is bookkeeping for the STAGED window only. Once the commit
 		// lands, a displaced id genuinely has no entry anywhere, so the set is
 		// redundant — and keeping it is pure blindness: a peer that re-claims

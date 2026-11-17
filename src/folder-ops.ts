@@ -249,6 +249,12 @@ export class FolderOps {
 		return this.opCovering(path) !== undefined;
 	}
 
+	/** Does a pending op move `path` (under its `from`) or own it (under its
+	 *  `to`)? The id-map commit hold (`SyncStore.holdsCommit`). */
+	touches(path: string): boolean {
+		return this.coversTarget(path) || this.movedPathFor(path) !== null;
+	}
+
 	private opCovering(path: string): FolderOp | undefined {
 		for (const op of this.queue.values()) if (path.startsWith(`${op.to}/`)) return op;
 		return undefined;
