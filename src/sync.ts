@@ -1875,10 +1875,11 @@ export class SyncEngine {
 	 *  batch path only: it seeds no local doc, so it has no held edits. */
 	private async adoptCreateAck(
 		effectiveId: string,
-		path: string,
+		sentPath: string,
 		consumed: string | null,
 		opts?: { flushHeld?: boolean },
 	): Promise<void> {
+		const path = this.createAckPath(sentPath, effectiveId);
 		const normalized = normalizePath(path);
 		this.noteIdMap?.set(normalized, effectiveId);
 		// Oracle flip: the server row exists, so hasServerNote must be true for
@@ -2167,11 +2168,12 @@ export class SyncEngine {
 	async applyCrdtCreateAck(
 		localId: string,
 		serverId: string,
-		path: string,
+		sentPath: string,
 		seeded = false,
 		genesis?: GenesisFrame,
 		genesisOutcome?: GenesisOutcome,
 	): Promise<void> {
+		const path = this.createAckPath(sentPath, localId);
 		const normalized = normalizePath(path);
 		let effectiveId = localId;
 		// What the manager actually took, from whichever of the two seed routes
@@ -2255,6 +2257,31 @@ export class SyncEngine {
 		// Task 1's canSendLive gate held effectiveId's live update(s) (including
 		// the disk-content seed above) until this exact moment.
 		await this.adoptCreateAck(effectiveId, path, consumed);
+	}
+
+	/** Where a create's ack applies: the path the create was SENT with, unless
+	 *  our own folder op moved the note since (its file is at the moved path
+	 *  and nothing is at the sent one). A genesis create in flight across a
+	 *  folder rename otherwise re-claimed the old path in the id map, so the
+	 *  next inbound row re-created the note there and a restart re-pushed it
+	 *  per note (e2e run 43976104537). Answered by the pending op's from/to,
+	 *  or, once the op has left the queue, by where the id map already holds
+	 *  the note (its file there, none at the sent path). */
+	private createAckPath(sentPath: string, id: string): string {
+		const sent = normalizePath(sentPath);
+		const current = this.noteIdMap?.pathForId(id);
+		const moved =
+			this.folderOps.movedPathFor(sent) ??
+			(current && normalizePath(current) !== sent ? normalizePath(current) : null);
+		// No move recorded: the common case, answered without a vault read.
+		if (!moved) return sent;
+		const vault = this.app.vault;
+		if (vault.getFileByPath(sent)) return sent;
+		if (vault.getFileByPath(moved)) {
+			rlog().info("crdt", `Create ack after our move: ${noteRef(sent)} -> ${noteRef(moved)}`);
+			return moved;
+		}
+		return sent;
 	}
 
 	/** True when a note qualifies for the genesis-frame fast path (#1409):
