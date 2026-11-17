@@ -70,6 +70,13 @@ export class RequestTimeoutError extends Error {
  *  outside EngramApi (token refresh, device flow, update check,
  *  probeHealth) — anything unbounded there can wedge its caller forever;
  *  the token-refresh case stalls EVERY request behind getToken(). */
+/** `POST /folders` reply. `folders`: root-first ancestor chain with server
+ *  ids, present only on a folder-ops server (Engram#2523 S4). */
+export type CreateFolderResponse = {
+	folder: { name: string; count: number };
+	folders?: { id: string; parent_id: string | null; name: string }[];
+};
+
 export async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 	let timer: number | undefined;
 	const deadline = new Promise<never>((_, reject) => {
@@ -437,6 +444,7 @@ export class EngramApi {
 		const attachmentTransfer =
 			path.startsWith("/attachments") &&
 			path !== "/attachments/batch-delete" &&
+			path !== "/attachments/rename" &&
 			(method === "POST" || method === "GET");
 		const timeoutMs = attachmentTransfer ? this.attachmentTimeoutMs : this.requestTimeoutMs;
 		const pending = requestUrl({
@@ -833,6 +841,16 @@ export class EngramApi {
 		return resp.json as AttachmentDetail;
 	}
 
+	/** Move an attachment's server row to `newPath` (O(1) server side, no
+	 *  bytes). Throws the HTTP error: callers fall back on 404 and others. */
+	async renameAttachment(oldPath: string, newPath: string): Promise<void> {
+		// A delete still pending for either path must land first: one for the
+		// new path applied after the move would delete the moved row.
+		await this.attachmentDeletes.settled(oldPath);
+		await this.attachmentDeletes.settled(newPath);
+		await this.request("POST", "/attachments/rename", { old_path: oldPath, new_path: newPath });
+	}
+
 	/** Delete an attachment. Coalesced into batch requests, see
 	 *  attachment-delete-batcher.ts for the vault, ordering and echo rules. */
 	async deleteAttachment(path: string, vaultId?: string | null): Promise<DeleteResponse> {
@@ -936,10 +954,11 @@ export class EngramApi {
 	// --- Explicit folder markers (kind='folder' rows) ---
 
 	/** Create an explicit empty folder marker. Server is idempotent — repeated
-	 *  calls return 200 instead of 201 but the same shape. */
-	async createFolder(folder: string): Promise<{ folder: { name: string; count: number } }> {
+	 *  calls return 200 instead of 201 but the same shape. A folder-ops server
+	 *  adds `folders`, the folder's ancestor chain with ids (Engram#2523). */
+	async createFolder(folder: string): Promise<CreateFolderResponse> {
 		const resp = await this.request("POST", "/folders", { folder });
-		return resp.json as { folder: { name: string; count: number } };
+		return resp.json as CreateFolderResponse;
 	}
 
 	/** Delete an explicit empty folder marker. Server always 204 — idempotent.

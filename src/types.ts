@@ -615,6 +615,8 @@ export interface ManifestResponse {
 	/** Phase E1 (#1065): true when `?since_seq=` matched the server watermark —
 	 *  nothing changed, and the notes/attachments body is OMITTED. */
 	unchanged?: boolean;
+	/** Engram#2523 S4: every live folder row (folder-ops servers only). */
+	folders?: { id: string; parent_id: string | null; name: string }[];
 }
 
 /** Response from POST /api/vaults/register */

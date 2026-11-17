@@ -109,15 +109,11 @@ export class CrdtOpQueue {
 	 *  joined yet). Neither the TTL nor the attempt budget may be spent while
 	 *  nothing can be delivered: on rejoin every held op's age is credited the
 	 *  time it spent held. Cleared by `onJoined`; set by `onLeft`. */
-	private heldSince: number | null;
+	private readonly held: HeldClock;
 	/** Re-entrancy guard so overlapping flush/tick calls don't double-send. */
 	private flushing = false;
-	/** Queue-wide pause after a `rate_limited` reply, and how many arrived in a
-	 *  row (the pause doubles per streak, reset by the next delivered op). */
-	private rateLimitedUntil = 0;
-	private rateLimitStreak = 0;
-	/** Start of the pause not yet credited back to queued ops' TTL age. */
-	private pauseFrom: number | null = null;
+	/** Queue-wide pause after a `rate_limited` reply (see RateLimitPause). */
+	private readonly rateLimit: RateLimitPause;
 
 	private readonly send: (op: CrdtOp) => Promise<SendResult>;
 	private readonly now: () => number;
@@ -136,7 +132,8 @@ export class CrdtOpQueue {
 		this.currentVaultId = deps.currentVaultId;
 		this.opts = { ...DEFAULT_OPTIONS, ...deps.options };
 		this.persistDelayMs = deps.persistDelayMs ?? PERSIST_DELAY_MS;
-		this.heldSince = this.now();
+		this.held = new HeldClock(this.now);
+		this.rateLimit = new RateLimitPause(this.now, (n) => this.backoffFor(n));
 	}
 
 	/** Number of distinct pending ops (docIds). */
@@ -221,14 +218,12 @@ export class CrdtOpQueue {
 	 *  back to each op's age, so the TTL measures time the op COULD have been
 	 *  delivered, not wall time. Held ops are due immediately. */
 	async onJoined(): Promise<void> {
-		if (this.heldSince !== null) {
-			const now = this.now();
+		const span = this.held.join();
+		if (span) {
 			for (const entry of this.entries.values()) {
-				const heldFor = now - Math.max(this.heldSince, entry.op.enqueuedAt);
-				if (heldFor > 0) entry.op.enqueuedAt += heldFor;
+				entry.op.enqueuedAt = creditAge(entry.op.enqueuedAt, span);
 				entry.nextAttemptAt = 0;
 			}
-			this.heldSince = null;
 			this.schedulePersist();
 		}
 		this.joined = true;
@@ -239,9 +234,8 @@ export class CrdtOpQueue {
 	 *  including the rest of an in-flight pass, and pauses the TTL until the
 	 *  next `onJoined`. Idempotent. */
 	onLeft(): void {
-		if (!this.joined && this.heldSince !== null) return;
 		this.joined = false;
-		this.heldSince = this.now();
+		this.held.leave();
 	}
 
 	/**
@@ -297,14 +291,9 @@ export class CrdtOpQueue {
 	 *  to every op's age so the TTL cannot expire the outbox while the server
 	 *  sheds load. Runs once per pause, when the pause has ended. */
 	private creditRateLimitPause(): void {
-		if (this.pauseFrom === null) return;
-		// Same rule as onJoined: credit only the part of the pause each op was
-		// actually queued for, so an op enqueued mid-pause is not aged negative.
-		for (const e of this.entries.values()) {
-			const heldFor = this.rateLimitedUntil - Math.max(this.pauseFrom, e.op.enqueuedAt);
-			if (heldFor > 0) e.op.enqueuedAt += heldFor;
-		}
-		this.pauseFrom = null;
+		const pause = this.rateLimit.takeEnded();
+		if (!pause) return;
+		for (const e of this.entries.values()) e.op.enqueuedAt = creditAge(e.op.enqueuedAt, pause);
 		this.schedulePersist();
 	}
 
@@ -345,7 +334,7 @@ export class CrdtOpQueue {
 				// The channel dropped mid-pass: every remaining send would fail
 				// instantly and burn an attempt against a dead socket.
 				if (!this.joined) break;
-				if (this.now() < this.rateLimitedUntil) break;
+				if (this.rateLimit.paused()) break;
 				this.creditRateLimitPause();
 				const entry = this.entries.get(docId);
 				if (!entry) continue;
@@ -372,16 +361,12 @@ export class CrdtOpQueue {
 			// Uncharged, like `held`: a server busy for longer than
 			// MAX_ATTEMPTS backoffs must not drop a queued delete (the server
 			// copy would survive). The socket reply carries no Retry-After.
-			this.rateLimitStreak += 1;
-			const wait = this.backoffFor(this.rateLimitStreak);
-			this.rateLimitedUntil = this.now() + wait;
-			this.pauseFrom ??= this.now();
-			entry.nextAttemptAt = this.now() + wait;
+			entry.nextAttemptAt = this.rateLimit.hit();
 			this.schedulePersist();
 			return;
 		}
 		if (result === "ok") {
-			this.rateLimitStreak = 0;
+			this.rateLimit.delivered();
 			this.entries.delete(docId);
 			this.schedulePersist();
 			return;
@@ -403,6 +388,93 @@ export class CrdtOpQueue {
 			return;
 		}
 		entry.nextAttemptAt = this.now() + this.backoffFor(entry.op.attempts);
+	}
+}
+
+/** A span in which nothing could be delivered. */
+export type HeldSpan = { from: number; until: number };
+
+/** Credit a held span back to an op's age, counting only the part the op was
+ *  actually queued for (an op enqueued mid-span is not aged negative). Shared
+ *  by every socket op queue: ages count delivery time, never wall time. */
+export function creditAge(queuedAt: number, span: HeldSpan): number {
+	const heldFor = span.until - Math.max(span.from, queuedAt);
+	return heldFor > 0 ? queuedAt + heldFor : queuedAt;
+}
+
+/** When a queue's channel went down, so its ops' age can be credited the
+ *  held time on rejoin (construction counts as down: nothing is joined yet).
+ *  Shared by the note-op queue and folder ops. */
+export class HeldClock {
+	private since: number | null;
+
+	/** `since`: when it went down (default now). */
+	constructor(
+		private readonly now: () => number,
+		since: number = now(),
+	) {
+		this.since = since;
+	}
+
+	isHeld(): boolean {
+		return this.since !== null;
+	}
+
+	/** The channel went down (idempotent: the first leave starts the span). */
+	leave(): void {
+		this.since ??= this.now();
+	}
+
+	/** The channel joined: the held span, once (null when it was not held). */
+	join(): HeldSpan | null {
+		if (this.since === null) return null;
+		const span = { from: this.since, until: this.now() };
+		this.since = null;
+		return span;
+	}
+}
+
+/** The queue-wide pause after a `rate_limited` reply, shared by every socket
+ *  op queue (note ops here, folder ops in folder-ops.ts). A rate limit is not
+ *  the op's fault, so it spends no attempt: the WHOLE queue pauses, the pause
+ *  doubles per reply in a row (reset by the next delivered op), and the
+ *  paused time is credited back to queued ops' age once it ends. The socket
+ *  reply carries no Retry-After. */
+export class RateLimitPause {
+	private until = 0;
+	private streak = 0;
+	/** Start of the pause not yet credited back to queued ops' age. */
+	private from: number | null = null;
+
+	constructor(
+		private readonly now: () => number,
+		private readonly backoff: (streak: number) => number,
+	) {}
+
+	paused(): boolean {
+		return this.now() < this.until;
+	}
+
+	/** A `rate_limited` reply: start or extend the pause; returns when it ends. */
+	hit(): number {
+		this.streak += 1;
+		this.until = this.now() + this.backoff(this.streak);
+		this.from ??= this.now();
+		return this.until;
+	}
+
+	/** An op was delivered: the next rate limit starts a fresh streak. */
+	delivered(): void {
+		this.streak = 0;
+	}
+
+	/** The ended pause not yet credited to queued ops' age, once (null while
+	 *  none ended or it is still running). */
+	takeEnded(): HeldSpan | null {
+		if (this.from === null || this.paused()) return null;
+		const ended = { from: this.from, until: this.until };
+		this.from = null;
+		return ended;
 	}
 }
 

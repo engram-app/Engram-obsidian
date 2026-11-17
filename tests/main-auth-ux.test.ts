@@ -502,6 +502,8 @@ describe("opening the sync gate re-runs the catch-up (#425)", () => {
 				issues: { serialize: () => [] },
 				ignoredFiles: { serialize: () => [] },
 				exportGateJournal: () => journal,
+				exportFolderOps: () => [],
+				exportFolderIndex: () => ({ vaultId: null, rows: [] }),
 			},
 			async writePluginData(d: Record<string, unknown>) {
 				written = d;

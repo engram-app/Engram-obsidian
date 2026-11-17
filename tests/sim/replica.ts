@@ -72,7 +72,13 @@ import type { SimClock } from "./clock";
 import type { ModelServer } from "./model-server";
 import { setRequestUrlHandler, requestUrl as shimRequestUrl } from "./obsidian-shim";
 import type { Scheduler } from "./scheduler";
-import { makeVault, type SimApp, type VaultEvents, type WriteJournalEntry } from "./vault-fs";
+import {
+	type FolderRenameOrder,
+	makeVault,
+	type SimApp,
+	type VaultEvents,
+	type WriteJournalEntry,
+} from "./vault-fs";
 
 let requestUrlRedirected = false;
 
@@ -444,7 +450,7 @@ export class Replica {
 		let noteStream: NoteChannel | null = null;
 		engine.syncLog = new SyncLog(); // main.ts:402-403
 		engine.setCrdtLiveCheck(() => noteStream?.isCrdtConnected() ?? false); // main.ts:412
-		engine.setNoteIdMap(noteIdMap); // main.ts:418
+		engine.setCrdtPorts({ noteIdMap }); // main.ts wires the map through setCrdtPorts
 		engine.setDeviceId(id); // main.ts:423
 		engine.setCrdtEditorDetach(() => {}); // main.ts:429 (no CrdtLiveViews headless)
 		engine.setCrdtEditorRebind(() => {}); // main.ts:434
@@ -453,6 +459,7 @@ export class Replica {
 		const crdtOpQueue = new CrdtOpQueue({
 			send: makeCrdtOpSend({
 				channel: () => noteStream,
+				waitsForFolderOp: (path) => engine.createWaitsForFolderOp(path), // main.ts
 				// #1409 (review H4): mirrors main.ts's wiring — without this, a
 				// replayed create in the sim never exercises the genesis-frame
 				// fast path, only the inline pushFile one.
@@ -511,6 +518,7 @@ export class Replica {
 
 		let crdtEverJoined = false;
 		channel.onStatusChange = (connected) => {
+			engine.folderOps.onSyncStatus(connected); // main.ts onStatusChange
 			if (connected) {
 				engine.clearConfirmedNoteIds(); // main.ts:1734
 			} else if (!crdtEverJoined) {
@@ -533,6 +541,15 @@ export class Replica {
 		);
 		// Room-free full-state read (main.ts setCrdtPorts `docState`).
 		engine.setCrdtPorts({ docState: (id: string) => channel.crdtDocState(id) });
+		// Engram#2523 S4 folder ops (main.ts: setCrdtPorts `folderOp`,
+		// onServerFeatures, onCreated / onFolderChanged).
+		engine.setCrdtPorts({ folderOp: (op) => channel.folderOp(op) });
+		channel.onServerFeatures = (f) => void engine.setFolderOpsEnabled(f.folderOps);
+		channel.onCreated = (p, nid) => engine.claimNote(p, nid);
+		channel.onIndexV1 = (on) => engine.setIndexV1(on);
+		channel.onCreateFolderId = (p, fid) => engine.learnFolderOf(p, fid);
+		channel.onCreateFolders = (rows) => engine.learnFolderChain(rows);
+		channel.onFolderChanged = (c) => void engine.onFolderChanged(c);
 
 		// Paths this replica has an editor open on (openNote adds, closeNote
 		// removes). Backs isBound + setLiveBoundCheck below, exactly as
@@ -604,6 +621,7 @@ export class Replica {
 			// flush frames buffered while offline (the reconnect convergence trigger).
 			manager.setConnected(true);
 			void (async () => {
+				await engine.folderOps.onReconnect(); // main.ts onCrdtJoined: folder ops first
 				await crdtOpQueue.onJoined();
 				await onCrdtTopicJoined();
 			})();
@@ -778,6 +796,21 @@ export class Replica {
 		const file = this.app.vault.getFileByPath(oldPath);
 		if (!file) throw new Error(`renameNote: no file at ${oldPath}`);
 		await this.app.vault.rename(file, newPath);
+	}
+
+	/** Every path this replica's engine trashed, in order. */
+	trashed(): string[] {
+		return [...this.app.trashed];
+	}
+
+	/** Every `vault.rename` this replica's vault saw, in order. */
+	renamed(): string[] {
+		return [...this.app.renamed];
+	}
+
+	/** Rename a folder; Obsidian's per-item events fire in `order`. */
+	async renameFolder(oldPath: string, newPath: string, order: FolderRenameOrder): Promise<void> {
+		await this.app.renameFolder(oldPath, newPath, order);
 	}
 
 	async deleteNote(path: string): Promise<void> {

@@ -44,6 +44,7 @@ import { type CrdtOp, CrdtOpQueue, makeDropReporter } from "./crdt-op-queue";
 import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { isMarkdownPath } from "./file-kind";
+import type { FolderOp, FolderRow } from "./folder-ops";
 import { setLogSink } from "./has-logging";
 import { noteRef } from "./note-ref";
 import { PromiseTracker, setActiveTracker } from "./track-promise";
@@ -157,6 +158,12 @@ interface PluginData {
 	gateJournal?: GateEvent[];
 	/** The vault `gateJournal` was recorded for; any other vault drops it. */
 	gateJournalVaultId?: string | null;
+	/** Folder ops the server has not answered (Engram#2523 S4). Each carries
+	 *  its vault; another vault's op is dropped unsent. */
+	folderOps?: FolderOp[];
+	/** The folder id <-> path index as last applied to disk, and its vault, so
+	 *  a restart can follow a remote folder move before its first manifest. */
+	folderIndex?: { vaultId: string | null; rows: FolderRow[] };
 }
 
 /** Whether setupNoteStream() may keep the existing stream instead of
@@ -800,6 +807,7 @@ export default class EngramSyncPlugin extends Plugin {
 			send: makeCrdtOpSend({
 				capGate: notesCapGate,
 				capBlocksCreate: (path) => this.syncEngine.capBlocksCreate(path),
+				waitsForFolderOp: (path) => this.syncEngine.createWaitsForFolderOp(path),
 				channel: () => this.noteStream,
 				// #1409 (review H4): re-read disk and build the genesis body at SEND
 				// time so a replayed create (rate-limit backoff, pre-join hold, a
@@ -864,6 +872,8 @@ export default class EngramSyncPlugin extends Plugin {
 		this.registerInterval(
 			window.setInterval(() => {
 				void this.crdtOpQueue?.tick().finally(() => dropReporter.flush());
+				// Folder ops: retry unanswered ops, expire held inbound changes.
+				void this.syncEngine.folderOps.tick();
 			}, 5000),
 		);
 		// Wire the SyncEngine's durable create/delete enqueue hook to the queue.
@@ -924,11 +934,13 @@ export default class EngramSyncPlugin extends Plugin {
 			this.syncEngine.setCtimeSweepVaultId(saved.ctimeSweepVaultId);
 		}
 		if (saved?.offlineQueue?.length) {
-			this.syncEngine.queue.load(saved.offlineQueue);
+			this.syncEngine.loadQueue(saved.offlineQueue);
 		}
 		if (saved?.crdtOpQueue?.length) {
 			this.crdtOpQueue?.load(saved.crdtOpQueue);
 		}
+		if (saved?.folderOps?.length) this.syncEngine.folderOps.load(saved.folderOps);
+		this.syncEngine.restoreFolderIndex(saved?.folderIndex);
 		if (saved?.syncStateVaultId !== undefined) {
 			this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId);
 		}
@@ -2019,6 +2031,9 @@ export default class EngramSyncPlugin extends Plugin {
 			// Re-listed on every wholesale save (like offlineQueue) or the next
 			// saveData() wipes the durable CRDT ops.
 			crdtOpQueue: this.crdtOpQueue?.all() ?? [],
+			// Re-listed for the wholesale-save reason: unanswered folder ops.
+			folderOps: this.syncEngine.exportFolderOps(),
+			folderIndex: this.syncEngine.exportFolderIndex(),
 			syncState: this.syncEngine.exportSyncState(),
 			syncStateVaultId: this.syncEngine.getSyncStateVaultId(),
 			// Dual-write legacy format for rollback safety (remove after one release cycle)
@@ -2506,6 +2521,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// Disconnect existing channel + invalidate any in-flight connectChannel()
 		// (its async getMe() may still be pending) so it can't spawn a zombie.
 		this.crdtOpQueue?.onLeft();
+		this.syncEngine.folderOps.onSyncStatus(false);
 		this.noteStream?.disconnect();
 		this.noteStream = null;
 		this.channelEpoch++;
@@ -2710,6 +2726,8 @@ export default class EngramSyncPlugin extends Plugin {
 
 				channel.onStatusChange = (connected) => {
 					this.liveConnected = connected;
+					// Folder-op age counts only time the sync channel is joined.
+					this.syncEngine.folderOps.onSyncStatus(connected);
 					if (connected) this.everConnected = true;
 					if (!connected) {
 						// A dropped channel is the earliest wedge signal: any HTTP
@@ -2827,9 +2845,17 @@ export default class EngramSyncPlugin extends Plugin {
 					this.api.setRawAttachmentUpload(f.rawAttachmentUpload);
 					this.api.setRawAttachmentDownload(f.rawAttachmentDownload);
 					this.api.setAttachmentBatchDelete(f.attachmentBatchDeleteOrigin);
+					void this.syncEngine.setFolderOpsEnabled(f.folderOps);
 					// Once per join, not per push: gates room-free diffs.
 					void this.api.learnServerVersion();
 				};
+
+				// Engram#2523 S4: folder ids on note creates, folder_changed inbound.
+				channel.onCreated = (p, id) => this.syncEngine.claimNote(p, id);
+				channel.onIndexV1 = (on) => this.syncEngine.setIndexV1(on);
+				channel.onCreateFolderId = (p, id) => this.syncEngine.learnFolderOf(p, id);
+				channel.onCreateFolders = (rows) => this.syncEngine.learnFolderChain(rows);
+				channel.onFolderChanged = (c) => void this.syncEngine.onFolderChanged(c);
 
 				this.noteStream = channel;
 				this.indexChannel = channel;
@@ -2885,6 +2911,11 @@ export default class EngramSyncPlugin extends Plugin {
 						if (channel.getVaultId() !== this.settings.vaultId) return;
 						channel.crdtRelease(id);
 					},
+					// Same vault guard: a folder op is a write.
+					folderOp: (op) =>
+						channel.getVaultId() === this.settings.vaultId
+							? channel.folderOp(op)
+							: Promise.resolve({ kind: "held" }),
 				});
 
 				// Wire CRDT transport through this channel.
@@ -3100,7 +3131,7 @@ export default class EngramSyncPlugin extends Plugin {
 						// so each kept room sends exactly one STEP1.
 						this.syncEngine.reopenRoomsOnRejoin(this.openCrdtNoteIds());
 						this.crdtManager?.setConnected(true);
-						// Deliver any HELD create/delete ops FIRST, then reconcile the
+						// Deliver any HELD folder ops, then create/delete ops, then reconcile the
 						// id-map, re-enroll open notes, run the socket catch-up, and
 						// finally the self-heal sweep. The sweep skips any note whose
 						// create is still pending here (pushCandidates), so flushing
@@ -3114,8 +3145,31 @@ export default class EngramSyncPlugin extends Plugin {
 						// sync-topic onStatusChange, which acks first) is what fixes the
 						// deaf-note race. See onCrdtTopicJoined.
 						void (async () => {
-							await this.crdtOpQueue?.onJoined();
-							await this.onCrdtTopicJoined();
+							// Folder ops FIRST: a queued create under a folder this device
+							// moved offline would otherwise make the server mint a second
+							// folder row at the target, and the op is then refused as a
+							// conflict (the whole folder goes per file). Safe because a
+							// folder op re-keys queued creates to their new paths
+							// (rekeyMoved). Re-sends unanswered ops and drops held inbound
+							// changes (this join's manifest re-teaches the server's folders).
+							// Each step runs even if an earlier one throws (a failing
+							// per-file fallback must not skip the note-op queue). The order
+							// holds only when `features.folder_ops` arrived before this join;
+							// if it lands later, queued creates go first and the op falls
+							// back per file (converges, loses the O(1) win on that path).
+							const step = async (
+								name: string,
+								run: () => Promise<unknown> | undefined,
+							) => {
+								try {
+									await run();
+								} catch (e) {
+									rlog().warn("crdt", `rejoin step ${name} failed: ${errMsg(e)}`);
+								}
+							};
+							await step("folder ops", () => this.syncEngine.folderOps.onReconnect());
+							await step("note ops", () => this.crdtOpQueue?.onJoined());
+							await step("catch-up", () => this.onCrdtTopicJoined());
 						})();
 					};
 					// T4 folded finding + audit F13: when the crdt: topic REJOIN fails
@@ -3812,6 +3866,10 @@ export default class EngramSyncPlugin extends Plugin {
 					// biome-ignore lint/suspicious/noConsole: error boundary
 					console.error("Engram Sync: periodic catch-up failed", e);
 				}
+				// Held REST replays need a trigger even when no socket ever joins.
+				await this.syncEngine.pollFlush().catch((e: unknown) => {
+					rlog().warn("queue", `poll flush failed: ${errMsg(e)}`);
+				});
 				// Then push what the server still lacks, whether or not the pull
 				// leg worked. Gated inside on the sync gate, offline, and any sync
 				// already running.

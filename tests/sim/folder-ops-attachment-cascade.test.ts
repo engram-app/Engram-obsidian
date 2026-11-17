@@ -1,0 +1,67 @@
+// e2e test_107 (backend PR 2607, run 43791484191) on plugin 8ac3d17e: A renames
+// a folder holding an attachment with folder ops on. In that run the
+// server's cascade announced each attachment as delete(old) + upsert(new)
+// BEFORE folder_changed (the legacy order; Engram#2615 sends folder_changed
+// first, and both orders are tested below). B must follow without ever sending a DELETE: the e2e lost
+// the attachment on the server and both vaults.
+import { afterAll, describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { Replica } from "./replica";
+import { boot, cleanup } from "./scenarios";
+
+afterAll(() => Replica.restoreGlobals());
+
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
+const onDisk = (r: Replica, rel: string) => fs.existsSync(path.join(r.vaultDir, rel));
+/** Every `DELETE /folders...` call (the sim tallies the raw path). */
+const folderDeletes = (t: { server: { wireCounts: Map<string, number> } }) =>
+	[...t.server.wireCounts].reduce(
+		(n, [k, v]) => (k.startsWith("DELETE /folders") ? n + v : n),
+		0,
+	);
+
+describe("folder op cascade with an attachment", () => {
+	// attachmentLegsFirst: the backend's order before the folder_changed-first
+	// fix. Either order must converge with nothing lost.
+	for (const [folderOps, attachmentLegsFirst] of [
+		[true, false],
+		[true, true],
+		[false, false],
+	] as const) {
+		for (const seed of [10701, 10702]) {
+			test(`folder_ops=${folderOps}${attachmentLegsFirst ? " (legacy order)" : ""} seed ${seed}: the attachment survives everywhere`, async () => {
+				const t = await boot(seed, ["A", "B"], { folderOps, attachmentLegsFirst });
+				try {
+					const [a, b] = t.replicas;
+					await a.createNote("Proj/a.md", "alpha body");
+					await a.createAttachment("Proj/img.png", PNG);
+					await t.scheduler.drain();
+					for (const r of t.replicas) {
+						await r.goOffline();
+						await r.goOnline();
+					}
+					await t.scheduler.drain();
+					expect(onDisk(b, "Proj/img.png")).toBe(true); // B has its copy first
+					const deletes0 = t.server.count("DELETE /attachments/*");
+					const folderDeletes0 = folderDeletes(t);
+					await a.renameFolder("Proj", "Done", "folder-first");
+					await t.scheduler.drain();
+					await t.scheduler.drain();
+					expect(t.server.hasAttachmentAt("Done/img.png")).toBe(true);
+					expect(t.server.count("DELETE /attachments/*") - deletes0).toBe(0);
+					for (const r of [a, b]) {
+						expect(onDisk(r, "Done/img.png")).toBe(true);
+						expect(onDisk(r, "Done/a.md")).toBe(true);
+						expect(onDisk(r, "Proj/img.png")).toBe(false);
+						// No emptied old folder left behind (e2e run 43846246580).
+						expect(onDisk(r, "Proj")).toBe(false);
+					}
+					expect(folderDeletes(t) - folderDeletes0).toBe(0);
+				} finally {
+					cleanup(t);
+				}
+			});
+		}
+	}
+});
