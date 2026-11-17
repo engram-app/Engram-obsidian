@@ -118,6 +118,7 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>,
 			getStatus: () => "idle",
 			flushQueue: opts?.flushQueue ?? (() => Promise.resolve(0)),
 			clearConfirmedNoteIds: () => {},
+			setCrdtJoinRejected: () => {},
 			reconcileNoteIdMapFromManifest: opts?.reconcile ?? (() => Promise.resolve(0)),
 			// Reconnect convergence replays the seq-ordered op-log over the socket
 			// (catchupViaSeqReplay, crdt_catchup_since) — the sole catch-up path.

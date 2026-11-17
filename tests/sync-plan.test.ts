@@ -300,6 +300,17 @@ describe("SyncEngine.enumerateServerState", () => {
 		expect(Date.now() - t0).toBeLessThan(1000);
 	});
 
+	test("a vault switch clears a stale join rejection", async () => {
+		const engine = createEngine();
+		(engine as any).enumerateWaitMs = 150;
+		engine.setCrdtLiveCheck(() => false);
+		engine.setCrdtJoinRejected("account_suspended");
+		await engine.resetForVaultChange();
+		await expect((engine as any).enumerateServerState()).rejects.toMatchObject({
+			reason: "timeout",
+		});
+	});
+
 	test("fails fast with no_vault when no vault is selected", async () => {
 		const engine = createEngine({ vaultId: null });
 		(engine as any).enumerateWaitMs = 5000;

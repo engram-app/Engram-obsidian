@@ -4405,6 +4405,12 @@ export class SyncEngine {
 		// and wrongly short-circuit the first reconcile after a swap.
 		this.manifestSeq = 0;
 		this.lastValidatorRewind = null;
+		// A join rejection and a seed rate-limit cooldown belong to the old
+		// vault/connection; carried over they would fail the new vault's preview
+		// or delay its seeding for no reason.
+		this.crdtJoinRejected = null;
+		this.folderSeedNotBefore = 0;
+		this.folderSeedStreak = 0;
 		// The note-id map is per-vault identity state but is NOT a tracked
 		// collection: the instance is shared with main.ts + live views, so it is
 		// cleared in place rather than swept. Carrying it across vaults keys CRDT
@@ -7296,6 +7302,8 @@ export class SyncEngine {
 			devLog().log("sync-blocked", "handleRename deferred — gate closed");
 			this.reportBlockedEdit();
 		}
+		// A folder renamed onto a path whose delete failed earlier now exists.
+		if (file instanceof TFolder) this.failedFolderDeletes.delete(cleanFolderPath(file.path));
 		if (!this.isSyncable(file)) return;
 
 		// ECHO GUARD: this rename is the engine's own, applied to follow a remote
@@ -7553,6 +7561,8 @@ export class SyncEngine {
 			return;
 		}
 		this.forgetMovedAway(path);
+		// The user (re)made the folder: a pending server delete is now wrong.
+		this.failedFolderDeletes.delete(cleanFolderPath(folder.path));
 		if (this.gateHolds()) {
 			this.journalGateEvent({ op: "folder-create", path: folder.path });
 			this.kickGateReplay();
@@ -7592,7 +7602,7 @@ export class SyncEngine {
 	}
 
 	/** Folders the user deleted locally whose server DELETE failed. */
-	private failedFolderDeletes = new Set<string>();
+	private failedFolderDeletes = this.track(["destroy", "vault"], new Set<string>());
 
 	private async deleteFolderNow(path: string): Promise<void> {
 		if (this.suppressDeletes) return;
@@ -14146,6 +14156,11 @@ export class SyncEngine {
 			if (this.isMovedAway(name)) this.forgetMovedAway(name);
 			// Locally deleted, server delete failed: retry it instead of resurrecting.
 			if (this.failedFolderDeletes.has(name)) {
+				// Never delete the marker of a folder that exists locally.
+				if (this.app.vault.getAbstractFileByPath(name)) {
+					this.failedFolderDeletes.delete(name);
+					continue;
+				}
 				try {
 					await this.api.deleteFolder(name);
 					this.failedFolderDeletes.delete(name);
