@@ -1,7 +1,8 @@
 // e2e test_107 (backend PR 2607, run 43791484191) on plugin 8ac3d17e: an
 // attachment was lost on the server and every vault after a folder rename.
-// The server's cascade sends delete(old) + upsert(new) for each attachment
-// BEFORE folder_changed. On the receiving device `folder_changed` did not wait
+// In that run the server's cascade sent delete(old) + upsert(new) for each
+// attachment BEFORE folder_changed (the legacy order; since Engram#2615
+// folder_changed comes first). On the receiving device `folder_changed` did not wait
 // for the stream lane: it `vault.rename`d the folder while the attachment
 // delete's `trashFile` was still in flight, so the trash landed at the NEW
 // path, whose vault delete event is not engine-marked and went out as a real

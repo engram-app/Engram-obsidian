@@ -2014,9 +2014,17 @@ export class SyncEngine {
 	 *  rename on the server: sent while the op was held, it relocated the
 	 *  folder's notes one by one ahead of the op (e2e run 43846246580). The
 	 *  op's ack or fallback (`onFolderOpLeft`) releases it; the queue re-checks
-	 *  held ops on its next tick. */
+	 *  held ops on its next tick.
+	 *
+	 *  THE create gate for a pending op: the queue's send consults it, and
+	 *  pushFile routes a create it matches to the queue instead of sending it
+	 *  inline (review @ 23b5eee2 MEDIUM-1: the inline create skipped it, so a
+	 *  note made in a just-renamed folder made the server create a second
+	 *  folder at the new name and refuse the op). Covers both sides of the op,
+	 *  like the id-map commit hold: a create under a re-made `from` would be
+	 *  filed under the moving folder row (review LOW-5). */
 	createWaitsForFolderOp(path: string): boolean {
-		return this.folderOps.coversTarget(normalizePath(path));
+		return this.folderOps.touches(normalizePath(path));
 	}
 
 	/** `capBlocksCreate` for a SINGLE push of a note the user just created or
@@ -2768,7 +2776,7 @@ export class SyncEngine {
 			devLog().log("sync-blocked", `flushFromCrdt short-circuited — gate closed: ${path}`);
 			return null;
 		}
-		const normalized = normalizePath(path);
+		const normalized = this.inboundLandingPath(path);
 		// The doc's text, never blank: a blank doc does not override a caller's
 		// text here, so the empty-write guard below always sees what is written.
 		// It keeps disk's own frontmatter bytes when they mean the same as the
@@ -6546,12 +6554,13 @@ export class SyncEngine {
 			rlog().info("ws", `Echo skip (own device): folder ${change.id}`);
 			return;
 		}
-		// On the note stream's lane, in arrival order: the server sends each
-		// moved attachment's delete(old) + upsert(new) BEFORE folder_changed. Run
-		// beside them, the folder's vault.rename landed while the delete's
-		// trashFile was in flight, so the trash hit the NEW path, whose vault
-		// delete event is not engine-marked, and went out as a real DELETE: the
-		// attachment was lost on the server and every vault (e2e test_107).
+		// On the note stream's lane, in arrival order. The backend sends
+		// folder_changed FIRST since Engram#2615; this lane guards the legacy
+		// order, where each moved attachment's delete(old) + upsert(new) came
+		// BEFORE it. Run beside them, the folder's vault.rename landed while the
+		// delete's trashFile was in flight, so the trash hit the NEW path, whose
+		// vault delete event is not engine-marked, and went out as a real DELETE:
+		// the attachment was lost on the server and every vault (e2e test_107).
 		const vault = this.settings.vaultId;
 		await this.serial.run("stream", async () => {
 			if (vault === this.settings.vaultId) await this.folderOps.inbound(change);
@@ -6692,8 +6701,19 @@ export class SyncEngine {
 	 *  list). A hiding layer for `removeEmptyFolders`: it lets an emptied
 	 *  folder be removed even though it is still in the local explicit-folder
 	 *  set (the server already moved it). Cleared per path when the folder is
-	 *  removed, and on vault switch. */
+	 *  removed, when a folder is created at or under it (the user re-made
+	 *  it: review @ 23b5eee2 LOW-4), and on vault switch. */
 	private movedAwayFolders = this.track(["vault", "destroy"], new Set<string>());
+
+	/** A folder now exists at `folder`: no moved-away entry may cover it, or
+	 *  sit under it. */
+	private forgetMovedAway(folder: string): void {
+		for (const p of [...this.movedAwayFolders]) {
+			if (p === folder || p.startsWith(`${folder}/`) || folder.startsWith(`${p}/`)) {
+				this.movedAwayFolders.delete(p);
+			}
+		}
+	}
 
 	private isMovedAway(folder: string): boolean {
 		for (const p of this.movedAwayFolders) {
@@ -7041,6 +7061,7 @@ export class SyncEngine {
 	 *  best-effort on the wire (server errors are warn-logged but don't fail
 	 *  the user's vault op). */
 	async handleFolderCreate(folder: { path: string }): Promise<void> {
+		this.forgetMovedAway(normalizePath(folder.path));
 		if (this.gateHolds()) {
 			this.journalGateEvent({ op: "folder-create", path: folder.path });
 			this.kickGateReplay();
@@ -7661,7 +7682,10 @@ export class SyncEngine {
 					!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) &&
 					// pushedPath, not file.path: a rename mid-push stamps file.path,
 					// which would let a row-adding create for pushedPath through.
-					!this.capHoldsNote(pushedPath)
+					!this.capHoldsNote(pushedPath) &&
+					// Held by our pending folder op: the branch below queues it, and
+					// the queue sends it once the op leaves.
+					!this.createWaitsForFolderOp(pushedPath)
 				) {
 					this.beginCreate(pushedPath);
 					// Set once the request is about to leave: a local throw before it
@@ -7941,6 +7965,20 @@ export class SyncEngine {
 				// Same cap, same gate: skip row-adding pushes while closed, and let a
 				// REST refusal close it for every path.
 				if (this.capHoldsNote(pushedPath)) return false;
+				// A path-addressed push under our pending folder op names a path the
+				// server does not have yet: queue it, and the replay hold
+				// (holdsRestReplay) sends it once the op leaves.
+				if (this.createWaitsForFolderOp(pushedPath)) {
+					await this.enqueueChange({
+						path: pushedPath,
+						action: "upsert",
+						kind: "note",
+						mtime,
+						timestamp: Date.now(),
+						vaultId: this.settings.vaultId ?? undefined,
+					});
+					return false;
+				}
 				let resp: Awaited<ReturnType<EngramApi["pushNote"]>>;
 				try {
 					const ctime = fileCtimeSeconds(file);
@@ -12030,7 +12068,11 @@ export class SyncEngine {
 			this.emptyContentHash = change.content_hash;
 		}
 
-		const normalized = normalizePath(change.path);
+		// A write lands where the note lives here (see inboundLandingPath), so
+		// every record below is made against the file that holds the bytes.
+		const normalized = change.deleted
+			? normalizePath(change.path)
+			: this.inboundLandingPath(change.path);
 
 		if (change.deleted) {
 			devLog().log("pull", `applyChange DELETE: ${change.path}`);
@@ -12826,7 +12868,11 @@ export class SyncEngine {
 	): Promise<boolean> {
 		if (this.shouldIgnore(change.path)) return false;
 
-		const normalized = normalizePath(change.path);
+		// Fetched from the server's path (`change.path`), landed and recorded
+		// where the file lives here (see inboundLandingPath).
+		const normalized = change.deleted
+			? normalizePath(change.path)
+			: this.inboundLandingPath(change.path);
 
 		if (change.deleted) {
 			const existing = this.app.vault.getFileByPath(normalized);
@@ -13419,16 +13465,33 @@ export class SyncEngine {
 	 *  through the two create helpers, so this one check covers them all: the
 	 *  write lands in the moved file instead. */
 	private fileMovedByPendingOp(path: string): TFile | null {
-		const to = this.folderOps.movedPathFor(normalizePath(path));
-		if (to === null || this.app.vault.getAbstractFileByPath(path)) return null;
-		const file = this.app.vault.getAbstractFileByPath(to);
-		if (!(file instanceof TFile)) return null;
+		const normalized = normalizePath(path);
+		const at = this.inboundLandingPath(normalized);
+		if (at === normalized) return null;
+		const file = this.app.vault.getAbstractFileByPath(at);
+		return file instanceof TFile ? file : null;
+	}
+
+	/** Where an inbound write for `path` lands on this device: `path`, unless
+	 *  our pending folder op moved the file away from it (the moved file
+	 *  exists, nothing is at `path`). Until the op is acked the server still
+	 *  names the old path. The ONE decision for it: applyChange,
+	 *  applyAttachmentChange and writeCrdtNote resolve through it up front, so
+	 *  the bytes, the sync row, the base and the unpushed-edit checks all
+	 *  meet the moved file (review @ 23b5eee2 MEDIUM-2: the redirect lived
+	 *  in the create helpers only, and the callers recorded at the old path).
+	 *  The create helpers keep `fileMovedByPendingOp` as a backstop. */
+	private inboundLandingPath(path: string): string {
+		const normalized = normalizePath(path);
+		const to = this.folderOps.movedPathFor(normalized);
+		if (to === null || this.app.vault.getAbstractFileByPath(normalized)) return normalized;
+		if (!(this.app.vault.getAbstractFileByPath(to) instanceof TFile)) return normalized;
 		rlog().anomaly("sync", "pending_op_old_path_write");
 		rlog().warn(
 			"pull",
-			`Write for a path our pending folder op moved, applied to the moved file: ${noteRef(path)} -> ${noteRef(to)}`,
+			`Write for a path our pending folder op moved, applied to the moved file: ${noteRef(normalized)} -> ${noteRef(to)}`,
 		);
-		return file;
+		return to;
 	}
 
 	/** Recursively create folder if it doesn't exist. */

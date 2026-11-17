@@ -1,7 +1,8 @@
 // e2e test_107 (backend PR 2607, run 43791484191) on plugin 8ac3d17e: A renames
-// a folder holding an attachment with folder ops on. The server's cascade
-// announces each attachment as delete(old) + upsert(new), BEFORE
-// folder_changed. B must follow without ever sending a DELETE: the e2e lost
+// a folder holding an attachment with folder ops on. In that run the
+// server's cascade announced each attachment as delete(old) + upsert(new)
+// BEFORE folder_changed (the legacy order; Engram#2615 sends folder_changed
+// first, and both orders are tested below). B must follow without ever sending a DELETE: the e2e lost
 // the attachment on the server and both vaults.
 import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
