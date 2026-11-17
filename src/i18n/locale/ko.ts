@@ -294,6 +294,10 @@ const ko: Dict = {
 	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
 		"Claude, Cursor, ChatGPT 또는 다른 MCP 앱을 연결하여 노트 읽기 및 쓰기를 가능하게 합니다 ",
 	"Link Obsidian to Engram": "Obsidian을 Engram에 연결합니다",
+	"Live sync did not connect in time. Try again in a moment.":
+		"실시간 동기화 연결이 제시간에 이루어지지 않았습니다. 잠시 후 다시 시도하세요.",
+	"Live sync was refused for this account, so the comparison can't run. Check your plan or update the plugin.":
+		"이 계정의 실시간 동기화는 거부되었으므로 비교 작업을 수행할 수 없습니다. 요금제를 확인하거나 플러그인을 업데이트하세요.",
 	"Loading vaults…": "보관함 로딩 중…",
 	"Love it": "매우 만족",
 	"Make new vault": "새 보관함 만들기",
@@ -314,6 +318,8 @@ const ko: Dict = {
 	"No results found": "결과 없음",
 	"No source path for this result": "이 결과에 대한 원본 경로가 없습니다",
 	"No sync activity this session.": "이번 세션 동안 동기화 활동이 없습니다.",
+	"No vault is selected. Pick a vault in Engram settings.":
+		"보관함이 선택되지 않았습니다. Engram 설정에서 보관함을 선택하세요.",
 	"No vaults found — first sync will create one":
 		"보관함이 없습니다 — 첫 동기화 시 하나가 생성됩니다",
 	"Node.js dependencies": "Node.js 종속성",
@@ -500,6 +506,8 @@ const ko: Dict = {
 		"서버에서 해당 파일의 내용이 삭제되었으며, 복구를 시도합니다. 이 장치에는 변경 사항이 없습니다.",
 	"The server took too long to respond. Try again.":
 		"서버 응답 시간이 너무 오래 걸렸습니다. 다시 시도해 주세요.",
+	"The vault changed while loading. Close this and try again.":
+		"로드 중 보관함이 변경되었습니다. 닫고 다시 시도하세요.",
 	"These files are fine. Each card below says why they did not sync.":
 		"이 파일들은 문제가 없습니다. 아래 각 항목에서 동기화되지 않은 이유를 확인하세요.",
 	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":
