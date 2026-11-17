@@ -889,7 +889,7 @@ describe("makeCrdtCatchupSender (wiring #312/#314)", () => {
 	test("throws on a vault mismatch instead of enumerating the wrong vault (#314)", () => {
 		const ch = fakeChannel("old-vault");
 		const send = makeCrdtCatchupSender(ch, () => "new-vault");
-		expect(() => send(0, 500, null)).toThrow(/vault switching/);
+		expect(() => send(0, 500, null)).toThrow(/identity_mismatch/);
 		expect(ch.calls).toHaveLength(0);
 	});
 });

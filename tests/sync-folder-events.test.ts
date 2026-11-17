@@ -465,3 +465,68 @@ describe("syncExplicitFolders vs a failed local folder delete", () => {
 		]);
 	});
 });
+
+describe("failed-delete and seed-cooldown memory lifecycle", () => {
+	async function failDelete(engine: SyncEngine, explicit: ExplicitFolders) {
+		await explicit.add("Gone");
+		(mockApi.deleteFolder as jest.Mock)
+			.mockReset()
+			.mockRejectedValueOnce(new Error("Request timed out after 15000ms"))
+			.mockResolvedValue(undefined);
+		await engine.handleFolderDelete({ path: "Gone" });
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValue(["Gone"]);
+	}
+
+	test("recreating the folder locally clears the memory: its marker is not deleted", async () => {
+		const { engine, explicit } = await createEngine();
+		await failDelete(engine, explicit);
+		await engine.handleFolderCreate({ path: "Gone" });
+		mockApp.vault.getAbstractFileByPath.mockImplementation((p: string) =>
+			p === "Gone" ? new TFolder("Gone", []) : null,
+		);
+		await engine.resyncFolders();
+		expect(mockApi.deleteFolder).toHaveBeenCalledTimes(1); // only the failed one
+	});
+
+	test("renaming a folder onto the path clears the memory", async () => {
+		const { engine, explicit } = await createEngine();
+		await failDelete(engine, explicit);
+		await engine.handleRename(new TFolder("Gone", []), "Old");
+		mockApp.vault.getAbstractFileByPath.mockImplementation((p: string) =>
+			p === "Gone" ? new TFolder("Gone", []) : null,
+		);
+		await engine.resyncFolders();
+		expect(mockApi.deleteFolder).toHaveBeenCalledTimes(1);
+	});
+
+	test("never deletes the marker of a folder that exists on disk", async () => {
+		const { engine, explicit } = await createEngine();
+		await failDelete(engine, explicit);
+		mockApp.vault.getAbstractFileByPath.mockImplementation((p: string) =>
+			p === "Gone" ? new TFolder("Gone", []) : null,
+		);
+		await engine.resyncFolders();
+		expect(mockApi.deleteFolder).toHaveBeenCalledTimes(1);
+	});
+
+	test("a vault switch forgets failed deletes", async () => {
+		const { engine, explicit } = await createEngine();
+		await failDelete(engine, explicit);
+		await engine.resetForVaultChange();
+		await engine.resyncFolders();
+		expect(mockApi.deleteFolder).toHaveBeenCalledTimes(1);
+	});
+
+	test("a vault switch ends the seed cooldown", async () => {
+		const { engine } = await createEngine();
+		mockApp.vault.getAllLoadedFiles = mock().mockReturnValue([new TFolder("A", [])]);
+		(mockApi.createFolder as jest.Mock)
+			.mockReset()
+			.mockRejectedValueOnce(Object.assign(new Error("429"), { status: 429 }))
+			.mockResolvedValue({});
+		await engine.seedEmptyFolders();
+		await engine.resetForVaultChange();
+		await engine.seedEmptyFolders();
+		expect(mockApi.createFolder).toHaveBeenCalledTimes(2);
+	});
+});

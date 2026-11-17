@@ -274,6 +274,16 @@ export function shouldNoticeJoinRejection(
 	return !alreadyNoticed.has(reason);
 }
 
+/** Whether a rejected crdt join should fail the open preview at once. Only
+ *  reasons no wait can clear: retryable ones (onboarding_required,
+ *  rotation_in_progress) and rate_limited keep the preview waiting, since the
+ *  socket cycles and rejoins on its own. */
+export function shouldFailPreviewOnJoinRejection(reason: string | undefined): reason is string {
+	if (!reason) return false;
+	if (isRetryableJoinReason(reason)) return false;
+	return reason === "crdt_proto_too_old" || isPlanJoinReason(reason);
+}
+
 export default class EngramSyncPlugin extends Plugin {
 	settings: EngramSyncSettings = DEFAULT_SETTINGS;
 	api: EngramApi = new EngramApi("", "");
@@ -2529,6 +2539,8 @@ export default class EngramSyncPlugin extends Plugin {
 			return;
 		}
 		this.liveChannelKey = connectionKey;
+		// A rejection recorded on the old stream says nothing about the new one.
+		this.syncEngine.setCrdtJoinRejected(null);
 		// A genuinely new stream is about to be built below — the "ever
 		// connected" flag is per-stream, not per-plugin-lifetime.
 		this.everConnected = false;
@@ -3228,7 +3240,8 @@ export default class EngramSyncPlugin extends Plugin {
 					// where frames are silently dropped and legacy never engages.
 					channel.onCrdtJoinError = (reason, min) => {
 						// Tell the preview so it fails fast with the real reason.
-						this.syncEngine.setCrdtJoinRejected(reason ?? "unknown");
+						if (shouldFailPreviewOnJoinRejection(reason))
+							this.syncEngine.setCrdtJoinRejected(reason);
 						rlog().warn(
 							"crdt",
 							`crdt: topic join rejected (reason=${reason ?? "unknown"}) — degrading to legacy pushNote path`,
