@@ -9408,7 +9408,13 @@ export class SyncEngine {
 	async discoverAnnouncedNote(noteId: string, path: string): Promise<void> {
 		if (!this.crdt || !this.crdtCatchupSince) return;
 		if (this.isSyncBlocked()) return;
-		const normalized = normalizePath(path);
+		// The announce names the path the SERVER has. Where it lands here is the
+		// same decision every inbound row takes (resolvePathClaim): a path our
+		// pending folder op (or rename) moved the note off is stale, and
+		// learning it put the id map back at the old path, so the replay below
+		// re-created the note there and a restart re-minted the moved file
+		// (e2e run 44003118650).
+		const normalized = normalizePath(this.resolvePathClaim(noteId, path));
 		if (this.shouldIgnore(normalized)) return;
 		if (this.isLiveBound(normalized)) return; // the live room owns it
 		// Already on disk — a content STEP2, a prior converge, or the user made it.
