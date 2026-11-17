@@ -184,6 +184,45 @@ describe("discoverAnnouncedNote (e2e test_27 — announce-driven immediate empty
 		expect(map.get("Notes/old.md")).toBeFalsy();
 	});
 
+	test("stale pre-move announce: replay does not recreate the old path", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		const map = new NoteIdMap();
+		map.set("Notes/moved.md", "id-a");
+		engine.setNoteIdMap(map);
+		const prev = mockApp.vault.getAbstractFileByPath;
+		mockApp.vault.getAbstractFileByPath = mock((p: string) =>
+			p === "Notes/moved.md" ? new TFile("Notes/moved.md") : null,
+		);
+		mockApp.vault.create.mockClear();
+		engine.setCrdtCatchupSince(async () => ({
+			changes: [
+				{
+					type: "note",
+					id: "id-a",
+					seq: 5,
+					path: "Notes/moved.md",
+					title: "moved",
+					content: "x",
+					folder: "Notes",
+					tags: [],
+					mtime: 5,
+					updated_at: "2026-01-01T00:00:00Z",
+					deleted: false,
+				},
+			],
+			has_more: false,
+			next_seq: null,
+		}));
+		try {
+			await engine.discoverAnnouncedNote("id-a", "Notes/old.md");
+		} finally {
+			mockApp.vault.getAbstractFileByPath = prev;
+		}
+		const created = mockApp.vault.create.mock.calls.map((c: any[]) => c[0]);
+		expect(created).not.toContain("Notes/old.md");
+		expect(map.pathForId("id-a")).toBe("Notes/moved.md");
+	});
+
 	test("never throws when the delta fetch fails (failure-isolated)", async () => {
 		const crdt = {
 			hasHistory: (_id: string) => Promise.resolve(false),
