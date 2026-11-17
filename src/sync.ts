@@ -5471,9 +5471,6 @@ export class SyncEngine {
 		version?: number,
 		seq?: number,
 	): void {
-		trace107(
-			`converge ${noteRef(path)} id=${noteId} content=${content === null ? "null" : "row"}`,
-		);
 		this.stageConvergence(noteId, path, serverHash, content, version, seq);
 		this.socketConverge(path, noteId);
 	}
@@ -6519,7 +6516,6 @@ export class SyncEngine {
 	 *  our own `folder_changed` echo is dropped, so nothing else would. A no-op
 	 *  in the normal case, where the index already says `to`. */
 	private async folderOpAcked(op: FolderOp): Promise<void> {
-		trace107(`op acked ${noteRef(op.from)} -> ${noteRef(op.to)}`);
 		rlog().info("push", `Folder op acked: ${op.op} ${op.folder_id}`);
 		await this.followFolderMoveOnDisk({
 			id: op.folder_id,
@@ -9509,12 +9505,7 @@ export class SyncEngine {
 			this.serial.run(noteId, async () =>
 				// Queued before a vault switch: it belongs to the old vault.
 				vault === this.settings.vaultId
-					? this.applyPushedNoteUpdateNow(noteId, update, head).then((r) => {
-							trace107(
-								`fanout ${r} id=${noteId} at=${noteRef(this.noteIdMap?.pathForId(noteId) ?? null)}`,
-							);
-							return r;
-						})
+					? this.applyPushedNoteUpdateNow(noteId, update, head)
 					: "deferred",
 			),
 		);
@@ -10725,12 +10716,10 @@ export class SyncEngine {
 		// re-pushes it). A redundant delete just no-ops in the delete branch below.
 		if (event.event_type !== "delete") {
 			if (this.pushing.has(event.path)) {
-				trace107(`ws echo-skip pushing ${noteRef(event.path)}`);
 				rlog().info("ws", `Echo skip (pushing): ${noteRef(event.path)}`);
 				return;
 			}
 			if (this.files.has(event.path, "pushed")) {
-				trace107(`ws echo-skip pushed ${noteRef(event.path)}`);
 				rlog().info("ws", `Echo skip (recently pushed): ${noteRef(event.path)}`);
 				return;
 			}
@@ -10751,7 +10740,6 @@ export class SyncEngine {
 				if (event.version != null && event.version !== stored.version) {
 					this.patchSyncedRow(normalizePath(event.path), { version: event.version });
 				}
-				trace107(`ws hash-skip ${noteRef(event.path)} seq=${event.seq ?? "-"}`);
 				rlog().info("ws", `Hash skip: ${noteRef(event.path)}`);
 				return;
 			}
@@ -11746,9 +11734,6 @@ export class SyncEngine {
 			// (NaN is never < anything, so the guard would silently stop
 			// protecting it for the rest of the session).
 			const claimed = this.resolvePathClaim(op.id, op.path, op.seq);
-			trace107(
-				`op upsert id=${op.id} row=${noteRef(op.path)} at=${noteRef(claimed)} seq=${op.seq ?? "-"} hash=${op.content_hash ?? "-"}`,
-			);
 			if (claimed !== op.path) {
 				op = { ...op, path: claimed };
 			} else {
@@ -12404,9 +12389,6 @@ export class SyncEngine {
 						: stored?.version !== undefined &&
 							change.version !== undefined &&
 							change.version <= stored.version;
-				trace107(
-					`existing ${noteRef(change.path)} stale=${staleRow} seq=${change.seq ?? "-"}/${stored?.seq ?? "-"} hashDiffers=${!!change.content_hash && stored?.serverHash !== change.content_hash} live=${this.isLiveBound(normalized)}`,
-				);
 				if (staleRow) {
 					rlog().info(
 						"pull",
@@ -15707,11 +15689,4 @@ export class SyncEngine {
 		this.queueRetryTimer = null;
 		this.queue.destroy();
 	}
-}
-
-/** Diagnostic for e2e test_107's restart case (run 44009030991): where
- *  B's edit stops on its way to A's moved file. diag level, note refs
- *  only. Remove with the fix. */
-function trace107(message: string): void {
-	rlog().diag("trace107", message);
 }
