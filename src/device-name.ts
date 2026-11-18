@@ -68,6 +68,14 @@ export async function suggestDeviceName(
  *  a user agent string, so nothing identifying leaves the device. Android and
  *  iOS are told apart here because `platform: "mobile"` cannot. */
 export function clientContext(): ClientContext {
-	const os = Platform.isAndroidApp ? "android" : Platform.isIosApp ? "ios" : "desktop";
+	// A mobile build with neither flag (a future or odd platform) is its own
+	// class: labelling it desktop would send a mobile report down the wrong path.
+	const os = Platform.isAndroidApp
+		? "android"
+		: Platform.isIosApp
+			? "ios"
+			: Platform.isMobile
+				? "mobile_other"
+				: "desktop";
 	return { os, app_version: apiVersion };
 }

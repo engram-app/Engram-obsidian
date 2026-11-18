@@ -13,7 +13,7 @@ import { scrubLogText, scrubStack } from "./error-util";
  *  metadata. `platform` stays mobile|desktop, which cannot tell Android from
  *  iOS. */
 export interface ClientContext {
-	os: "android" | "ios" | "desktop";
+	os: "android" | "ios" | "mobile_other" | "desktop";
 	app_version: string;
 }
 
