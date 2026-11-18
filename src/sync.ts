@@ -6682,10 +6682,13 @@ export class SyncEngine {
 				`Followed folder move: ${noteRef(from)} -> ${noteRef(to)} | ${moved.length} files`,
 			);
 		} catch (e) {
-			// Not moved: index and bookkeeping back where the disk is; the files
-			// converge per note.
+			// Not moved: bookkeeping back where the disk is; the files converge
+			// per note. Then the same fallback as a target already on disk (the
+			// check above raced a concurrent create of `to`, e2e test_107):
+			// applyFolderChange teaches the index the move from the restored
+			// `from` and records `from` as moved away, so the per-note moves
+			// that empty it (and its subfolders) remove it.
 			if (prior) index.set(prior);
-			this.persistGateJournalSoon();
 			this.rekeyMoved(
 				moved.map(([o, n]): [string, string] => [n, o]),
 				false,
@@ -6694,6 +6697,7 @@ export class SyncEngine {
 				"pull",
 				`Folder move could not follow on disk (${noteRef(from)} -> ${noteRef(to)}): ${errMsg(e, to)}`,
 			);
+			await this.applyFolderChange(change);
 		}
 	}
 

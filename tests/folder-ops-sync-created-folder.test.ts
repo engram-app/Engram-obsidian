@@ -49,7 +49,12 @@ const NEW = "E2E/Old-done";
 async function setup(
 	onDisk: string[],
 	explicitPaths: string[],
-	opts: { deferEvents?: boolean; serverList?: string[]; files?: string[] } = {},
+	opts: {
+		deferEvents?: boolean;
+		serverList?: string[];
+		files?: string[];
+		renameError?: string;
+	} = {},
 ) {
 	const tree = new Map<string, TFolder | TFile>();
 	const parentOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
@@ -77,6 +82,11 @@ async function setup(
 				return f instanceof TFile ? f : null;
 			},
 			getName: () => "Vault",
+			// A concurrent create of the target wins the race, then the rename throws.
+			rename: async (_f: TFolder, to: string) => {
+				if (!tree.has(to)) add(to);
+				throw new Error(opts.renameError ?? "unexpected rename");
+			},
 			createFolder: async (p: string) => {
 				const f = add(p);
 				if (opts.deferEvents) held.push(f);
@@ -111,7 +121,14 @@ async function setup(
 	await explicit.load();
 	for (const p of explicitPaths) await explicit.add(p);
 	engine.explicitFolders = explicit;
-	return { e: engine as unknown as Engine, trashed, explicit, api, held, time };
+	/** A per-note move took this file out of its folder. */
+	const moveOut = (p: string) => {
+		const f = tree.get(p);
+		tree.delete(p);
+		const parent = tree.get(parentOf(p)) as TFolder | undefined;
+		if (parent) parent.children = parent.children.filter((c) => c !== f);
+	};
+	return { e: engine as unknown as Engine, engine, trashed, explicit, api, held, time, moveOut };
 }
 
 test("a sync-driven create UNDER a moved-away folder keeps the record: both are removed", async () => {
@@ -202,4 +219,30 @@ test("a create event later than the marker's lifetime reads as user-made (fails 
 	for (const f of held) await e.handleFolderCreate(f);
 	await e.removeEmptyFolders(`${OLD}/a.md`);
 	expect(trashed).toEqual([]); // kept, never wrongly trashed
+});
+
+test("the folder rename losing a race to a create of the target still removes OLD and OLD/sub", async () => {
+	// e2e run 44234736582: B saw no target, A's concurrent folder create made
+	// it, and B's vault.rename threw "Destination file already exists!".
+	const { e, engine, trashed, moveOut } = await setup(
+		["E2E", OLD, `${OLD}/sub`],
+		[OLD, `${OLD}/sub`],
+		{
+			files: [`${OLD}/a.md`, `${OLD}/sub/b.md`],
+			renameError: "Destination file already exists!",
+		},
+	);
+	engine.learnFolders([
+		{ id: "fE", parent_id: null, name: "E2E" },
+		{ id: "fo", parent_id: "fE", name: "Old" },
+		{ id: "fs", parent_id: "fo", name: "sub" },
+	]);
+	await (e as any).followFolderMoveOnDisk({ id: "fo", parent_id: "fE", name: "Old-done" });
+	expect(engine.folderOps.index.pathFor("fo")).toBe(NEW);
+	// The per-note moves then empty OLD.
+	moveOut(`${OLD}/a.md`);
+	await e.removeEmptyFolders(`${OLD}/a.md`);
+	moveOut(`${OLD}/sub/b.md`);
+	await e.removeEmptyFolders(`${OLD}/sub/b.md`);
+	expect(trashed).toEqual([`${OLD}/sub`, OLD]);
 });
