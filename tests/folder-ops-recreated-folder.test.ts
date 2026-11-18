@@ -43,9 +43,9 @@ for (const [made, why] of [
 	test(`re-making ${why} clears the moved-away record`, async () => {
 		const { e } = engine();
 		try {
-			(e as any).movedAwayFolders.add("Proj");
-			(e as any).movedAwayFolders.add("Proj/sub");
-			(e as any).movedAwayFolders.add("Other");
+			(e as any).movedAwayFolders.set("Proj", "Done");
+			(e as any).movedAwayFolders.set("Proj/sub", "Done/sub");
+			(e as any).movedAwayFolders.set("Other", "Elsewhere");
 			await e.handleFolderCreate({ path: made });
 			expect((e as any).isMovedAway("Proj")).toBe(false);
 			expect((e as any).isMovedAway(made)).toBe(false);
