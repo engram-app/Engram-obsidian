@@ -244,3 +244,38 @@ for (const [why, arrange] of [
 		}
 	});
 }
+
+// Review of #711 @ a93cd16d (MEDIUM): hash 0 also means "the server dropped
+// this frame, re-send" (clearPushedBaselineForId). A drop landing mid-move,
+// after the id map moved and before the file did, cleared the NEW path's row;
+// adopting the old path's hash into it then echo-skipped the re-send, and the
+// content never reached the server.
+test("a frame dropped mid-move stays cleared after the move: the content is re-sent", async () => {
+	const { e, disk } = setup();
+	try {
+		seeded(e, disk, SEED);
+		e.clearPushedBaselineForId("id-a"); // the map already says Done/a.md
+		await (e as any).createFileWithFolders("Done/a.md", SERVER);
+		expect((e as any).syncState.get("Done/a.md").hash).toBe(0);
+		// Nothing this device wrote is lost: its text is kept beside the server's.
+		expect([...disk.values()]).toContain(SEED);
+	} finally {
+		e.destroy();
+	}
+});
+
+test("the next recorded hash ends the deliberate clear", () => {
+	const { e } = setup();
+	try {
+		(e as any).setCrdtHead("Done/a.md", "h2");
+		e.clearPushedBaselineForId("id-a");
+		expect((e as any).syncState.get("Done/a.md").unbanked).toBe(true);
+		(e as any).setCrdtHead("Done/a.md", "h3"); // a head alone keeps it
+		expect((e as any).syncState.get("Done/a.md").unbanked).toBe(true);
+		(e as any).recordCrdtBaseline("Done/a.md", SERVER);
+		expect((e as any).syncState.get("Done/a.md").unbanked).toBeUndefined();
+		expect((e as any).syncState.get("Done/a.md").hash).toBe(fnv1a(SERVER));
+	} finally {
+		e.destroy();
+	}
+});

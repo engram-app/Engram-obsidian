@@ -477,6 +477,10 @@ export interface FileSyncState {
 	/** Set by a LOCAL rename until its relocating `crdt_create` is acked: the
 	 *  server still holds the note at the old path (see SyncEngine.renamePath). */
 	relocating?: true;
+	/** `hash: 0` set on purpose by `clearPushedBaselineForId` (the server
+	 *  dropped a frame: re-send), not a head-only placeholder. Cleared by the
+	 *  next recorded hash (`patchSyncedRow`, or a whole-row stamp). */
+	unbanked?: true;
 }
 
 /** A single entry in the sync log ring buffer. */

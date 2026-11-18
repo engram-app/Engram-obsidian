@@ -3039,7 +3039,14 @@ export class SyncEngine {
 		withBase = false,
 	): void {
 		const before = this.syncState.get(path)?.hash;
-		this.syncState.set(path, { hash: 0, ...this.syncState.get(path), ...patch });
+		// A recorded hash ends a deliberate clear (`unbanked`).
+		const ends = patch.hash !== undefined && patch.unbanked === undefined;
+		this.syncState.set(path, {
+			hash: 0,
+			...this.syncState.get(path),
+			...(ends ? { unbanked: undefined } : {}),
+			...patch,
+		});
 		// Every CRDT-path baseline hash change goes through here. (`stampSyncedRow`
 		// also writes hashes, at REST, legacy, load-time import, CAS-seed and
 		// no-note_id backfill sites; none reaches a CRDT note with a base.) One
@@ -3107,7 +3114,9 @@ export class SyncEngine {
 			// row's hash is still the only record of what this device last wrote
 			// there. Dropping it made a just-pulled seed read as an unpushed edit
 			// after an identity move, a false keep-both (e2e run 44242969664).
-			if (at.hash === 0 && row.hash !== 0) {
+			// Never a deliberate clear (`unbanked`): that row must re-send, and
+			// adopting the old hash would echo-skip the re-send.
+			if (at.hash === 0 && !at.unbanked && row.hash !== 0) {
 				this.syncState.set(to, { ...at, hash: row.hash });
 				this.noteRowWrite(to);
 			}
@@ -3174,7 +3183,7 @@ export class SyncEngine {
 	clearPushedBaselineForId(docId: string): void {
 		const path = this.noteIdMap?.pathForId(docId);
 		if (!path) return;
-		this.patchSyncedRow(normalizePath(path), { hash: 0 });
+		this.patchSyncedRow(normalizePath(path), { hash: 0, unbanked: true });
 	}
 
 	/** `ProviderRegistry.awaitsServerState` for a path. */
