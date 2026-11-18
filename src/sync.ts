@@ -6701,7 +6701,7 @@ export class SyncEngine {
 	 *  list). A hiding layer for `removeEmptyFolders`: it lets an emptied
 	 *  folder be removed even though it is still in the local explicit-folder
 	 *  set (the server already moved it). Cleared per path when the folder is
-	 *  removed, when a folder is created at or under it (the user re-made
+	 *  removed, when the USER creates a folder at or under it (re-made
 	 *  it: review @ 23b5eee2 LOW-4), and on vault switch. */
 	private movedAwayFolders = this.track(["vault", "destroy"], new Set<string>());
 
@@ -7061,7 +7061,12 @@ export class SyncEngine {
 	 *  best-effort on the wire (server errors are warn-logged but don't fail
 	 *  the user's vault op). */
 	async handleFolderCreate(folder: { path: string }): Promise<void> {
-		this.forgetMovedAway(normalizePath(folder.path));
+		const path = normalizePath(folder.path);
+		// Only a USER-made folder clears a moved-away record. The engine's own
+		// ensureFolder (a note materializing at a stale path under a folder the
+		// server moved) is not the user re-making it.
+		if (this.files.has(path, "engineCreated")) this.files.clearMarker(path, "engineCreated");
+		else this.forgetMovedAway(path);
 		if (this.gateHolds()) {
 			this.journalGateEvent({ op: "folder-create", path: folder.path });
 			this.kickGateReplay();
@@ -13505,9 +13510,12 @@ export class SyncEngine {
 			if (parent) await this.ensureFolder(parent);
 		}
 
+		// Marked before the call: the vault `create` event can dispatch inside it.
+		this.files.mark(normalizePath(path), "engineCreated", ECHO_COOLDOWN_MS);
 		try {
 			await this.app.vault.createFolder(path);
 		} catch (e) {
+			this.files.clearMarker(normalizePath(path), "engineCreated");
 			// Check-then-create races a concurrent materialization of a sibling
 			// note into the same new folder: N notes delivered in a burst each
 			// ensureFolder the same path and the losers reject "Folder already
