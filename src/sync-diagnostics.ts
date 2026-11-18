@@ -38,6 +38,7 @@ export function reportPlanLoadFailure(e: unknown): void {
  *  both, whatever the retry cadence. */
 const JOIN_LOG_COOLDOWN_MS = 60_000;
 const MAX_REJECT_REASONS = 5;
+const MAX_RECOVERY_LINES_PER_HOUR = 6;
 
 /** Outcome of the `crdt:` topic join. Logs what a query needs and nothing on
  *  the steady state: each distinct rejection reason once until a join
@@ -52,6 +53,7 @@ export function createJoinReporter(now: () => number = Date.now) {
 	let rejectionLogged = false;
 	let lastLoggedAt = Number.NEGATIVE_INFINITY;
 	const seen = new Set<string>();
+	const takeRecovery = createLineBudget(now, MAX_RECOVERY_LINES_PER_HOUR, "join_recovery");
 	// A backward clock jump counts as elapsed, never as "still cooling down".
 	const due = () => {
 		const t = now();
@@ -61,7 +63,7 @@ export function createJoinReporter(now: () => number = Date.now) {
 	};
 	return {
 		joined(): void {
-			if (!everJoined || rejectionLogged) {
+			if (!everJoined || (rejectionLogged && takeRecovery())) {
 				rlog().anomaly("crdt", "crdt_joined", {
 					first: !everJoined,
 					after_rejections: rejections,
@@ -155,39 +157,45 @@ export function createFolderRenameReporter(clock: DiagnosticsClock) {
 	};
 }
 
-/** Data lines allowed per hour: 6 start/clear pairs. Marker lines are extra,
- *  so the real ceiling is RATE_LINES_PER_HOUR + 2 (one marker when the cap is
- *  first hit, one carrying the final dropped count into the next hour). */
-const RATE_LINES_PER_HOUR = 12;
 const HOUR_MS = 3_600_000;
 
-/** 429 start/clear lines, hard-capped per hour so a server that keeps
- *  answering 429 cannot turn every device into a Loki firehose. `scope` is a
- *  developer slug, `retryAfterMs` what the server asked (absent when it sent
- *  none), `waitMs` what we will wait. `now` is the owner's injected clock; a
+/** Hourly line budget shared by every forced diagnostic that can repeat.
+ *  `take()` is true while lines remain. The first drop of a window emits one
+ *  `log_suppressed` marker with the exact count so far, and the next window
+ *  carries the final count, so the real ceiling is `max` plus 2 markers per
+ *  hour. `scope` names the budget. `now` is the owner's injected clock; a
  *  backward jump resets the window rather than freezing it. */
-export function createRateLimitReporter(now: () => number) {
+function createLineBudget(now: () => number, max: number, scope: string) {
 	let windowStart = Number.NEGATIVE_INFINITY;
 	let used = 0;
 	let dropped = 0;
-	const take = (): boolean => {
+	return (): boolean => {
 		const t = now();
 		if (t < windowStart || t - windowStart >= HOUR_MS) {
-			if (dropped > 1)
-				rlog().anomaly("push", "rate_limit_log_suppressed", { count: dropped });
+			if (dropped > 1) rlog().anomaly("push", "log_suppressed", { count: dropped }, scope);
 			windowStart = t;
 			used = 0;
 			dropped = 0;
 		}
-		if (used < RATE_LINES_PER_HOUR) {
+		if (used < max) {
 			used += 1;
 			return true;
 		}
 		dropped += 1;
-		// First drop of the window: say so now, with the exact count so far.
-		if (dropped === 1) rlog().anomaly("push", "rate_limit_log_suppressed", { count: 1 });
+		if (dropped === 1) rlog().anomaly("push", "log_suppressed", { count: 1 }, scope);
 		return false;
 	};
+}
+
+/** Data lines allowed per hour: 6 start/clear pairs. */
+const RATE_LINES_PER_HOUR = 12;
+
+/** 429 start/clear lines, hard-capped per hour so a server that keeps
+ *  answering 429 cannot turn every device into a Loki firehose. `scope` is a
+ *  developer slug, `retryAfterMs` what the server asked (absent when it sent
+ *  none), `waitMs` what we will wait. */
+export function createRateLimitReporter(now: () => number) {
+	const take = createLineBudget(now, RATE_LINES_PER_HOUR, "rate_limit");
 	return {
 		limited(scope: string, streak: number, waitMs: number, retryAfterMs?: number): void {
 			if (!take()) return;
