@@ -17,6 +17,7 @@ import {
 import {
 	createFolderRenameReporter,
 	createJoinReporter,
+	createRateLimitReporter,
 	reportPlanLoadFailure,
 } from "../src/sync-diagnostics";
 
@@ -200,5 +201,26 @@ describe("folder rename", () => {
 		r.rename("C", "D", 1);
 		r.flush();
 		expect(await captured()).toHaveLength(2);
+	});
+});
+
+describe("rate-limit line budget", () => {
+	test("at most 6 start/clear pairs per hour, then one suppressed line, resetting hourly", async () => {
+		let t = 0;
+		const r = createRateLimitReporter(() => t);
+		for (let i = 0; i < 50; i++) {
+			t += 1_000;
+			r.limited("push", 1, 1_000);
+			r.cleared("push", 1);
+		}
+		let msgs = (await captured()).map((e) => e.message);
+		expect(msgs.filter((m) => m.startsWith("rate_limit")).length).toBeLessThanOrEqual(13);
+		expect(msgs.filter((m) => m.startsWith("rate_limit_log_suppressed"))).toHaveLength(1);
+		sent.length = 0;
+		t += 3_600_000; // next hour: budget back, and the dropped count is reported
+		r.limited("push", 1, 1_000);
+		msgs = (await captured()).map((e) => e.message);
+		expect(msgs.some((m) => m.startsWith("rate_limit_log_suppressed count="))).toBe(true);
+		expect(msgs.some((m) => m.startsWith("rate_limited"))).toBe(true);
 	});
 });
