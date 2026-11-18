@@ -13522,7 +13522,8 @@ export class SyncEngine {
 		if (to === null || this.app.vault.getAbstractFileByPath(normalized)) return normalized;
 		if (!(this.app.vault.getAbstractFileByPath(to) instanceof TFile)) return normalized;
 		const why = pending === null ? "server_moved_folder" : "pending_op";
-		rlog().anomaly("sync", `${why}_old_path_write`);
+		if (pending === null) rlog().anomaly("sync", "server_moved_folder_old_path_write");
+		else rlog().anomaly("sync", "pending_op_old_path_write");
 		rlog().warn(
 			"pull",
 			`Write for a path a folder move (${why}) moved, applied to the moved file: ${noteRef(normalized)} -> ${noteRef(to)}`,
