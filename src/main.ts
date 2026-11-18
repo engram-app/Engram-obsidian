@@ -43,6 +43,7 @@ import { makeCrdtOpSend, NotesCapGate } from "./crdt-op-dispatch";
 import { type CrdtOp, CrdtOpQueue, makeDropReporter } from "./crdt-op-queue";
 import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
+import { clientContext } from "./device-name";
 import { isMarkdownPath } from "./file-kind";
 import { fileTimes, liveEditTimes } from "./file-times";
 import type { FolderIndexSnapshot, FolderOp } from "./folder-ops";
@@ -76,6 +77,7 @@ import {
 } from "./settings-migrate";
 import { createSingleFlight } from "./single-flight";
 import { type GateEvent, reconcileColdStart, SyncEngine } from "./sync";
+import { joinReporter, reportPlanLoadFailure } from "./sync-diagnostics";
 import { channelConnectionKey, computeSyncFingerprint } from "./sync-fingerprint";
 import { SyncLog } from "./sync-log";
 import { SyncLogModal } from "./sync-log-modal";
@@ -402,7 +404,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// copy of that list, which is how the auth paths and this one drifted
 		// apart in the first place — one list, one owner.
 		await this.discardVaultScopedState(id, name);
-		this.syncEngine.setSyncBlocked(true);
+		this.syncEngine.setSyncBlocked(true, "vault_switch");
 	}
 
 	resetIndexRoomForVault(): void {
@@ -714,6 +716,7 @@ export default class EngramSyncPlugin extends Plugin {
 			(entries) => this.api.pushLogs(entries),
 			this.manifest.version,
 			Platform.isMobile ? "mobile" : "desktop",
+			clientContext(),
 		);
 		remoteLogger.setLevelThreshold(this.settings.remoteLogLevel);
 		remoteLogger.setUnlimited(this.settings.remoteLogBudget === 0);
@@ -1559,7 +1562,7 @@ export default class EngramSyncPlugin extends Plugin {
 			// cross-vault identity leak `switchVault` exists to prevent, reached
 			// through a different door (#1409 review).
 			await this.discardVaultScopedState(null);
-			this.syncEngine.setSyncBlocked(true);
+			this.syncEngine.setSyncBlocked(true, "vault_cleared");
 			// Finding 9: a preview/picker already open sits on the now-nulled
 			// vault, and the syncPreviewGuard makes the reopen below a silent
 			// no-op while it lives. Close it first so the picker reopens fresh.
@@ -1886,7 +1889,7 @@ export default class EngramSyncPlugin extends Plugin {
 			// setupNoteStream above already dropped the WS/CRDT stack; block the
 			// queue engine (gates enqueue + flush) and stop remote-log POSTs so
 			// nothing hits the server with an empty bearer until re-auth.
-			this.syncEngine.setSyncBlocked(true);
+			this.syncEngine.setSyncBlocked(true, "signed_out");
 			rlog().setEnabled(false);
 		}
 	}
@@ -3203,6 +3206,7 @@ export default class EngramSyncPlugin extends Plugin {
 					// markdown save uses the legacy pushNote path (graceful degradation).
 					channel.onCrdtJoined = () => {
 						this.syncEngine.setCrdtJoinRejected(null);
+						joinReporter.joined();
 						rlog().info(
 							"crdt",
 							"crdt: topic joined — activating CRDT routing in SyncEngine",
@@ -3277,6 +3281,7 @@ export default class EngramSyncPlugin extends Plugin {
 					// retains the manager, routing every md edit into a dead transport
 					// where frames are silently dropped and legacy never engages.
 					channel.onCrdtJoinError = (reason, min) => {
+						joinReporter.rejected(reason, min);
 						// Tell the preview so it fails fast with the real reason.
 						if (shouldFailPreviewOnJoinRejection(reason))
 							this.syncEngine.setCrdtJoinRejected(reason);
@@ -3491,7 +3496,10 @@ export default class EngramSyncPlugin extends Plugin {
 	async applySyncGate(): Promise<boolean> {
 		const fp = await computeSyncFingerprint(this.settings);
 		const accepted = fp !== "" && fp === this.syncGateAcceptedFor;
-		this.syncEngine.setSyncBlocked(!accepted);
+		this.syncEngine.setSyncBlocked(
+			!accepted,
+			accepted ? "fingerprint_accepted" : "fingerprint_unaccepted",
+		);
 		// Open gate: setup is done. Signed out: the notice's link leads nowhere.
 		if (accepted || !this.hasAuthConfigured()) this.dismissSetupNotice();
 		this.updateStatusBar(this.syncEngine.getStatus());
@@ -3525,7 +3533,7 @@ export default class EngramSyncPlugin extends Plugin {
 		if (this.syncEngine.isSyncBlocked() && !replayGateJournal) {
 			this.syncEngine.discardGateJournal();
 		}
-		this.syncEngine.setSyncBlocked(false);
+		this.syncEngine.setSyncBlocked(false, "user_accepted");
 		this.dismissSetupNotice();
 		// Before the catch-up below: a pull over a rename still in the journal
 		// would write the note back at its old path.
@@ -3759,6 +3767,7 @@ export default class EngramSyncPlugin extends Plugin {
 					.then((plan) => modal.setPlan(plan))
 					.catch((e) => {
 						modal.setPlanError(planLoadErrorMessage(this.hasAuthConfigured(), e));
+						reportPlanLoadFailure(e);
 						rlog().error("lifecycle", `Sync plan compute failed: ${errMsg(e)}`);
 					});
 

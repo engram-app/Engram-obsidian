@@ -58,7 +58,7 @@ describe("switchVault performs the whole vault transition", () => {
 		expect(fake.lastMapReconcileAt).toBe(0);
 		// Strand-heal retry counts are keyed by the PREVIOUS vault's note_ids.
 		expect(fake.crdtWiring.clearStrandHealAttempts).toHaveBeenCalled();
-		expect(fake.syncEngine.setSyncBlocked).toHaveBeenCalledWith(true);
+		expect(fake.syncEngine.setSyncBlocked).toHaveBeenCalledWith(true, "vault_switch");
 	});
 
 	test("a real vault change never keeps the previous vault's name", async () => {

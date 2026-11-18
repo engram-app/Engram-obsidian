@@ -11,7 +11,7 @@ export type PreviewFailReason =
 export class PreviewUnavailableError extends Error {
 	constructor(
 		readonly reason: PreviewFailReason,
-		detail?: string,
+		readonly detail?: string,
 	) {
 		super(`Sync preview needs the live socket (${reason}${detail ? `: ${detail}` : ""})`);
 		this.name = "PreviewUnavailableError";
