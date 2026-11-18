@@ -33,7 +33,10 @@ jobs:
 
       - name: Security audit
         # braces GHSA-vfj7-8cjw-p6xm has no patched release (dev-only stylelint chain); see https://github.com/engram-app/Engram-obsidian/issues/552
-        run: bun audit --ignore=GHSA-vfj7-8cjw-p6xm
+        # picomatch GHSA-fc5q-39xc-vjpf (ReDoS, high): advisory widened 2026-11-17 to <=4.0.7 (latest), so no patched
+        # version exists. Dev-only (stylelint, typescript-eslint, eslint-plugin-obsidianmd); verified absent from the
+        # shipped main.js bundle. REMOVE this ignore when a picomatch > 4.0.7 ships or the advisory is patched.
+        run: bun audit --ignore=GHSA-vfj7-8cjw-p6xm --ignore=GHSA-fc5q-39xc-vjpf
 
       - name: Lint (biome)
         run: bunx biome check src tests
