@@ -177,6 +177,22 @@ describe("join outcome", () => {
 });
 
 describe("join recovery", () => {
+	test("recovery lines are capped at 6 per hour, then one suppressed marker", async () => {
+		let t = 0;
+		const r = createJoinReporter(() => t);
+		r.joined(); // first join: not a recovery
+		for (let i = 0; i < 20; i++) {
+			t += 61_000; // past the rejection cooldown each time: 20 flaps in ~20 min
+			r.rejected(`reason_${i}`);
+			r.joined();
+		}
+		const msgs = (await captured()).map((e) => e.message);
+		expect(msgs.filter((m) => m.startsWith("crdt_joined first=false"))).toHaveLength(6);
+		expect(
+			msgs.filter((m) => m.startsWith("log_suppressed reason=join_recovery")),
+		).toHaveLength(1);
+	});
+
 	test("a recovery after a logged rejection logs even inside the cooldown", async () => {
 		let t = 0;
 		const r = createJoinReporter(() => t);
@@ -263,14 +279,14 @@ describe("rate-limit line budget", () => {
 		}
 		let msgs = (await captured()).map((e) => e.message);
 		expect(msgs.filter((m) => /^rate_limit(ed|_cleared)/.test(m))).toHaveLength(12);
-		expect(msgs.filter((m) => m.startsWith("rate_limit_log_suppressed"))).toEqual([
-			"rate_limit_log_suppressed count=1",
+		expect(msgs.filter((m) => m.startsWith("log_suppressed"))).toEqual([
+			"log_suppressed reason=rate_limit count=1",
 		]);
 		sent.length = 0;
 		t += 3_600_000; // next hour: budget back, final count carried
 		r.limited("push", 1, 1_000);
 		msgs = (await captured()).map((e) => e.message);
-		expect(msgs).toContain("rate_limit_log_suppressed count=88");
+		expect(msgs).toContain("log_suppressed reason=rate_limit count=88");
 		expect(msgs.some((m) => m.startsWith("rate_limited"))).toBe(true);
 	});
 
