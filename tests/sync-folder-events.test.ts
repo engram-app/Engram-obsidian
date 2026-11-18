@@ -15,7 +15,7 @@ import type { EngramApi } from "../src/api";
 import { ExplicitFolders } from "../src/explicit-folders";
 import { initRemoteLog, rlog } from "../src/remote-log";
 import { SyncEngine } from "../src/sync";
-import { flushFolderRenames } from "../src/sync-diagnostics";
+import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 // --- Minimal API mock (only folder methods are exercised) ---
@@ -560,7 +560,7 @@ describe("forced diagnostics from the engine", () => {
 			new TFolder("Projects/New", [new TFile("Projects/New/a.md")]),
 			"Projects/Old",
 		);
-		flushFolderRenames();
+		(engine as any).folderRenames.clear();
 		expect(await shipped()).toContain(
 			"folder_renamed children=1 descendants=0 same_parent=true depth_from=2 depth_to=2",
 		);
@@ -638,5 +638,38 @@ describe("forced diagnostics from the engine", () => {
 		(mockApi.createFolder as jest.Mock).mockReset().mockResolvedValue({});
 		await engine.seedEmptyFolders();
 		expect((await shipped()).filter((l) => l.startsWith("rate_limit_cleared"))).toHaveLength(1);
+	});
+
+	test("destroy flushes a pending rename line and leaves no live timer", async () => {
+		const clock = new ManualTimeProvider();
+		const engine = new SyncEngine(
+			mockApp,
+			mockApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 10 },
+			mockSaveData,
+			clock,
+		);
+		engine.setReady();
+		await engine.handleRename(new TFolder("B", []), "A");
+		expect(await shipped()).toHaveLength(0); // still inside the burst window
+		engine.destroy();
+		expect((await shipped()).filter((l) => l.startsWith("folder_renamed"))).toHaveLength(1);
+		expect((clock as any).pending.size).toBe(0);
+	});
+
+	test("a vault switch flushes a pending rename line", async () => {
+		const clock = new ManualTimeProvider();
+		const engine = new SyncEngine(
+			mockApp,
+			mockApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 10 },
+			mockSaveData,
+			clock,
+		);
+		engine.setReady();
+		activeEngines.push(engine);
+		await engine.handleRename(new TFolder("B", []), "A");
+		await engine.resetForVaultChange();
+		expect((await shipped()).filter((l) => l.startsWith("folder_renamed"))).toHaveLength(1);
 	});
 });

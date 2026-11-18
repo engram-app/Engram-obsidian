@@ -82,12 +82,11 @@ import { PreviewUnavailableError } from "./preview-error";
 import { rlog } from "./remote-log";
 import { Semaphore } from "./semaphore";
 import {
+	createFolderRenameReporter,
+	createRateLimitReporter,
 	reportFolderDeleteCleared,
 	reportFolderDeleteFailed,
-	reportFolderRename,
 	reportGateTransition,
-	reportRateLimitCleared,
-	reportRateLimited,
 } from "./sync-diagnostics";
 import type { SyncLog } from "./sync-log";
 import { SyncedFileTable } from "./synced-file";
@@ -717,6 +716,18 @@ export class SyncEngine {
 		}
 	}
 
+	/** Folder-rename burst collapser. Registered so unload and a vault switch
+	 *  flush a pending line and cancel its timer (it owns a TimeProvider timer). */
+	private readonly folderRenames = this.track(
+		["vault", "destroy"],
+		createFolderRenameReporter({
+			now: () => this.time.now(),
+			setTimeout: (cb, ms) => this.time.setTimeout(cb, ms),
+			clearTimeout: (id) => this.time.clearTimeout(id),
+		}),
+	);
+	/** 429 diagnostic lines, hard-capped per hour on the engine's clock. */
+	private readonly rateLimits = createRateLimitReporter(() => this.time.now());
 	private debounceTimers = this.track(["destroy"], new Map<string, number>(), (timer) =>
 		this.time.clearTimeout(timer),
 	);
@@ -7317,7 +7328,7 @@ export class SyncEngine {
 		// A folder renamed onto a path whose delete failed earlier now exists.
 		if (file instanceof TFolder) {
 			this.failedFolderDeletes.delete(cleanFolderPath(file.path));
-			reportFolderRename(oldPath, file.path, file.children.length);
+			this.folderRenames.rename(oldPath, file.path, file.children.length);
 		}
 		if (!this.isSyncable(file)) return;
 
@@ -7672,7 +7683,7 @@ export class SyncEngine {
 				const resp = await this.api.createFolder(path);
 				this.learnFolderChain(resp?.folders);
 				await this.explicitFolders.add(path);
-				reportRateLimitCleared("folder_seed", this.folderSeedStreak);
+				this.rateLimits.cleared("folder_seed", this.folderSeedStreak);
 				this.folderSeedStreak = 0;
 			} catch (e) {
 				devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
@@ -7697,7 +7708,7 @@ export class SyncEngine {
 					this.folderSeedNotBefore = this.time.now() + wait;
 					// Streak start only; the clear line closes it.
 					if (this.folderSeedStreak === 1) {
-						reportRateLimited("folder_seed", this.folderSeedStreak, wait, asked);
+						this.rateLimits.limited("folder_seed", this.folderSeedStreak, wait, asked);
 					}
 					return;
 				}
@@ -15483,7 +15494,7 @@ export class SyncEngine {
 		);
 		// Start of a storm only: a long one would otherwise log per entry.
 		if (this.rateLimitStreak === 1) {
-			reportRateLimited("push", this.rateLimitStreak, wait, classified.retryAfterMs);
+			this.rateLimits.limited("push", this.rateLimitStreak, wait, classified.retryAfterMs);
 		}
 		await this.queue.enqueue({
 			...entry,
@@ -16312,7 +16323,7 @@ export class SyncEngine {
 				}
 				await this.queue.dequeue(entry);
 				this.issues.clear(entry.path);
-				reportRateLimitCleared("push", this.rateLimitStreak);
+				this.rateLimits.cleared("push", this.rateLimitStreak);
 				this.rateLimitStreak = 0;
 				flushed++;
 			} catch (e) {

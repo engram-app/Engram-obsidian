@@ -20,6 +20,7 @@ import {
 	createRateLimitReporter,
 	reportPlanLoadFailure,
 } from "../src/sync-diagnostics";
+import { ManualTimeProvider } from "../src/time-provider";
 
 let sent: RemoteLogEntry[] = [];
 
@@ -169,15 +170,45 @@ describe("join outcome", () => {
 			r.rejected(`reason_${i}`);
 			r.joined();
 		}
-		expect((await captured()).length).toBeLessThanOrEqual(3);
+		// 30 flaps over 150s: rejections limited to one per 60s window, each
+		// logged rejection followed by its recovery.
+		expect((await captured()).length).toBeLessThanOrEqual(8);
+	});
+});
+
+describe("join recovery", () => {
+	test("a recovery after a logged rejection logs even inside the cooldown", async () => {
+		let t = 0;
+		const r = createJoinReporter(() => t);
+		r.joined(); // first join
+		t += 1_000;
+		r.rejected("plan_limit");
+		t += 1_000; // 2s later, far inside the 60s cooldown
+		r.joined();
+		expect((await captured()).map((e) => e.message)).toEqual([
+			"crdt_joined first=true after_rejections=0",
+			"crdt_join_rejected reason=plan_limit",
+			"crdt_joined first=false after_rejections=1",
+		]);
+	});
+
+	test("a backward clock jump does not freeze the cooldown", async () => {
+		let t = 1_000_000;
+		const r = createJoinReporter(() => t);
+		r.rejected("a");
+		t = 10; // clock stepped back
+		r.rejected("b");
+		expect(await captured()).toHaveLength(2);
 	});
 });
 
 describe("folder rename", () => {
+	const reporter = () => createFolderRenameReporter(new ManualTimeProvider());
+
 	test("counts only: depth, children, same parent, no descendants", async () => {
-		const r = createFolderRenameReporter();
+		const r = reporter();
 		r.rename("Projects/Old name", "Projects/New name", 4);
-		r.flush();
+		r.clear();
 		const [e] = await captured();
 		expect(e.message).toBe(
 			"folder_renamed children=4 descendants=0 same_parent=true depth_from=2 depth_to=2",
@@ -186,27 +217,44 @@ describe("folder rename", () => {
 	});
 
 	test("a rename burst (folder plus every nested subfolder) is ONE line with a descendant count", async () => {
-		const r = createFolderRenameReporter();
+		const r = reporter();
 		r.rename("A", "B", 3);
 		for (let i = 0; i < 50; i++) r.rename(`A/sub${i}`, `B/sub${i}`, 1);
-		r.flush();
+		r.clear();
 		const msgs = (await captured()).map((e) => e.message);
 		expect(msgs).toHaveLength(1);
 		expect(msgs[0]).toContain("descendants=50");
 	});
 
 	test("two unrelated renames are two lines", async () => {
-		const r = createFolderRenameReporter();
+		const r = reporter();
 		r.rename("A", "B", 1);
 		r.rename("C", "D", 1);
-		r.flush();
+		r.clear();
 		expect(await captured()).toHaveLength(2);
+	});
+
+	test("a separate rename inside the old folder right after renaming it is its own line", async () => {
+		const r = reporter();
+		r.rename("A", "B", 2);
+		r.rename("A/x", "A/y", 1); // not the root's move applied to a descendant
+		r.clear();
+		expect(await captured()).toHaveLength(2);
+	});
+
+	test("the quiet timer flushes through the injected clock", async () => {
+		const clock = new ManualTimeProvider();
+		const r = createFolderRenameReporter(clock);
+		r.rename("A", "B", 1);
+		expect(await captured()).toHaveLength(0);
+		clock.advance(1_001);
+		expect(await captured()).toHaveLength(1);
 	});
 });
 
 describe("rate-limit line budget", () => {
-	test("at most 6 start/clear pairs per hour, then one suppressed line, resetting hourly", async () => {
-		let t = 0;
+	test("at most 12 data lines (6 pairs) per hour plus 2 markers, accurate counts, resetting hourly", async () => {
+		let t = 1_000;
 		const r = createRateLimitReporter(() => t);
 		for (let i = 0; i < 50; i++) {
 			t += 1_000;
@@ -214,13 +262,26 @@ describe("rate-limit line budget", () => {
 			r.cleared("push", 1);
 		}
 		let msgs = (await captured()).map((e) => e.message);
-		expect(msgs.filter((m) => m.startsWith("rate_limit")).length).toBeLessThanOrEqual(13);
-		expect(msgs.filter((m) => m.startsWith("rate_limit_log_suppressed"))).toHaveLength(1);
+		expect(msgs.filter((m) => /^rate_limit(ed|_cleared)/.test(m))).toHaveLength(12);
+		expect(msgs.filter((m) => m.startsWith("rate_limit_log_suppressed"))).toEqual([
+			"rate_limit_log_suppressed count=1",
+		]);
 		sent.length = 0;
-		t += 3_600_000; // next hour: budget back, and the dropped count is reported
+		t += 3_600_000; // next hour: budget back, final count carried
 		r.limited("push", 1, 1_000);
 		msgs = (await captured()).map((e) => e.message);
-		expect(msgs.some((m) => m.startsWith("rate_limit_log_suppressed count="))).toBe(true);
+		expect(msgs).toContain("rate_limit_log_suppressed count=88");
 		expect(msgs.some((m) => m.startsWith("rate_limited"))).toBe(true);
+	});
+
+	test("a backward clock jump resets the window instead of freezing it", async () => {
+		let t = 10_000_000;
+		const r = createRateLimitReporter(() => t);
+		for (let i = 0; i < 12; i++) r.limited("push", 1, 1_000);
+		t = 5; // clock stepped back
+		r.limited("push", 1, 1_000);
+		expect((await captured()).filter((e) => e.message.startsWith("rate_limited"))).toHaveLength(
+			13,
+		);
 	});
 });
