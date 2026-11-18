@@ -6623,6 +6623,7 @@ export class SyncEngine {
 		const to = parent ? `${parent}/${change.name}` : change.name;
 		if (from !== to) {
 			this.movedAwayFolders.add(from);
+			this.recordFolderMove(from, change.seq);
 			// The per-note moves may already have emptied it (they can reach the
 			// stream lane first): clean up now as well as after each move.
 			const left = this.app.vault.getAbstractFileByPath(from);
@@ -6677,15 +6678,19 @@ export class SyncEngine {
 		try {
 			if (parent) await this.ensureFolder(parent);
 			await this.app.vault.rename(folder, to);
+			this.recordFolderMove(from, change.seq);
 			rlog().info(
 				"pull",
 				`Followed folder move: ${noteRef(from)} -> ${noteRef(to)} | ${moved.length} files`,
 			);
 		} catch (e) {
-			// Not moved: index and bookkeeping back where the disk is; the files
-			// converge per note.
+			// Not moved: bookkeeping back where the disk is; the files converge
+			// per note. Then the same fallback as a target already on disk (the
+			// check above raced a concurrent create of `to`, e2e test_107):
+			// applyFolderChange teaches the index the move from the restored
+			// `from` and records `from` as moved away, so the per-note moves
+			// that empty it (and its subfolders) remove it.
 			if (prior) index.set(prior);
-			this.persistGateJournalSoon();
 			this.rekeyMoved(
 				moved.map(([o, n]): [string, string] => [n, o]),
 				false,
@@ -6694,6 +6699,7 @@ export class SyncEngine {
 				"pull",
 				`Folder move could not follow on disk (${noteRef(from)} -> ${noteRef(to)}): ${errMsg(e, to)}`,
 			);
+			await this.applyFolderChange(change);
 		}
 	}
 
@@ -6701,9 +6707,40 @@ export class SyncEngine {
 	 *  list). A hiding layer for `removeEmptyFolders`: it lets an emptied
 	 *  folder be removed even though it is still in the local explicit-folder
 	 *  set (the server already moved it). Cleared per path when the folder is
-	 *  removed, when a folder is created at or under it (the user re-made
-	 *  it: review @ 23b5eee2 LOW-4), and on vault switch. */
+	 *  removed, when the USER creates a folder at or under it (re-made
+	 *  it: review @ 23b5eee2 LOW-4), when the server lists it as an explicit
+	 *  folder again (`syncExplicitFolders`), and on vault switch. */
 	private movedAwayFolders = this.track(["vault", "destroy"], new Set<string>());
+
+	/** Old path -> seq of the server folder move that left it. A row naming a
+	 *  path under it with a LOWER seq predates the move: it is a stale claim
+	 *  and lands where the note lives now (`isStalePathClaim`), so it cannot
+	 *  move the note back into a re-made old folder. The per-note seq mark
+	 *  cannot fence it (a folder move leaves each note's mark where it was),
+	 *  and raising that mark would drop the same row replayed at the new path.
+	 *  Not cleared with `movedAwayFolders`: the stale row can arrive after the
+	 *  emptied folder is gone. It only ever hides rows older than the move, so
+	 *  it needs no other clearing event than a vault switch. */
+	private folderMoveSeqs = this.track(["vault", "destroy"], new Map<string, number>());
+
+	private recordFolderMove(from: string, seq: number | null | undefined): void {
+		if (typeof seq !== "number" || !Number.isInteger(seq)) return;
+		const prev = this.folderMoveSeqs.get(from);
+		if (prev === undefined || seq > prev) this.folderMoveSeqs.set(from, seq);
+	}
+
+	/** A seq-bearing row at `path` older than a server folder move away from
+	 *  any folder above it. Walks the path's ancestors, O(path depth), never
+	 *  the recorded moves. ANY ancestor moved after the row makes it stale, not
+	 *  just the deepest: a row under A/B written after A/B moved is still older
+	 *  than a later move of A itself. */
+	private predatesFolderMove(path: string, seq: number): boolean {
+		for (let i = path.lastIndexOf("/"); i > 0; i = path.lastIndexOf("/", i - 1)) {
+			const moveSeq = this.folderMoveSeqs.get(path.slice(0, i));
+			if (moveSeq !== undefined && seq < moveSeq) return true;
+		}
+		return false;
+	}
 
 	/** A folder now exists at `folder`: no moved-away entry may cover it, or
 	 *  sit under it. */
@@ -7061,7 +7098,18 @@ export class SyncEngine {
 	 *  best-effort on the wire (server errors are warn-logged but don't fail
 	 *  the user's vault op). */
 	async handleFolderCreate(folder: { path: string }): Promise<void> {
-		this.forgetMovedAway(normalizePath(folder.path));
+		const path = normalizePath(folder.path);
+		// The engine's own ensureFolder (a note materializing, or a folder the
+		// server already lists) is not the user making a folder: it neither
+		// clears a moved-away record nor goes back to the server as a new
+		// explicit folder, which would re-create a moved folder on every device
+		// via the folders.batch broadcast. seedEmptyFolders still backstops an
+		// engine folder that ends up content-free.
+		if (this.files.has(path, "engineCreated")) {
+			this.files.clearMarker(path, "engineCreated");
+			return;
+		}
+		this.forgetMovedAway(path);
 		if (this.gateHolds()) {
 			this.journalGateEvent({ op: "folder-create", path: folder.path });
 			this.kickGateReplay();
@@ -11294,6 +11342,8 @@ export class SyncEngine {
 		// holds when the per-note fence is gone (a restart, a slow server).
 		if (this.folderOps.movedFrom(target, normalizePath(current))) return true;
 		if (!Number.isInteger(seq)) return false;
+		// A row from before a server folder move away from `target`.
+		if (this.predatesFolderMove(target, seq as number)) return true;
 		const mark = this.syncState.get(normalizePath(current))?.seq;
 		return mark !== undefined && (seq as number) < mark;
 	}
@@ -13505,9 +13555,14 @@ export class SyncEngine {
 			if (parent) await this.ensureFolder(parent);
 		}
 
+		// Marked before the call: the vault `create` event can dispatch inside it.
+		// A lost or late event leaves the mark at most ECHO_COOLDOWN_MS; expiry
+		// fails safe (the create then reads as user-made: folder kept).
+		this.files.mark(normalizePath(path), "engineCreated", ECHO_COOLDOWN_MS);
 		try {
 			await this.app.vault.createFolder(path);
 		} catch (e) {
+			this.files.clearMarker(normalizePath(path), "engineCreated");
 			// Check-then-create races a concurrent materialization of a sibling
 			// note into the same new folder: N notes delivered in a burst each
 			// ensureFolder the same path and the losers reject "Folder already
@@ -13576,6 +13631,9 @@ export class SyncEngine {
 
 		for (const name of names) {
 			if (this.shouldIgnore(name)) continue;
+			// The server lists it, so the folder exists now (a user re-made it,
+			// e.g. in the web app): no moved-away record may still cover it.
+			if (this.isMovedAway(name)) this.forgetMovedAway(name);
 			try {
 				await this.ensureFolder(name);
 			} catch (e) {

@@ -56,13 +56,18 @@ export interface MarkerClock {
  *   would for a user drag, so without this the echo is pushed straight back to
  *   the server as a fresh rename. Marked on BOTH the old and new path: the
  *   event carries both, and which one a guard consults depends on the caller.
+ * - `engineCreated` - a folder the engine made (`ensureFolder`) to hold synced
+ *   content. Obsidian fires a `create` for it exactly as for a user's New
+ *   folder, so without this the sync-driven create reads as the user re-making
+ *   the folder and clears its moved-away record (e2e test_107).
  */
 export type FileMarker =
 	| "pushed"
 	| "flushed"
 	| "remotelyDeleted"
 	| "remotelyRenamed"
-	| "renamedAway";
+	| "renamedAway"
+	| "engineCreated";
 
 /** One file's live sync state. Currently just markers; later passes add the
  *  debounce timer, in-flight push state, and the per-path heal counters. */
