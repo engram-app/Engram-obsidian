@@ -279,3 +279,17 @@ test("the next recorded hash ends the deliberate clear", () => {
 		e.destroy();
 	}
 });
+
+test("a hash-0 row moved onto a head-only row leaves the destination untouched", () => {
+	const { e } = setup();
+	try {
+		(e as any).syncState.set("Proj/b.md", { hash: 0, crdtHead: "src" });
+		(e as any).setCrdtHead("Done/b.md", "dest");
+		const before = (e as any).syncState.get("Done/b.md");
+		(e as any).renamePath("Proj/b.md", "Done/b.md", "remote");
+		expect((e as any).syncState.get("Done/b.md")).toBe(before); // same object: not rewritten
+		expect((e as any).syncState.has("Proj/b.md")).toBe(false);
+	} finally {
+		e.destroy();
+	}
+});
