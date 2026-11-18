@@ -175,3 +175,25 @@ test("control: a row AFTER the folder move naming the old folder is a real move 
 		h.engine.destroy();
 	}
 });
+
+test("several recorded moves: each ancestor's own move seq fences, at any depth", () => {
+	const h = makeVault({});
+	const engine = makeEngine(h.app);
+	try {
+		const fence = engine as any;
+		fence.recordFolderMove("A/B", 4); // A/B moved away at seq 4
+		fence.recordFolderMove("A", 10); // later, A itself moved away at seq 10
+		fence.recordFolderMove("Z", 20); // unrelated
+		// Under A/B, written after A/B moved but before A did: the deeper
+		// record alone would let it through; A's move still makes it stale.
+		expect(fence.predatesFolderMove("A/B/x.md", 6)).toBe(true);
+		expect(fence.predatesFolderMove("A/B/x.md", 3)).toBe(true);
+		expect(fence.predatesFolderMove("A/B/x.md", 11)).toBe(false); // after both
+		expect(fence.predatesFolderMove("A/C/deep/y.md", 9)).toBe(true); // via A
+		expect(fence.predatesFolderMove("A/x.md", 10)).toBe(false); // equal: the move itself
+		expect(fence.predatesFolderMove("AB/x.md", 1)).toBe(false); // prefix, not ancestor
+		expect(fence.predatesFolderMove("x.md", 1)).toBe(false); // root: no ancestor
+	} finally {
+		engine.destroy();
+	}
+});

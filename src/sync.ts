@@ -6729,10 +6729,15 @@ export class SyncEngine {
 		if (prev === undefined || seq > prev) this.folderMoveSeqs.set(from, seq);
 	}
 
-	/** A seq-bearing row at `path` older than a server folder move away from it. */
+	/** A seq-bearing row at `path` older than a server folder move away from
+	 *  any folder above it. Walks the path's ancestors, O(path depth), never
+	 *  the recorded moves. ANY ancestor moved after the row makes it stale, not
+	 *  just the deepest: a row under A/B written after A/B moved is still older
+	 *  than a later move of A itself. */
 	private predatesFolderMove(path: string, seq: number): boolean {
-		for (const [from, moveSeq] of this.folderMoveSeqs) {
-			if (path.startsWith(`${from}/`) && seq < moveSeq) return true;
+		for (let i = path.lastIndexOf("/"); i > 0; i = path.lastIndexOf("/", i - 1)) {
+			const moveSeq = this.folderMoveSeqs.get(path.slice(0, i));
+			if (moveSeq !== undefined && seq < moveSeq) return true;
 		}
 		return false;
 	}
