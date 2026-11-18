@@ -6623,6 +6623,7 @@ export class SyncEngine {
 		const to = parent ? `${parent}/${change.name}` : change.name;
 		if (from !== to) {
 			this.movedAwayFolders.add(from);
+			this.recordFolderMove(from, change.seq);
 			// The per-note moves may already have emptied it (they can reach the
 			// stream lane first): clean up now as well as after each move.
 			const left = this.app.vault.getAbstractFileByPath(from);
@@ -6677,6 +6678,7 @@ export class SyncEngine {
 		try {
 			if (parent) await this.ensureFolder(parent);
 			await this.app.vault.rename(folder, to);
+			this.recordFolderMove(from, change.seq);
 			rlog().info(
 				"pull",
 				`Followed folder move: ${noteRef(from)} -> ${noteRef(to)} | ${moved.length} files`,
@@ -6709,6 +6711,31 @@ export class SyncEngine {
 	 *  it: review @ 23b5eee2 LOW-4), when the server lists it as an explicit
 	 *  folder again (`syncExplicitFolders`), and on vault switch. */
 	private movedAwayFolders = this.track(["vault", "destroy"], new Set<string>());
+
+	/** Old path -> seq of the server folder move that left it. A row naming a
+	 *  path under it with a LOWER seq predates the move: it is a stale claim
+	 *  and lands where the note lives now (`isStalePathClaim`), so it cannot
+	 *  move the note back into a re-made old folder. The per-note seq mark
+	 *  cannot fence it (a folder move leaves each note's mark where it was),
+	 *  and raising that mark would drop the same row replayed at the new path.
+	 *  Not cleared with `movedAwayFolders`: the stale row can arrive after the
+	 *  emptied folder is gone. It only ever hides rows older than the move, so
+	 *  it needs no other clearing event than a vault switch. */
+	private folderMoveSeqs = this.track(["vault", "destroy"], new Map<string, number>());
+
+	private recordFolderMove(from: string, seq: number | null | undefined): void {
+		if (typeof seq !== "number" || !Number.isInteger(seq)) return;
+		const prev = this.folderMoveSeqs.get(from);
+		if (prev === undefined || seq > prev) this.folderMoveSeqs.set(from, seq);
+	}
+
+	/** A seq-bearing row at `path` older than a server folder move away from it. */
+	private predatesFolderMove(path: string, seq: number): boolean {
+		for (const [from, moveSeq] of this.folderMoveSeqs) {
+			if (path.startsWith(`${from}/`) && seq < moveSeq) return true;
+		}
+		return false;
+	}
 
 	/** A folder now exists at `folder`: no moved-away entry may cover it, or
 	 *  sit under it. */
@@ -11310,6 +11337,8 @@ export class SyncEngine {
 		// holds when the per-note fence is gone (a restart, a slow server).
 		if (this.folderOps.movedFrom(target, normalizePath(current))) return true;
 		if (!Number.isInteger(seq)) return false;
+		// A row from before a server folder move away from `target`.
+		if (this.predatesFolderMove(target, seq as number)) return true;
 		const mark = this.syncState.get(normalizePath(current))?.seq;
 		return mark !== undefined && (seq as number) < mark;
 	}
