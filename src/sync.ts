@@ -3100,7 +3100,19 @@ export class SyncEngine {
 		// note materialized twice" from "an unrelated note we are about to
 		// displace" — and overwriting the latter hands it a version that belongs
 		// to a different note, so its next write CASes against the wrong one.
-		if (this.syncState.has(to)) return;
+		const at = this.syncState.get(to);
+		if (at) {
+			// Except a head-only placeholder (`hash: 0`, what `setCrdtHead` leaves
+			// before any content is recorded): it claims no text, so the moved
+			// row's hash is still the only record of what this device last wrote
+			// there. Dropping it made a just-pulled seed read as an unpushed edit
+			// after an identity move, a false keep-both (e2e run 44242969664).
+			if (at.hash === 0 && row.hash !== 0) {
+				this.syncState.set(to, { ...at, hash: row.hash });
+				this.noteRowWrite(to);
+			}
+			return;
+		}
 		const { relocating: _, ...kept } = row;
 		this.syncState.set(to, origin === "local" ? { ...kept, relocating: true } : kept);
 		this.noteRowWrite(to);
@@ -13365,17 +13377,6 @@ export class SyncEngine {
 	 *  text it wrote, so a mismatch proves nothing; trusting it turned a
 	 *  path-only move into a keep-both (e2e run 43846246580). The base text
 	 *  is the real answer and is preferred. */
-	/** Evidence of a local edit at `path` not yet on the server: a push
-	 *  waiting on its debounce, one in flight, or a queued upsert (the
-	 *  "Mint refused but edit PRESERVED" case). */
-	private hasUnpushedEdit(path: string): boolean {
-		return (
-			this.debounceTimers.has(path) ||
-			this.pushing.has(path) ||
-			this.queue.get(path, this.settings.vaultId ?? undefined)?.action === "upsert"
-		);
-	}
-
 	private async keepUnpushedEditOnMove(
 		from: string,
 		to: string,
@@ -13391,10 +13392,6 @@ export class SyncEngine {
 			const m = merge3(baseText, disk, serverText);
 			if (m.clean) merged = m.text;
 		} else {
-			// No base: only evidence of an edit this device has not pushed counts.
-			// A hash mismatch alone is the CRDT quirk above, and read a just-pulled
-			// seed as an edit (e2e run 44242969664).
-			if (!this.hasUnpushedEdit(from) && !this.hasUnpushedEdit(to)) return null;
 			const row = this.syncState.get(to) ?? this.syncState.get(from);
 			if (row === undefined || row.hash === fnv1a(disk)) return null;
 			// The server holds exactly what was synced: only the path moved.

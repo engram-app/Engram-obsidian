@@ -16,7 +16,7 @@ import { DEFAULT_SETTINGS } from "../src/types";
 const ORIGINAL = "# A\n\nalpha 107\n";
 const EDIT = "# A\n\nalpha 107\n\npeer edit 1234\n";
 
-function setup(opts: { queued?: boolean } = {}) {
+function setup() {
 	const disk = new Map<string, string>([["Proj/a.md", EDIT]]);
 	const files = new Map<string, TFile>([["Proj/a.md", new TFile("Proj/a.md")]]);
 	const at = (p: string) => files.get(p) ?? null;
@@ -28,8 +28,7 @@ function setup(opts: { queued?: boolean } = {}) {
 			getFileByPath: at,
 			cachedRead: async (f: TFile) => disk.get(f.path) ?? "",
 			read: async (f: TFile) => disk.get(f.path) ?? "",
-			// Real disk calls yield to the event loop: two writes in flight both
-			// pass their existence checks before either moves the file.
+			// Real disk calls yield to the event loop, and refuse an existing target.
 			rename: async (f: TFile, to: string) => {
 				await new Promise((r) => setTimeout(r, 0));
 				if (files.has(to)) throw new Error("Destination file already exists!");
@@ -65,18 +64,6 @@ function setup(opts: { queued?: boolean } = {}) {
 	// The identity moved first (the relocation), the file has not yet.
 	ids.set("Done/a.md", "id-a");
 	(e as any).rememberRelocation("Proj/a.md", "Done/a.md");
-	// The restart case's real evidence of an unpushed edit: the refused mint
-	// queued it ("Mint refused but edit PRESERVED").
-	if (opts.queued !== false) {
-		void (e as any).queue.enqueue({
-			path: "Proj/a.md",
-			action: "upsert",
-			kind: "note",
-			mtime: 1,
-			timestamp: 1,
-			vaultId: "v1",
-		});
-	}
 	return { e, disk };
 }
 
@@ -167,12 +154,14 @@ test("overlapping edits: server text at the path, the edit kept as a copy", asyn
 	}
 });
 
-// e2e run 44242969664 (test_107, device B): B never edited the note. The text
-// at the old path was the seed it had just pulled, with no merge base and a
-// recorded hash that is not the text's own (the CRDT quirk). Then two inbound
-// writes for the same id followed the identity move at once, and each kept a
-// "conflict" copy of the seed.
+// e2e run 44242969664 (test_107, device B): two conflict copies of a note B
+// never edited. The text at the old path was the seed B had just pulled and
+// recorded (its hash is the seed's own). The new path already held a
+// head-only row (`hash: 0`, from setCrdtHead), so the identity move dropped
+// the seed's row, and the mismatch then read the seed as an unpushed edit;
+// two writes for the note at once each kept a copy.
 const SEED = "# A\n\nalpha 107";
+const SERVER = "# A\n\nalpha 107\n\noffline edit 1234\n";
 
 /** Count keep-both decisions: two copies made in the same millisecond share a
  *  name, so counting files on disk would hide the second one. */
@@ -185,13 +174,22 @@ function countCopies(e: SyncEngine): { n: number } {
 	};
 	return seen;
 }
-const SERVER = "# A\n\nalpha 107\n\noffline edit 1234\n";
 
-test("no base, no unpushed edit: a hash mismatch alone is not an edit (no copy)", async () => {
-	const { e, disk } = setup({ queued: false });
+/** B's state: the seed on disk at the old path with its own hash recorded,
+ *  and a head-only row already at the new path. */
+function seeded(e: SyncEngine, disk: Map<string, string>, text: string) {
+	disk.set("Proj/a.md", text);
+	(e as any).syncState.set("Proj/a.md", { hash: fnv1a(SEED), crdtHead: "h", seq: 3 });
+	(e as any).setCrdtHead("Done/a.md", "h2");
+}
+
+const twoWrites = (e: SyncEngine, text: string) =>
+	Promise.all([e.writeCrdtNote("Done/a.md", text), e.writeCrdtNote("Done/a.md", text)]);
+
+test("a just-pulled seed moved onto a head-only row is not an edit: no copy", async () => {
+	const { e, disk } = setup();
 	try {
-		disk.set("Proj/a.md", SEED);
-		(e as any).syncState.set("Proj/a.md", { hash: 12345, crdtHead: "h", seq: 3 });
+		seeded(e, disk, SEED);
 		await (e as any).createFileWithFolders("Done/a.md", SERVER);
 		expect(disk.get("Done/a.md")).toBe(SERVER);
 		expect(conflictCopies(disk)).toEqual([]);
@@ -200,35 +198,49 @@ test("no base, no unpushed edit: a hash mismatch alone is not an edit (no copy)"
 	}
 });
 
-test("two writes for the same note at once follow the move once: no copy for a pulled seed", async () => {
-	const { e, disk } = setup({ queued: false });
+test("two writes for that note at once: still no copy", async () => {
+	const { e, disk } = setup();
 	try {
-		disk.set("Proj/a.md", SEED);
-		(e as any).syncState.set("Proj/a.md", { hash: 12345, crdtHead: "h", seq: 3 });
-		await Promise.all([
-			e.writeCrdtNote("Done/a.md", SERVER),
-			e.writeCrdtNote("Done/a.md", SERVER),
-		]);
+		seeded(e, disk, SEED);
+		const copies = countCopies(e);
+		await twoWrites(e, SERVER);
+		expect(copies.n).toBe(0);
 		expect(disk.get("Done/a.md")).toBe(SERVER);
 		expect(disk.has("Proj/a.md")).toBe(false);
-		expect(conflictCopies(disk)).toEqual([]);
 	} finally {
 		e.destroy();
 	}
 });
 
-test("two writes at once with a REAL unpushed edit keep it exactly once", async () => {
-	const { e, disk } = setup();
-	try {
-		const copies = countCopies(e);
-		await Promise.all([
-			e.writeCrdtNote("Done/a.md", "# A\n\nserver rewrite\n"),
-			e.writeCrdtNote("Done/a.md", "# A\n\nserver rewrite\n"),
-		]);
-		expect(disk.get("Done/a.md")).toBe("# A\n\nserver rewrite\n");
-		expect(copies.n).toBe(1);
-		expect(conflictCopies(disk).map((k) => disk.get(k))).toEqual([EDIT]);
-	} finally {
-		e.destroy();
-	}
-});
+// A REAL local edit with no push signal yet must still be kept, exactly once.
+// None of these has a queued upsert, a debounce timer, or a push in flight.
+const MINE = "# A\n\nalpha 107 mine\n";
+for (const [why, arrange] of [
+	[
+		"made during a pull (parked for the post-pull push)",
+		(e: SyncEngine) => {
+			(e as any).pulling = true;
+			(e as any).pendingPostPullPushes.add("Proj/a.md");
+		},
+	],
+	[
+		"made while sync was blocked (gate-modified, not journaled)",
+		(e: SyncEngine) => (e as any).gateModified.add("Proj/a.md"),
+	],
+	["made while Obsidian was closed (startup catch-up runs before the push sweep)", () => {}],
+] as const) {
+	test(`an unqueued edit ${why} is kept beside the server text, once`, async () => {
+		const { e, disk } = setup();
+		try {
+			seeded(e, disk, MINE);
+			arrange(e);
+			const copies = countCopies(e);
+			await twoWrites(e, SERVER);
+			expect(copies.n).toBe(1);
+			expect(disk.get("Done/a.md")).toBe(SERVER);
+			expect(conflictCopies(disk).map((k) => disk.get(k))).toEqual([MINE]);
+		} finally {
+			e.destroy();
+		}
+	});
+}
