@@ -2776,7 +2776,7 @@ export class SyncEngine {
 			devLog().log("sync-blocked", `flushFromCrdt short-circuited — gate closed: ${path}`);
 			return null;
 		}
-		const normalized = this.inboundLandingPath(path);
+		const normalized = this.inboundLandingPath(path, loadedId);
 		// The doc's text, never blank: a blank doc does not override a caller's
 		// text here, so the empty-write guard below always sees what is written.
 		// It keeps disk's own frontmatter bytes when they mean the same as the
@@ -12094,7 +12094,7 @@ export class SyncEngine {
 		// every record below is made against the file that holds the bytes.
 		const normalized = change.deleted
 			? normalizePath(change.path)
-			: this.inboundLandingPath(change.path);
+			: this.inboundLandingPath(change.path, change.note_id);
 
 		if (change.deleted) {
 			devLog().log("pull", `applyChange DELETE: ${change.path}`);
@@ -13503,14 +13503,18 @@ export class SyncEngine {
 	 *  meet the moved file (review @ 23b5eee2 MEDIUM-2: the redirect lived
 	 *  in the create helpers only, and the callers recorded at the old path).
 	 *  The create helpers keep `fileMovedByPendingOp` as a backstop. */
-	private inboundLandingPath(path: string): string {
+	private inboundLandingPath(path: string, noteId?: string | null): string {
 		const normalized = normalizePath(path);
 		const pending = this.folderOps.movedPathFor(normalized);
 		// A folder the SERVER moved (our own op acked, or a peer's): a stale
-		// write for the old path finds the moved file the same way. Only when
-		// the moved file exists: a fresh create at the old path may be a real
-		// new note made there after the move, so it is not redirected.
-		const to = pending ?? this.movedAwayPathFor(normalized);
+		// write for the old path lands in the moved file, but only when the id
+		// map says that file IS this note. The old folder can survive (it holds
+		// a non-synced file), and a different note made at the old path later
+		// must never overwrite an unrelated file at the same name under the new
+		// one. No id (the create helpers, attachments): never redirected here.
+		const moved = pending === null ? this.movedAwayPathFor(normalized) : null;
+		const sameNote = !!noteId && moved !== null && this.noteIdMap?.get(moved) === noteId;
+		const to = pending ?? (sameNote ? moved : null);
 		if (to === null || this.app.vault.getAbstractFileByPath(normalized)) return normalized;
 		if (!(this.app.vault.getAbstractFileByPath(to) instanceof TFile)) return normalized;
 		const why = pending === null ? "server_moved_folder" : "pending_op";

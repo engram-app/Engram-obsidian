@@ -31,7 +31,7 @@ type Engine = {
 	ensureFolder(p: string): Promise<void>;
 	removeEmptyFolders(p: string): Promise<void>;
 	syncExplicitFolders(): Promise<void>;
-	inboundLandingPath(p: string): string;
+	inboundLandingPath(p: string, id?: string): string;
 	handleFolderCreate(f: { path: string }): Promise<void>;
 };
 
@@ -172,12 +172,26 @@ test("a server-listed PARENT does not clear the moved-away record under it", asy
 	expect(trashed).toEqual([]);
 });
 
-test("a stale write for a file the server already moved lands in the moved file", async () => {
+test("a stale write for the SAME note the server already moved lands in the moved file", async () => {
 	const { e } = await setup(["E2E", NEW], [], { files: [`${NEW}/a.md`] });
 	e.movedAwayFolders.set(OLD, NEW);
-	expect(e.inboundLandingPath(`${OLD}/a.md`)).toBe(`${NEW}/a.md`);
+	(e as any).noteIdMap = { get: (p: string) => (p === `${NEW}/a.md` ? "id-a" : null) };
+	expect(e.inboundLandingPath(`${OLD}/a.md`, "id-a")).toBe(`${NEW}/a.md`);
 	// No moved file there: a create at the old path may be a real new note.
-	expect(e.inboundLandingPath(`${OLD}/new.md`)).toBe(`${OLD}/new.md`);
+	expect(e.inboundLandingPath(`${OLD}/new.md`, "id-new")).toBe(`${OLD}/new.md`);
+});
+
+test("a DIFFERENT note at the old path never overwrites the moved file of the same name", async () => {
+	// OLD survived (it holds a non-synced file); another device makes a new
+	// OLD/README.md. NEW/README.md is an unrelated note.
+	const { e } = await setup(["E2E", NEW, OLD], [], {
+		files: [`${NEW}/README.md`, `${OLD}/x.txt`],
+	});
+	e.movedAwayFolders.set(OLD, NEW);
+	(e as any).noteIdMap = { get: (p: string) => (p === `${NEW}/README.md` ? "id-moved" : null) };
+	expect(e.inboundLandingPath(`${OLD}/README.md`, "id-fresh")).toBe(`${OLD}/README.md`);
+	// No id (create helpers, attachments): never redirected by path alone.
+	expect(e.inboundLandingPath(`${OLD}/README.md`)).toBe(`${OLD}/README.md`);
 });
 
 test("a create event later than the marker's lifetime reads as user-made (fails safe)", async () => {
