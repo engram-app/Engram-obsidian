@@ -27,11 +27,10 @@ class MemoryAdapter {
 }
 
 type Engine = {
-	movedAwayFolders: Map<string, string>;
+	movedAwayFolders: Set<string>;
 	ensureFolder(p: string): Promise<void>;
 	removeEmptyFolders(p: string): Promise<void>;
 	syncExplicitFolders(): Promise<void>;
-	inboundLandingPath(p: string, id?: string): string;
 	handleFolderCreate(f: { path: string }): Promise<void>;
 };
 
@@ -51,6 +50,7 @@ async function setup(
 	explicitPaths: string[],
 	opts: {
 		deferEvents?: boolean;
+		createFolderError?: string;
 		serverList?: string[];
 		files?: string[];
 		renameError?: string;
@@ -88,6 +88,7 @@ async function setup(
 				throw new Error(opts.renameError ?? "unexpected rename");
 			},
 			createFolder: async (p: string) => {
+				if (opts.createFolderError) throw new Error(opts.createFolderError);
 				const f = add(p);
 				if (opts.deferEvents) held.push(f);
 				else await engine.handleFolderCreate(f); // main.ts: vault.on("create")
@@ -133,7 +134,7 @@ async function setup(
 
 test("a sync-driven create UNDER a moved-away folder keeps the record: both are removed", async () => {
 	const { e, trashed, api } = await setup(["E2E", NEW, OLD], [OLD]);
-	e.movedAwayFolders.set(OLD, NEW);
+	e.movedAwayFolders.add(OLD);
 	// The stale-path note materializes at OLD/sub/b.md, then moves on.
 	await e.ensureFolder(`${OLD}/sub`);
 	await e.removeEmptyFolders(`${OLD}/sub/b.md`);
@@ -144,7 +145,7 @@ test("a sync-driven create UNDER a moved-away folder keeps the record: both are 
 
 test("a sync-driven create AT the moved-away folder keeps the record", async () => {
 	const { e, trashed, api } = await setup(["E2E", NEW], [OLD]);
-	e.movedAwayFolders.set(OLD, NEW);
+	e.movedAwayFolders.add(OLD);
 	await e.ensureFolder(OLD);
 	await e.removeEmptyFolders(`${OLD}/a.md`);
 	expect(trashed).toEqual([OLD]);
@@ -153,7 +154,7 @@ test("a sync-driven create AT the moved-away folder keeps the record", async () 
 
 test("a USER-made folder at the old path clears the record and is kept", async () => {
 	const { e, trashed, explicit, api } = await setup(["E2E", NEW, OLD], [OLD]);
-	e.movedAwayFolders.set(OLD, NEW);
+	e.movedAwayFolders.add(OLD);
 	await e.handleFolderCreate(new TFolder(OLD, []));
 	await e.removeEmptyFolders(`${OLD}/a.md`);
 	expect(trashed).toEqual([]);
@@ -163,7 +164,7 @@ test("a USER-made folder at the old path clears the record and is kept", async (
 
 test("a USER-made subfolder under the old path clears the record and is pushed", async () => {
 	const { e, trashed, api } = await setup(["E2E", OLD, `${OLD}/mine`], [OLD]);
-	e.movedAwayFolders.set(OLD, NEW);
+	e.movedAwayFolders.add(OLD);
 	await e.handleFolderCreate(new TFolder(`${OLD}/mine`, []));
 	await e.removeEmptyFolders(`${OLD}/mine/a.md`);
 	expect(trashed).toEqual([]);
@@ -173,7 +174,7 @@ test("a USER-made subfolder under the old path clears the record and is pushed",
 test("a folder the server lists again at the old path is never trashed", async () => {
 	// A user re-made an empty OLD in the web app after the move.
 	const { e, trashed, explicit } = await setup(["E2E", NEW], [], { serverList: [OLD] });
-	e.movedAwayFolders.set(OLD, NEW);
+	e.movedAwayFolders.add(OLD);
 	await e.syncExplicitFolders();
 	await e.removeEmptyFolders(`${OLD}/a.md`);
 	expect(trashed).toEqual([]);
@@ -182,38 +183,16 @@ test("a folder the server lists again at the old path is never trashed", async (
 
 test("a server-listed PARENT does not clear the moved-away record under it", async () => {
 	const { e, trashed } = await setup(["E2E", NEW, OLD], [OLD], { serverList: ["E2E", OLD] });
-	e.movedAwayFolders.set(OLD, NEW);
-	e.movedAwayFolders.set("E2E/Gone", "E2E/Gone-done");
+	e.movedAwayFolders.add(OLD);
+	e.movedAwayFolders.add("E2E/Gone");
 	await e.syncExplicitFolders();
 	expect(e.movedAwayFolders.has("E2E/Gone")).toBe(true);
 	expect(trashed).toEqual([]);
 });
 
-test("a stale write for the SAME note the server already moved lands in the moved file", async () => {
-	const { e } = await setup(["E2E", NEW], [], { files: [`${NEW}/a.md`] });
-	e.movedAwayFolders.set(OLD, NEW);
-	(e as any).noteIdMap = { get: (p: string) => (p === `${NEW}/a.md` ? "id-a" : null) };
-	expect(e.inboundLandingPath(`${OLD}/a.md`, "id-a")).toBe(`${NEW}/a.md`);
-	// No moved file there: a create at the old path may be a real new note.
-	expect(e.inboundLandingPath(`${OLD}/new.md`, "id-new")).toBe(`${OLD}/new.md`);
-});
-
-test("a DIFFERENT note at the old path never overwrites the moved file of the same name", async () => {
-	// OLD survived (it holds a non-synced file); another device makes a new
-	// OLD/README.md. NEW/README.md is an unrelated note.
-	const { e } = await setup(["E2E", NEW, OLD], [], {
-		files: [`${NEW}/README.md`, `${OLD}/x.txt`],
-	});
-	e.movedAwayFolders.set(OLD, NEW);
-	(e as any).noteIdMap = { get: (p: string) => (p === `${NEW}/README.md` ? "id-moved" : null) };
-	expect(e.inboundLandingPath(`${OLD}/README.md`, "id-fresh")).toBe(`${OLD}/README.md`);
-	// No id (create helpers, attachments): never redirected by path alone.
-	expect(e.inboundLandingPath(`${OLD}/README.md`)).toBe(`${OLD}/README.md`);
-});
-
 test("a create event later than the marker's lifetime reads as user-made (fails safe)", async () => {
 	const { e, trashed, held, time } = await setup(["E2E", NEW], [OLD], { deferEvents: true });
-	e.movedAwayFolders.set(OLD, NEW);
+	e.movedAwayFolders.add(OLD);
 	await e.ensureFolder(OLD);
 	time.advance(5001);
 	for (const f of held) await e.handleFolderCreate(f);
@@ -245,4 +224,18 @@ test("the folder rename losing a race to a create of the target still removes OL
 	moveOut(`${OLD}/sub/b.md`);
 	await e.removeEmptyFolders(`${OLD}/sub/b.md`);
 	expect(trashed).toEqual([`${OLD}/sub`, OLD]);
+});
+
+test("a failed engine create leaves no mark: a user create right after still clears the record", async () => {
+	// createFolder rejects ("already exists" from a racing sibling, or a real
+	// error): nothing was made, so the engineCreated mark must go with it, or a
+	// user making the folder within the 5 s window would read as the engine.
+	const { e, trashed } = await setup(["E2E", NEW], [OLD], {
+		createFolderError: "Folder already exists.",
+	});
+	e.movedAwayFolders.add(OLD);
+	await e.ensureFolder(OLD); // swallowed: the race outcome is "the folder is there"
+	await e.handleFolderCreate(new TFolder(OLD, []));
+	expect(e.movedAwayFolders.has(OLD)).toBe(false);
+	expect(trashed).toEqual([]);
 });

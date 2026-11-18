@@ -2776,7 +2776,7 @@ export class SyncEngine {
 			devLog().log("sync-blocked", `flushFromCrdt short-circuited — gate closed: ${path}`);
 			return null;
 		}
-		const normalized = this.inboundLandingPath(path, loadedId);
+		const normalized = this.inboundLandingPath(path);
 		// The doc's text, never blank: a blank doc does not override a caller's
 		// text here, so the empty-write guard below always sees what is written.
 		// It keeps disk's own frontmatter bytes when they mean the same as the
@@ -6622,7 +6622,7 @@ export class SyncEngine {
 		if (from === null || parent === null) return;
 		const to = parent ? `${parent}/${change.name}` : change.name;
 		if (from !== to) {
-			this.movedAwayFolders.set(from, to);
+			this.movedAwayFolders.add(from);
 			// The per-note moves may already have emptied it (they can reach the
 			// stream lane first): clean up now as well as after each move.
 			const left = this.app.vault.getAbstractFileByPath(from);
@@ -6707,15 +6707,13 @@ export class SyncEngine {
 	 *  set (the server already moved it). Cleared per path when the folder is
 	 *  removed, when the USER creates a folder at or under it (re-made
 	 *  it: review @ 23b5eee2 LOW-4), when the server lists it as an explicit
-	 *  folder again (`syncExplicitFolders`), and on vault switch. Keyed old
-	 *  path -> new path, so an inbound write for a file that already moved
-	 *  lands in the moved file (`inboundLandingPath`). */
-	private movedAwayFolders = this.track(["vault", "destroy"], new Map<string, string>());
+	 *  folder again (`syncExplicitFolders`), and on vault switch. */
+	private movedAwayFolders = this.track(["vault", "destroy"], new Set<string>());
 
 	/** A folder now exists at `folder`: no moved-away entry may cover it, or
 	 *  sit under it. */
 	private forgetMovedAway(folder: string): void {
-		for (const p of [...this.movedAwayFolders.keys()]) {
+		for (const p of [...this.movedAwayFolders]) {
 			if (p === folder || p.startsWith(`${folder}/`) || folder.startsWith(`${p}/`)) {
 				this.movedAwayFolders.delete(p);
 			}
@@ -6723,18 +6721,10 @@ export class SyncEngine {
 	}
 
 	private isMovedAway(folder: string): boolean {
-		for (const p of this.movedAwayFolders.keys()) {
+		for (const p of this.movedAwayFolders) {
 			if (folder === p || folder.startsWith(`${p}/`)) return true;
 		}
 		return false;
-	}
-
-	/** Where the server moved `path` (a path under a moved-away folder), or null. */
-	private movedAwayPathFor(path: string): string | null {
-		for (const [from, to] of this.movedAwayFolders) {
-			if (path.startsWith(`${from}/`)) return `${to}${path.slice(from.length)}`;
-		}
-		return null;
 	}
 
 	/** A manifest `folders` list arrived this session: the server speaks
@@ -12098,7 +12088,7 @@ export class SyncEngine {
 		// every record below is made against the file that holds the bytes.
 		const normalized = change.deleted
 			? normalizePath(change.path)
-			: this.inboundLandingPath(change.path, change.note_id);
+			: this.inboundLandingPath(change.path);
 
 		if (change.deleted) {
 			devLog().log("pull", `applyChange DELETE: ${change.path}`);
@@ -13507,26 +13497,15 @@ export class SyncEngine {
 	 *  meet the moved file (review @ 23b5eee2 MEDIUM-2: the redirect lived
 	 *  in the create helpers only, and the callers recorded at the old path).
 	 *  The create helpers keep `fileMovedByPendingOp` as a backstop. */
-	private inboundLandingPath(path: string, noteId?: string | null): string {
+	private inboundLandingPath(path: string): string {
 		const normalized = normalizePath(path);
-		const pending = this.folderOps.movedPathFor(normalized);
-		// A folder the SERVER moved (our own op acked, or a peer's): a stale
-		// write for the old path lands in the moved file, but only when the id
-		// map says that file IS this note. The old folder can survive (it holds
-		// a non-synced file), and a different note made at the old path later
-		// must never overwrite an unrelated file at the same name under the new
-		// one. No id (the create helpers, attachments): never redirected here.
-		const moved = pending === null ? this.movedAwayPathFor(normalized) : null;
-		const sameNote = !!noteId && moved !== null && this.noteIdMap?.get(moved) === noteId;
-		const to = pending ?? (sameNote ? moved : null);
+		const to = this.folderOps.movedPathFor(normalized);
 		if (to === null || this.app.vault.getAbstractFileByPath(normalized)) return normalized;
 		if (!(this.app.vault.getAbstractFileByPath(to) instanceof TFile)) return normalized;
-		const why = pending === null ? "server_moved_folder" : "pending_op";
-		if (pending === null) rlog().anomaly("sync", "server_moved_folder_old_path_write");
-		else rlog().anomaly("sync", "pending_op_old_path_write");
+		rlog().anomaly("sync", "pending_op_old_path_write");
 		rlog().warn(
 			"pull",
-			`Write for a path a folder move (${why}) moved, applied to the moved file: ${noteRef(normalized)} -> ${noteRef(to)}`,
+			`Write for a path our pending folder op moved, applied to the moved file: ${noteRef(normalized)} -> ${noteRef(to)}`,
 		);
 		return to;
 	}
