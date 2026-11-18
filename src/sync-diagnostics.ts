@@ -135,23 +135,52 @@ const folderRenames = createFolderRenameReporter();
 export const reportFolderRename = folderRenames.rename;
 export const flushFolderRenames = folderRenames.flush;
 
-/** A 429 cooldown began. `scope` is a developer slug, `retryAfterMs` what the
- *  server asked (absent when it sent none), `waitMs` what we will actually wait. */
-export function reportRateLimited(
-	scope: string,
-	streak: number,
-	waitMs: number,
-	retryAfterMs?: number,
-): void {
-	const counts: AnomalyCounts = { streak, wait_s: Math.round(waitMs / 1000) };
-	if (retryAfterMs !== undefined) counts.retry_after_s = Math.round(retryAfterMs / 1000);
-	rlog().anomaly("push", "rate_limited", counts, scope);
+const RATE_LINES_PER_HOUR = 12; // 6 start/clear pairs
+const HOUR_MS = 3_600_000;
+
+/** 429 start/clear lines, hard-capped per hour so a server that keeps
+ *  answering 429 cannot turn every device into a Loki firehose. Past the cap
+ *  one `rate_limit_log_suppressed` line says so, and the next hour reports how
+ *  many were dropped. `scope` is a developer slug, `retryAfterMs` what the
+ *  server asked (absent when it sent none), `waitMs` what we will wait. */
+export function createRateLimitReporter(now: () => number = Date.now) {
+	let windowStart = Number.NEGATIVE_INFINITY;
+	let used = 0;
+	let dropped = 0;
+	const take = (): boolean => {
+		if (now() - windowStart >= HOUR_MS) {
+			if (dropped > 0)
+				rlog().anomaly("push", "rate_limit_log_suppressed", { count: dropped });
+			windowStart = now();
+			used = 0;
+			dropped = 0;
+		}
+		if (used < RATE_LINES_PER_HOUR) {
+			used += 1;
+			return true;
+		}
+		if (dropped === 0) rlog().anomaly("push", "rate_limit_log_suppressed", { count: 0 });
+		dropped += 1;
+		return false;
+	};
+	return {
+		limited(scope: string, streak: number, waitMs: number, retryAfterMs?: number): void {
+			if (!take()) return;
+			const counts: AnomalyCounts = { streak, wait_s: Math.round(waitMs / 1000) };
+			if (retryAfterMs !== undefined) counts.retry_after_s = Math.round(retryAfterMs / 1000);
+			rlog().anomaly("push", "rate_limited", counts, scope);
+		},
+		/** The cooldown ended: the first success after `streak` rate-limited tries. */
+		cleared(scope: string, streak: number): void {
+			if (streak > 0 && take())
+				rlog().anomaly("push", "rate_limit_cleared", { streak }, scope);
+		},
+	};
 }
 
-/** The cooldown ended: the first success after `streak` rate-limited tries. */
-export function reportRateLimitCleared(scope: string, streak: number): void {
-	if (streak > 0) rlog().anomaly("push", "rate_limit_cleared", { streak }, scope);
-}
+const rateLimits = createRateLimitReporter();
+export const reportRateLimited = rateLimits.limited;
+export const reportRateLimitCleared = rateLimits.cleared;
 
 /** A folder delete entered the retry set. Edge-triggered by the caller: once
  *  per folder, not once per retry. `pending` is how many are now waiting. */
