@@ -15,6 +15,7 @@ import type { EngramApi } from "../src/api";
 import { ExplicitFolders } from "../src/explicit-folders";
 import { initRemoteLog, rlog } from "../src/remote-log";
 import { SyncEngine } from "../src/sync";
+import { flushFolderRenames } from "../src/sync-diagnostics";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 // --- Minimal API mock (only folder methods are exercised) ---
@@ -559,8 +560,9 @@ describe("forced diagnostics from the engine", () => {
 			new TFolder("Projects/New", [new TFile("Projects/New/a.md")]),
 			"Projects/Old",
 		);
+		flushFolderRenames();
 		expect(await shipped()).toContain(
-			"folder_renamed children=1 same_parent=true depth_from=2 depth_to=2",
+			"folder_renamed children=1 descendants=0 same_parent=true depth_from=2 depth_to=2",
 		);
 	});
 
@@ -584,7 +586,7 @@ describe("forced diagnostics from the engine", () => {
 		await explicit.add("Gone");
 		(mockApi.deleteFolder as jest.Mock).mockReset().mockRejectedValue({ status: 504 });
 		await engine.handleFolderDelete({ path: "Gone" });
-		expect(await shipped()).toContain("folder_delete_failed reason=push pending=1 status=504");
+		expect(await shipped()).toContain("folder_delete_failed pending=1 status=504");
 	});
 
 	test("gate transitions log once per change with their reason", async () => {
@@ -597,5 +599,44 @@ describe("forced diagnostics from the engine", () => {
 			"sync_gate_closed reason=vault_switch",
 			expect.stringMatching(/^sync_gate_open reason=user_accepted waited_s=\d+$/),
 		] as string[]);
+	});
+
+	test("a folder delete that stays failed logs ONCE across N pull cycles, and once when it clears", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("Gone");
+		(mockApi.deleteFolder as jest.Mock).mockReset().mockRejectedValue({ status: 504 });
+		await engine.handleFolderDelete({ path: "Gone" });
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValue(["Gone"]);
+		for (let i = 0; i < 5; i++) await engine.resyncFolders(); // retries keep failing
+		let out = (await shipped()).filter((l) => l.startsWith("folder_delete_"));
+		expect(out).toEqual(["folder_delete_failed pending=1 status=504"]);
+		(mockApi.deleteFolder as jest.Mock).mockReset().mockResolvedValue(undefined);
+		await engine.resyncFolders();
+		await engine.resyncFolders();
+		out = (await shipped()).filter((l) => l.startsWith("folder_delete_"));
+		expect(out).toEqual([
+			"folder_delete_failed pending=1 status=504",
+			"folder_delete_cleared pending=0",
+		]);
+	});
+
+	test("folder seeding logs the 429 once per streak, not once per 429", async () => {
+		const { engine } = await createEngine();
+		mockApp.vault.getAllLoadedFiles = mock().mockReturnValue([new TFolder("A", [])]);
+		(mockApi.createFolder as jest.Mock)
+			.mockReset()
+			.mockRejectedValue(
+				Object.assign(new Error("429"), { status: 429, headers: { "Retry-After": "1" } }),
+			);
+		const clock = { now: 1_000_000 };
+		(engine as any).time = { ...(engine as any).time, now: () => clock.now };
+		for (let i = 0; i < 6; i++) {
+			await engine.seedEmptyFolders();
+			clock.now += 60_000; // cooldown elapsed, 429 again
+		}
+		expect((await shipped()).filter((l) => l.startsWith("rate_limited"))).toHaveLength(1);
+		(mockApi.createFolder as jest.Mock).mockReset().mockResolvedValue({});
+		await engine.seedEmptyFolders();
+		expect((await shipped()).filter((l) => l.startsWith("rate_limit_cleared"))).toHaveLength(1);
 	});
 });

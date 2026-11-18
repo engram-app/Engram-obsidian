@@ -82,6 +82,7 @@ import { PreviewUnavailableError } from "./preview-error";
 import { rlog } from "./remote-log";
 import { Semaphore } from "./semaphore";
 import {
+	reportFolderDeleteCleared,
 	reportFolderDeleteFailed,
 	reportFolderRename,
 	reportGateTransition,
@@ -7629,8 +7630,10 @@ export class SyncEngine {
 		} catch (e) {
 			// The server still lists the marker; remember it so the next pull does
 			// not recreate the folder the user just deleted (syncExplicitFolders).
+			// Edge only: re-deleting a folder already waiting must not log again.
+			const firstFailure = !this.failedFolderDeletes.has(path);
 			this.failedFolderDeletes.add(path);
-			reportFolderDeleteFailed("push", this.failedFolderDeletes.size, e);
+			if (firstFailure) reportFolderDeleteFailed(this.failedFolderDeletes.size, e);
 			devLog().log("push", `deleteFolder("${path}") failed: ${errMsg(e)}`);
 			rlog().warn("push", `deleteFolder("${noteRef(path)}") failed: ${errMsg(e, path)}`);
 		} finally {
@@ -7692,7 +7695,10 @@ export class SyncEngine {
 							),
 					);
 					this.folderSeedNotBefore = this.time.now() + wait;
-					reportRateLimited("folder_seed", this.folderSeedStreak, wait, asked);
+					// Streak start only; the clear line closes it.
+					if (this.folderSeedStreak === 1) {
+						reportRateLimited("folder_seed", this.folderSeedStreak, wait, asked);
+					}
 					return;
 				}
 			}
@@ -14181,8 +14187,8 @@ export class SyncEngine {
 				try {
 					await this.api.deleteFolder(name);
 					this.failedFolderDeletes.delete(name);
+					reportFolderDeleteCleared(this.failedFolderDeletes.size);
 				} catch (e) {
-					reportFolderDeleteFailed("pull", this.failedFolderDeletes.size, e);
 					devLog().log("pull", `deleteFolder retry(${name}) failed: ${errMsg(e)}`);
 				}
 				continue;

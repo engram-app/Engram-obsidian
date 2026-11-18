@@ -15,8 +15,8 @@ import {
 	slugPart,
 } from "../src/remote-log";
 import {
+	createFolderRenameReporter,
 	createJoinReporter,
-	reportFolderRename,
 	reportPlanLoadFailure,
 } from "../src/sync-diagnostics";
 
@@ -70,6 +70,16 @@ describe("client context", () => {
 		]);
 	});
 
+	test("a mobile client with neither android nor ios flag is mobile_other, not desktop", () => {
+		Platform.isMobile = true;
+		Platform.isDesktop = false;
+		try {
+			expect(clientContext().os).toBe("mobile_other");
+		} finally {
+			Platform.isMobile = false;
+		}
+	});
+
 	test("clientContext classifies android, ios and desktop from Platform flags", () => {
 		Platform.isAndroidApp = true;
 		expect(clientContext().os).toBe("android");
@@ -121,7 +131,8 @@ describe("preview failure", () => {
 
 describe("join outcome", () => {
 	test("rejection is forced; first join and join-after-rejection are logged, steady rejoins are not", async () => {
-		const r = createJoinReporter();
+		let t = 0;
+		const r = createJoinReporter(() => (t += 61_000));
 		r.rejected("plan_limit", 5);
 		r.rejected("plan_limit", 5); // same reason retried: one line
 		r.joined();
@@ -134,19 +145,60 @@ describe("join outcome", () => {
 	});
 
 	test("the very first join of a session is logged", async () => {
-		const r = createJoinReporter();
+		const r = createJoinReporter(() => 0);
 		r.joined();
 		expect((await captured())[0].message).toBe("crdt_joined first=true after_rejections=0");
+	});
+
+	test("alternating reasons log each reason once, not every flip", async () => {
+		let t = 0;
+		const r = createJoinReporter(() => t);
+		for (let i = 0; i < 20; i++) {
+			t += 61_000; // past the cooldown every time: only first-seen may gate
+			r.rejected(i % 2 ? "plan_limit" : "upgrade_required");
+		}
+		expect(await captured()).toHaveLength(2);
+	});
+
+	test("a reject/join flap logs at most one line per cooldown window", async () => {
+		let t = 0;
+		const r = createJoinReporter(() => t);
+		for (let i = 0; i < 30; i++) {
+			t += 5_000; // 30 flaps in 2.5 minutes
+			r.rejected(`reason_${i}`);
+			r.joined();
+		}
+		expect((await captured()).length).toBeLessThanOrEqual(3);
 	});
 });
 
 describe("folder rename", () => {
-	test("counts only: depth, children, same parent", async () => {
-		reportFolderRename("Projects/Old name", "Projects/New name", 4);
+	test("counts only: depth, children, same parent, no descendants", async () => {
+		const r = createFolderRenameReporter();
+		r.rename("Projects/Old name", "Projects/New name", 4);
+		r.flush();
 		const [e] = await captured();
 		expect(e.message).toBe(
-			"folder_renamed children=4 same_parent=true depth_from=2 depth_to=2",
+			"folder_renamed children=4 descendants=0 same_parent=true depth_from=2 depth_to=2",
 		);
 		expect(e.message).not.toContain("Projects");
+	});
+
+	test("a rename burst (folder plus every nested subfolder) is ONE line with a descendant count", async () => {
+		const r = createFolderRenameReporter();
+		r.rename("A", "B", 3);
+		for (let i = 0; i < 50; i++) r.rename(`A/sub${i}`, `B/sub${i}`, 1);
+		r.flush();
+		const msgs = (await captured()).map((e) => e.message);
+		expect(msgs).toHaveLength(1);
+		expect(msgs[0]).toContain("descendants=50");
+	});
+
+	test("two unrelated renames are two lines", async () => {
+		const r = createFolderRenameReporter();
+		r.rename("A", "B", 1);
+		r.rename("C", "D", 1);
+		r.flush();
+		expect(await captured()).toHaveLength(2);
 	});
 });
