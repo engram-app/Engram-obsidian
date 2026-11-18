@@ -28,7 +28,10 @@ function setup() {
 			getFileByPath: at,
 			cachedRead: async (f: TFile) => disk.get(f.path) ?? "",
 			read: async (f: TFile) => disk.get(f.path) ?? "",
+			// Real disk calls yield to the event loop, and refuse an existing target.
 			rename: async (f: TFile, to: string) => {
+				await new Promise((r) => setTimeout(r, 0));
+				if (files.has(to)) throw new Error("Destination file already exists!");
 				disk.set(to, disk.get(f.path) ?? "");
 				disk.delete(f.path);
 				files.delete(f.path);
@@ -36,9 +39,11 @@ function setup() {
 				files.set(to, f);
 			},
 			modify: async (f: TFile, text: string) => {
+				await new Promise((r) => setTimeout(r, 0));
 				disk.set(f.path, text);
 			},
 			create: async (p: string, text: string) => {
+				if (files.has(p)) throw new Error("File already exists.");
 				disk.set(p, text);
 				files.set(p, new TFile(p));
 			},
@@ -144,6 +149,146 @@ test("overlapping edits: server text at the path, the edit kept as a copy", asyn
 		await (e as any).createFileWithFolders("Done/a.md", "# A\n\nalpha theirs\n");
 		expect(disk.get("Done/a.md")).toBe("# A\n\nalpha theirs\n");
 		expect([...disk.values()]).toContain("# A\n\nalpha mine\n");
+	} finally {
+		e.destroy();
+	}
+});
+
+// e2e run 44242969664 (test_107, device B): two conflict copies of a note B
+// never edited. The text at the old path was the seed B had just pulled and
+// recorded (its hash is the seed's own). The new path already held a
+// head-only row (`hash: 0`, from setCrdtHead), so the identity move dropped
+// the seed's row, and the mismatch then read the seed as an unpushed edit;
+// two writes for the note at once each kept a copy.
+const SEED = "# A\n\nalpha 107";
+const SERVER = "# A\n\nalpha 107\n\noffline edit 1234\n";
+
+/** Count keep-both decisions: two copies made in the same millisecond share a
+ *  name, so counting files on disk would hide the second one. */
+function countCopies(e: SyncEngine): { n: number } {
+	const seen = { n: 0 };
+	const real = (e as any).writeDriftConflictCopy.bind(e);
+	(e as any).writeDriftConflictCopy = (...args: unknown[]) => {
+		seen.n++;
+		return real(...args);
+	};
+	return seen;
+}
+
+/** B's state: the seed on disk at the old path with its own hash recorded,
+ *  and a head-only row already at the new path. */
+function seeded(e: SyncEngine, disk: Map<string, string>, text: string) {
+	disk.set("Proj/a.md", text);
+	(e as any).syncState.set("Proj/a.md", { hash: fnv1a(SEED), crdtHead: "h", seq: 3 });
+	(e as any).setCrdtHead("Done/a.md", "h2");
+}
+
+const twoWrites = (e: SyncEngine, text: string) =>
+	Promise.all([e.writeCrdtNote("Done/a.md", text), e.writeCrdtNote("Done/a.md", text)]);
+
+test("a just-pulled seed moved onto a head-only row is not an edit: no copy", async () => {
+	const { e, disk } = setup();
+	try {
+		seeded(e, disk, SEED);
+		await (e as any).createFileWithFolders("Done/a.md", SERVER);
+		expect(disk.get("Done/a.md")).toBe(SERVER);
+		expect(conflictCopies(disk)).toEqual([]);
+	} finally {
+		e.destroy();
+	}
+});
+
+test("two writes for that note at once: still no copy", async () => {
+	const { e, disk } = setup();
+	try {
+		seeded(e, disk, SEED);
+		const copies = countCopies(e);
+		await twoWrites(e, SERVER);
+		expect(copies.n).toBe(0);
+		expect(disk.get("Done/a.md")).toBe(SERVER);
+		expect(disk.has("Proj/a.md")).toBe(false);
+	} finally {
+		e.destroy();
+	}
+});
+
+// A REAL local edit with no push signal yet must still be kept, exactly once.
+// None of these has a queued upsert, a debounce timer, or a push in flight.
+const MINE = "# A\n\nalpha 107 mine\n";
+for (const [why, arrange] of [
+	[
+		"made during a pull (parked for the post-pull push)",
+		(e: SyncEngine) => {
+			(e as any).pulling = true;
+			(e as any).pendingPostPullPushes.add("Proj/a.md");
+		},
+	],
+	[
+		"made while sync was blocked (gate-modified, not journaled)",
+		(e: SyncEngine) => (e as any).gateModified.add("Proj/a.md"),
+	],
+	["made while Obsidian was closed (startup catch-up runs before the push sweep)", () => {}],
+] as const) {
+	test(`an unqueued edit ${why} is kept beside the server text, once`, async () => {
+		const { e, disk } = setup();
+		try {
+			seeded(e, disk, MINE);
+			arrange(e);
+			const copies = countCopies(e);
+			await twoWrites(e, SERVER);
+			expect(copies.n).toBe(1);
+			expect(disk.get("Done/a.md")).toBe(SERVER);
+			expect(conflictCopies(disk).map((k) => disk.get(k))).toEqual([MINE]);
+		} finally {
+			e.destroy();
+		}
+	});
+}
+
+// Review of #711 @ a93cd16d (MEDIUM): hash 0 also means "the server dropped
+// this frame, re-send" (clearPushedBaselineForId). A drop landing mid-move,
+// after the id map moved and before the file did, cleared the NEW path's row;
+// adopting the old path's hash into it then echo-skipped the re-send, and the
+// content never reached the server.
+test("a frame dropped mid-move stays cleared after the move: the content is re-sent", async () => {
+	const { e, disk } = setup();
+	try {
+		seeded(e, disk, SEED);
+		e.clearPushedBaselineForId("id-a"); // the map already says Done/a.md
+		await (e as any).createFileWithFolders("Done/a.md", SERVER);
+		expect((e as any).syncState.get("Done/a.md").hash).toBe(0);
+		// Nothing this device wrote is lost: its text is kept beside the server's.
+		expect([...disk.values()]).toContain(SEED);
+	} finally {
+		e.destroy();
+	}
+});
+
+test("the next recorded hash ends the deliberate clear", () => {
+	const { e } = setup();
+	try {
+		(e as any).setCrdtHead("Done/a.md", "h2");
+		e.clearPushedBaselineForId("id-a");
+		expect((e as any).syncState.get("Done/a.md").unbanked).toBe(true);
+		(e as any).setCrdtHead("Done/a.md", "h3"); // a head alone keeps it
+		expect((e as any).syncState.get("Done/a.md").unbanked).toBe(true);
+		(e as any).recordCrdtBaseline("Done/a.md", SERVER);
+		expect((e as any).syncState.get("Done/a.md").unbanked).toBeUndefined();
+		expect((e as any).syncState.get("Done/a.md").hash).toBe(fnv1a(SERVER));
+	} finally {
+		e.destroy();
+	}
+});
+
+test("a hash-0 row moved onto a head-only row leaves the destination untouched", () => {
+	const { e } = setup();
+	try {
+		(e as any).syncState.set("Proj/b.md", { hash: 0, crdtHead: "src" });
+		(e as any).setCrdtHead("Done/b.md", "dest");
+		const before = (e as any).syncState.get("Done/b.md");
+		(e as any).renamePath("Proj/b.md", "Done/b.md", "remote");
+		expect((e as any).syncState.get("Done/b.md")).toBe(before); // same object: not rewritten
+		expect((e as any).syncState.has("Proj/b.md")).toBe(false);
 	} finally {
 		e.destroy();
 	}

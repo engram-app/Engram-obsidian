@@ -3039,7 +3039,14 @@ export class SyncEngine {
 		withBase = false,
 	): void {
 		const before = this.syncState.get(path)?.hash;
-		this.syncState.set(path, { hash: 0, ...this.syncState.get(path), ...patch });
+		// A recorded hash ends a deliberate clear (`unbanked`).
+		const ends = patch.hash !== undefined && patch.unbanked === undefined;
+		this.syncState.set(path, {
+			hash: 0,
+			...this.syncState.get(path),
+			...(ends ? { unbanked: undefined } : {}),
+			...patch,
+		});
 		// Every CRDT-path baseline hash change goes through here. (`stampSyncedRow`
 		// also writes hashes, at REST, legacy, load-time import, CAS-seed and
 		// no-note_id backfill sites; none reaches a CRDT note with a base.) One
@@ -3100,7 +3107,21 @@ export class SyncEngine {
 		// note materialized twice" from "an unrelated note we are about to
 		// displace" — and overwriting the latter hands it a version that belongs
 		// to a different note, so its next write CASes against the wrong one.
-		if (this.syncState.has(to)) return;
+		const at = this.syncState.get(to);
+		if (at) {
+			// Except a head-only placeholder (`hash: 0`, what `setCrdtHead` leaves
+			// before any content is recorded): it claims no text, so the moved
+			// row's hash is still the only record of what this device last wrote
+			// there. Dropping it made a just-pulled seed read as an unpushed edit
+			// after an identity move, a false keep-both (e2e run 44242969664).
+			// Never a deliberate clear (`unbanked`): that row must re-send, and
+			// adopting the old hash would echo-skip the re-send.
+			if (at.hash === 0 && !at.unbanked && row.hash !== 0) {
+				this.syncState.set(to, { ...at, hash: row.hash });
+				this.noteRowWrite(to);
+			}
+			return;
+		}
 		const { relocating: _, ...kept } = row;
 		this.syncState.set(to, origin === "local" ? { ...kept, relocating: true } : kept);
 		this.noteRowWrite(to);
@@ -3162,7 +3183,7 @@ export class SyncEngine {
 	clearPushedBaselineForId(docId: string): void {
 		const path = this.noteIdMap?.pathForId(docId);
 		if (!path) return;
-		this.patchSyncedRow(normalizePath(path), { hash: 0 });
+		this.patchSyncedRow(normalizePath(path), { hash: 0, unbanked: true });
 	}
 
 	/** `ProviderRegistry.awaitsServerState` for a path. */
@@ -3820,6 +3841,9 @@ export class SyncEngine {
 		 *  instead of sleeping through it. */
 		private time: TimeProvider = new DefaultTimeProvider(),
 	) {
+		this.identityMoves = new KeyedSerial(this.time, STREAM_EVENT_STALL_MS, () =>
+			rlog().warn("pull", `Identity move still running after ${STREAM_EVENT_STALL_MS}ms`),
+		);
 		this.serial = new KeyedSerial(this.time, STREAM_EVENT_STALL_MS, (lane) =>
 			rlog().warn(
 				"ws",
@@ -10629,6 +10653,14 @@ export class SyncEngine {
 	 *  a note_id for that note's fan-outs (see `applyPushedNoteUpdate`). A lane
 	 *  whose task hangs is released after STREAM_EVENT_STALL_MS. */
 	private readonly serial: KeyedSerial;
+	/** One identity move at a time per target path (`createFileWithFolders`).
+	 *  Separate from `serial`: a fan-out already runs inside its note's
+	 *  `serial` lane and writes from there, so sharing it would wait on
+	 *  itself. Only the move step: overlapping writes are otherwise allowed
+	 *  and settled by the in-flight registry (#578). Two inbound writes for
+	 *  one note (e2e run 44242969664) each followed the move and each kept a
+	 *  conflict copy. */
+	private readonly identityMoves: KeyedSerial;
 	/** Handle a WebSocket stream event (upsert or delete), STRICTLY IN ARRIVAL
 	 *  ORDER — one event's application completes before the next begins.
 	 *
@@ -13421,30 +13453,28 @@ export class SyncEngine {
 		// the map has already been moved, so it answers `normalized` for this id
 		// and the old name is gone from it. `relocatedFrom` is the only remaining
 		// record, captured at the instant identity moved.
-		const cameFrom =
-			this.relocatedFrom.get(normalized)?.from ?? this.staleOriginFor(normalized);
-		if (cameFrom && cameFrom !== normalized) {
+		// One at a time per target: a second write for the same note re-checks
+		// after the first moved the file, finds nothing left to move, and
+		// takes the create below (its race fallback modifies the moved file).
+		const followed = await this.identityMoves.run(normalized, async () => {
+			const cameFrom =
+				this.relocatedFrom.get(normalized)?.from ?? this.staleOriginFor(normalized);
+			if (!cameFrom || cameFrom === normalized) return undefined;
 			const existing = this.app.vault.getFileByPath?.(cameFrom);
-			if (existing && !this.app.vault.getAbstractFileByPath?.(normalized)) {
-				await this.renameFollowingIdentity(cameFrom, normalized);
-				// Re-check rather than assume: a failed move falls through to the
-				// create below, which is the old behaviour and still converges.
-				const moved = this.app.vault.getFileByPath?.(normalized);
-				if (moved) {
-					const kept = await this.keepUnpushedEditOnMove(
-						cameFrom,
-						normalized,
-						moved,
-						content,
-					);
-					if (kept !== null) return kept;
-					const text = await this.textForWrite(content, latest, mark);
-					await this.modifyFile(moved, text);
-					this.rememberFileFor(normalized);
-					return text;
-				}
-			}
-		}
+			if (!existing || this.app.vault.getAbstractFileByPath?.(normalized)) return undefined;
+			await this.renameFollowingIdentity(cameFrom, normalized);
+			// Re-check rather than assume: a failed move falls through to the
+			// create below, which is the old behaviour and still converges.
+			const moved = this.app.vault.getFileByPath?.(normalized);
+			if (!moved) return undefined;
+			const kept = await this.keepUnpushedEditOnMove(cameFrom, normalized, moved, content);
+			if (kept !== null) return kept;
+			const text = await this.textForWrite(content, latest, mark);
+			await this.modifyFile(moved, text);
+			this.rememberFileFor(normalized);
+			return text;
+		});
+		if (followed !== undefined) return followed;
 		try {
 			const text = await this.textForWrite(content, latest, mark);
 			await this.app.vault.create(normalized, text);
