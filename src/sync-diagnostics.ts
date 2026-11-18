@@ -33,7 +33,7 @@ export function reportPlanLoadFailure(e: unknown): void {
 	rlog().anomaly("sync", "preview_failed", status === undefined ? {} : { status }, "other");
 }
 
-/** Shortest gap between two join lines, and the most distinct rejection
+/** Shortest gap between two join REJECTION lines, and the most distinct
  *  reasons logged before a join succeeds. A reject/join flap is bounded by
  *  both, whatever the retry cadence. */
 const JOIN_LOG_COOLDOWN_MS = 60_000;
@@ -41,21 +41,27 @@ const MAX_REJECT_REASONS = 5;
 
 /** Outcome of the `crdt:` topic join. Logs what a query needs and nothing on
  *  the steady state: each distinct rejection reason once until a join
- *  succeeds, the first join of the session, and a join that follows a
- *  rejection. At most one line per cooldown window. */
+ *  succeeds (at most one per cooldown window), the first join of the session,
+ *  and the recovery after a rejection that was actually logged. The recovery
+ *  always logs: it is the state transition an incident needs, and it can only
+ *  follow a rejection line, so it cannot add to the flap bound. Worst case is
+ *  2 lines per cooldown window. */
 export function createJoinReporter(now: () => number = Date.now) {
 	let everJoined = false;
 	let rejections = 0;
+	let rejectionLogged = false;
 	let lastLoggedAt = Number.NEGATIVE_INFINITY;
 	const seen = new Set<string>();
+	// A backward clock jump counts as elapsed, never as "still cooling down".
 	const due = () => {
-		if (now() - lastLoggedAt < JOIN_LOG_COOLDOWN_MS) return false;
-		lastLoggedAt = now();
+		const t = now();
+		if (t >= lastLoggedAt && t - lastLoggedAt < JOIN_LOG_COOLDOWN_MS) return false;
+		lastLoggedAt = t;
 		return true;
 	};
 	return {
 		joined(): void {
-			if ((!everJoined || rejections > 0) && due()) {
+			if (!everJoined || rejectionLogged) {
 				rlog().anomaly("crdt", "crdt_joined", {
 					first: !everJoined,
 					after_rejections: rejections,
@@ -63,6 +69,7 @@ export function createJoinReporter(now: () => number = Date.now) {
 			}
 			everJoined = true;
 			rejections = 0;
+			rejectionLogged = false;
 			seen.clear();
 		},
 		rejected(reason: string | undefined, min?: number): void {
@@ -70,6 +77,7 @@ export function createJoinReporter(now: () => number = Date.now) {
 			rejections += 1;
 			if (seen.has(slug) || seen.size >= MAX_REJECT_REASONS || !due()) return;
 			seen.add(slug);
+			rejectionLogged = true;
 			const counts: AnomalyCounts = min !== undefined && Number.isFinite(min) ? { min } : {};
 			rlog().anomaly("crdt", "crdt_join_rejected", counts, slug);
 		},
@@ -94,16 +102,28 @@ const parentOf = (path: string) => path.split("/").slice(0, -1).join("/");
 
 const BURST_QUIET_MS = 1_000;
 
+/** The slice of TimeProvider the reporters need, so the owner's clock and
+ *  timer registry drive them and a test advances time instead of sleeping. */
+export type DiagnosticsClock = {
+	now(): number;
+	setTimeout(callback: () => void, ms: number): number;
+	clearTimeout(id: number): void;
+};
+
 /** Folder renames, one line per burst. Obsidian fires a rename for the folder
- *  and again for every nested subfolder, so a descendant of the burst's root
- *  is counted, not logged. The line goes out once the burst goes quiet (or on
- *  `flush`). Never logged before, which left "extra unnamed folder after a
- *  rename" with no first event to find. */
-export function createFolderRenameReporter() {
+ *  and again for every nested subfolder, so a rename that is exactly the
+ *  root's move applied to a descendant (same relative path under the new
+ *  root) is counted, not logged; any other rename, even under the same
+ *  folder, is its own line. The line goes out once the burst goes quiet.
+ *  `clear` flushes and cancels the timer: register it with the owner's sweep
+ *  registry so unload and a vault switch never strand a pending line.
+ *  Never logged before, which left "extra unnamed folder after a rename" with
+ *  no first event to find. */
+export function createFolderRenameReporter(clock: DiagnosticsClock) {
 	let root: { from: string; to: string; children: number; descendants: number } | null = null;
 	let timer: number | null = null;
-	const flush = () => {
-		if (timer !== null) window.clearTimeout(timer);
+	const clear = () => {
+		if (timer !== null) clock.clearTimeout(timer);
 		timer = null;
 		if (!root) return;
 		const { from, to, children, descendants } = root;
@@ -118,40 +138,44 @@ export function createFolderRenameReporter() {
 	};
 	return {
 		rename(from: string, to: string, children: number): void {
-			if (root && from.startsWith(`${root.from}/`)) {
+			const isDescendantMove =
+				root !== null &&
+				from.startsWith(`${root.from}/`) &&
+				to === root.to + from.slice(root.from.length);
+			if (root && isDescendantMove) {
 				root.descendants += 1;
 			} else {
-				flush();
+				clear();
 				root = { from, to, children, descendants: 0 };
 			}
-			if (timer !== null) window.clearTimeout(timer);
-			timer = window.setTimeout(flush, BURST_QUIET_MS);
+			if (timer !== null) clock.clearTimeout(timer);
+			timer = clock.setTimeout(clear, BURST_QUIET_MS);
 		},
-		flush,
+		clear,
 	};
 }
 
-const folderRenames = createFolderRenameReporter();
-export const reportFolderRename = folderRenames.rename;
-export const flushFolderRenames = folderRenames.flush;
-
-const RATE_LINES_PER_HOUR = 12; // 6 start/clear pairs
+/** Data lines allowed per hour: 6 start/clear pairs. Marker lines are extra,
+ *  so the real ceiling is RATE_LINES_PER_HOUR + 2 (one marker when the cap is
+ *  first hit, one carrying the final dropped count into the next hour). */
+const RATE_LINES_PER_HOUR = 12;
 const HOUR_MS = 3_600_000;
 
 /** 429 start/clear lines, hard-capped per hour so a server that keeps
- *  answering 429 cannot turn every device into a Loki firehose. Past the cap
- *  one `rate_limit_log_suppressed` line says so, and the next hour reports how
- *  many were dropped. `scope` is a developer slug, `retryAfterMs` what the
- *  server asked (absent when it sent none), `waitMs` what we will wait. */
-export function createRateLimitReporter(now: () => number = Date.now) {
+ *  answering 429 cannot turn every device into a Loki firehose. `scope` is a
+ *  developer slug, `retryAfterMs` what the server asked (absent when it sent
+ *  none), `waitMs` what we will wait. `now` is the owner's injected clock; a
+ *  backward jump resets the window rather than freezing it. */
+export function createRateLimitReporter(now: () => number) {
 	let windowStart = Number.NEGATIVE_INFINITY;
 	let used = 0;
 	let dropped = 0;
 	const take = (): boolean => {
-		if (now() - windowStart >= HOUR_MS) {
-			if (dropped > 0)
+		const t = now();
+		if (t < windowStart || t - windowStart >= HOUR_MS) {
+			if (dropped > 1)
 				rlog().anomaly("push", "rate_limit_log_suppressed", { count: dropped });
-			windowStart = now();
+			windowStart = t;
 			used = 0;
 			dropped = 0;
 		}
@@ -159,8 +183,9 @@ export function createRateLimitReporter(now: () => number = Date.now) {
 			used += 1;
 			return true;
 		}
-		if (dropped === 0) rlog().anomaly("push", "rate_limit_log_suppressed", { count: 0 });
 		dropped += 1;
+		// First drop of the window: say so now, with the exact count so far.
+		if (dropped === 1) rlog().anomaly("push", "rate_limit_log_suppressed", { count: 1 });
 		return false;
 	};
 	return {
@@ -177,10 +202,6 @@ export function createRateLimitReporter(now: () => number = Date.now) {
 		},
 	};
 }
-
-const rateLimits = createRateLimitReporter();
-export const reportRateLimited = rateLimits.limited;
-export const reportRateLimitCleared = rateLimits.cleared;
 
 /** A folder delete entered the retry set. Edge-triggered by the caller: once
  *  per folder, not once per retry. `pending` is how many are now waiting. */
