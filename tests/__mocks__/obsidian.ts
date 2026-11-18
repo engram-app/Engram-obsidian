@@ -421,6 +421,8 @@ export class MarkdownView {
  *  needs to exist so `import { editorInfoField } from "obsidian"` resolves. */
 export const editorInfoField = { __editorInfoField: true } as const;
 
+export const apiVersion = "1.8.10";
+
 export const Platform = {
 	isMobile: false,
 	isMobileApp: false,

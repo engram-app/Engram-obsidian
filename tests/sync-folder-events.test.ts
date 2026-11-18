@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:t
 import { TFile, TFolder } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { ExplicitFolders } from "../src/explicit-folders";
+import { initRemoteLog, rlog } from "../src/remote-log";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -528,5 +529,73 @@ describe("failed-delete and seed-cooldown memory lifecycle", () => {
 		await engine.resetForVaultChange();
 		await engine.seedEmptyFolders();
 		expect(mockApi.createFolder).toHaveBeenCalledTimes(2);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Always-on outcome lines (Loki-diagnosable mobile reports)
+// ---------------------------------------------------------------------------
+
+describe("forced diagnostics from the engine", () => {
+	let lines: string[] = [];
+	beforeEach(() => {
+		lines = [];
+		initRemoteLog().configure(
+			async (entries) => {
+				lines.push(...entries.map((e) => e.message));
+			},
+			"1.0.0",
+			"mobile",
+		);
+	});
+	const shipped = async () => {
+		await rlog().flush();
+		return lines;
+	};
+
+	test("a folder rename is logged with counts, never the path", async () => {
+		const { engine } = await createEngine();
+		await engine.handleRename(
+			new TFolder("Projects/New", [new TFile("Projects/New/a.md")]),
+			"Projects/Old",
+		);
+		expect(await shipped()).toContain(
+			"folder_renamed children=1 same_parent=true depth_from=2 depth_to=2",
+		);
+	});
+
+	test("a 429 on folder seeding logs the cooldown and what the server asked", async () => {
+		const { engine } = await createEngine();
+		mockApp.vault.getAllLoadedFiles = mock().mockReturnValue([new TFolder("A", [])]);
+		(mockApi.createFolder as jest.Mock).mockReset().mockRejectedValue(
+			Object.assign(new Error("Request failed, status 429"), {
+				status: 429,
+				headers: { "Retry-After": "30" },
+			}),
+		);
+		await engine.seedEmptyFolders();
+		expect(await shipped()).toContain(
+			"rate_limited reason=folder_seed streak=1 wait_s=30 retry_after_s=30",
+		);
+	});
+
+	test("a failed folder delete logs status and how many are pending", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("Gone");
+		(mockApi.deleteFolder as jest.Mock).mockReset().mockRejectedValue({ status: 504 });
+		await engine.handleFolderDelete({ path: "Gone" });
+		expect(await shipped()).toContain("folder_delete_failed reason=push pending=1 status=504");
+	});
+
+	test("gate transitions log once per change with their reason", async () => {
+		const { engine } = await createEngine();
+		engine.setSyncBlocked(true, "vault_switch");
+		engine.setSyncBlocked(true, "vault_switch"); // no change, no line
+		engine.setSyncBlocked(false, "user_accepted");
+		const gate = (await shipped()).filter((l) => l.startsWith("sync_gate_"));
+		expect(gate).toEqual([
+			"sync_gate_closed reason=vault_switch",
+			expect.stringMatching(/^sync_gate_open reason=user_accepted waited_s=\d+$/),
+		] as string[]);
 	});
 });

@@ -80,6 +80,13 @@ import { formatBytes } from "./plan-usage";
 import { PreviewUnavailableError } from "./preview-error";
 import { rlog } from "./remote-log";
 import { Semaphore } from "./semaphore";
+import {
+	reportFolderDeleteFailed,
+	reportFolderRename,
+	reportGateTransition,
+	reportRateLimitCleared,
+	reportRateLimited,
+} from "./sync-diagnostics";
 import type { SyncLog } from "./sync-log";
 import { SyncedFileTable } from "./synced-file";
 import { DefaultTimeProvider, type TimeProvider } from "./time-provider";
@@ -3929,7 +3936,11 @@ export class SyncEngine {
 		}
 	}
 
-	setSyncBlocked(blocked: boolean): void {
+	setSyncBlocked(blocked: boolean, reason = "unspecified"): void {
+		if (blocked !== this.syncBlocked) {
+			const waitedMs = blocked ? null : this.blockedForMs();
+			reportGateTransition(blocked, reason, waitedMs === null ? undefined : waitedMs / 1000);
+		}
 		this.syncBlocked = blocked;
 		this.blockedSince = blocked ? (this.blockedSince ?? performance.now()) : null;
 		// Re-arm the announcement on every transition, so a LATER closure (a
@@ -7240,7 +7251,10 @@ export class SyncEngine {
 			this.reportBlockedEdit();
 		}
 		// A folder renamed onto a path whose delete failed earlier now exists.
-		if (file instanceof TFolder) this.failedFolderDeletes.delete(cleanFolderPath(file.path));
+		if (file instanceof TFolder) {
+			this.failedFolderDeletes.delete(cleanFolderPath(file.path));
+			reportFolderRename(oldPath, file.path, file.children.length);
+		}
 		if (!this.isSyncable(file)) return;
 
 		// ECHO GUARD: this rename is the engine's own, applied to follow a remote
@@ -7553,6 +7567,7 @@ export class SyncEngine {
 			// The server still lists the marker; remember it so the next pull does
 			// not recreate the folder the user just deleted (syncExplicitFolders).
 			this.failedFolderDeletes.add(path);
+			reportFolderDeleteFailed("push", this.failedFolderDeletes.size, e);
 			devLog().log("push", `deleteFolder("${path}") failed: ${errMsg(e)}`);
 			rlog().warn("push", `deleteFolder("${noteRef(path)}") failed: ${errMsg(e, path)}`);
 		} finally {
@@ -7591,6 +7606,7 @@ export class SyncEngine {
 				const resp = await this.api.createFolder(path);
 				this.learnFolderChain(resp?.folders);
 				await this.explicitFolders.add(path);
+				reportRateLimitCleared("folder_seed", this.folderSeedStreak);
 				this.folderSeedStreak = 0;
 			} catch (e) {
 				devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
@@ -7602,17 +7618,18 @@ export class SyncEngine {
 				// Stop and wait what the server asked (floored, as deferRateLimited).
 				if (categorizeError(e).rateLimited) {
 					this.folderSeedStreak += 1;
-					this.folderSeedNotBefore =
-						this.time.now() +
-						Math.max(
-							RATE_LIMIT_FLOOR_MS,
-							retryAfterMs(e, this.time.now()) ??
-								expBackoff(
-									OFFLINE_RETRY_BASE_MS,
-									this.folderSeedStreak - 1,
-									OFFLINE_RETRY_MAX_MS,
-								),
-						);
+					const asked = retryAfterMs(e, this.time.now());
+					const wait = Math.max(
+						RATE_LIMIT_FLOOR_MS,
+						asked ??
+							expBackoff(
+								OFFLINE_RETRY_BASE_MS,
+								this.folderSeedStreak - 1,
+								OFFLINE_RETRY_MAX_MS,
+							),
+					);
+					this.folderSeedNotBefore = this.time.now() + wait;
+					reportRateLimited("folder_seed", this.folderSeedStreak, wait, asked);
 					return;
 				}
 			}
@@ -14094,6 +14111,7 @@ export class SyncEngine {
 					await this.api.deleteFolder(name);
 					this.failedFolderDeletes.delete(name);
 				} catch (e) {
+					reportFolderDeleteFailed("pull", this.failedFolderDeletes.size, e);
 					devLog().log("pull", `deleteFolder retry(${name}) failed: ${errMsg(e)}`);
 				}
 				continue;
@@ -15386,6 +15404,10 @@ export class SyncEngine {
 			classified.retryAfterMs ??
 				expBackoff(OFFLINE_RETRY_BASE_MS, this.rateLimitStreak - 1, OFFLINE_RETRY_MAX_MS),
 		);
+		// Start of a storm only: a long one would otherwise log per entry.
+		if (this.rateLimitStreak === 1) {
+			reportRateLimited("push", this.rateLimitStreak, wait, classified.retryAfterMs);
+		}
 		await this.queue.enqueue({
 			...entry,
 			priority: entry.priority ?? this.priorityForPath(entry.path),
@@ -16212,6 +16234,7 @@ export class SyncEngine {
 				}
 				await this.queue.dequeue(entry);
 				this.issues.clear(entry.path);
+				reportRateLimitCleared("push", this.rateLimitStreak);
 				this.rateLimitStreak = 0;
 				flushed++;
 			} catch (e) {

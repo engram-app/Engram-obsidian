@@ -1,6 +1,7 @@
-import { Platform } from "obsidian";
+import { apiVersion, Platform } from "obsidian";
 import { devLog } from "./dev-log";
 import { errMsg } from "./error-util";
+import type { ClientContext } from "./remote-log";
 
 /** The backend drops a suggestion longer than this. */
 const MAX_NAME_CHARS = 64;
@@ -61,4 +62,12 @@ export async function suggestDeviceName(
 		return "Linux PC";
 	}
 	return undefined;
+}
+
+/** OS class and Obsidian version for the remote log. Platform flags only, never
+ *  a user agent string, so nothing identifying leaves the device. Android and
+ *  iOS are told apart here because `platform: "mobile"` cannot. */
+export function clientContext(): ClientContext {
+	const os = Platform.isAndroidApp ? "android" : Platform.isIosApp ? "ios" : "desktop";
+	return { os, app_version: apiVersion };
 }
