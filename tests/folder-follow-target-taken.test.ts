@@ -24,7 +24,14 @@ afterEach(() => {
 const OLD = "E2E/Edit107";
 const NEW = "E2E/Edit107-done";
 
-async function setup() {
+interface Opts {
+	/** The target folder exists before the follow, holding these files (path -> note id). */
+	before?: Record<string, string>;
+	/** File renames that throw. */
+	failing?: string[];
+}
+
+async function setup(opts: Opts = {}) {
 	const tree = new Map<string, TFolder | TFile>();
 	const parentOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 	const attach = (f: TFolder | TFile) => {
@@ -40,6 +47,10 @@ async function setup() {
 	for (const p of ["E2E", OLD, `${OLD}/sub`]) attach(new TFolder(p, []));
 	attach(new TFile(`${OLD}/a.md`));
 	attach(new TFile(`${OLD}/sub/b.md`));
+	if (opts.before) {
+		attach(new TFolder(NEW, []));
+		for (const p of Object.keys(opts.before)) attach(new TFile(p));
+	}
 	const app = {
 		vault: {
 			configDir: ".obsidian",
@@ -55,6 +66,7 @@ async function setup() {
 				if (f instanceof TFolder || tree.has(to)) {
 					throw new Error("Destination file already exists!");
 				}
+				if (opts.failing?.includes(f.path)) throw new Error("EBUSY");
 				detach(f.path);
 				(f as { path: string }).path = to;
 				attach(f);
@@ -80,6 +92,7 @@ async function setup() {
 	const ids = new NoteIdMap();
 	ids.set(`${OLD}/a.md`, "na");
 	ids.set(`${OLD}/sub/b.md`, "nb");
+	for (const [p, id] of Object.entries(opts.before ?? {})) ids.set(p, id);
 	ids.flushNow();
 	engine.setCrdtPorts({ noteIdMap: ids });
 	engine.learnFolders([
@@ -92,7 +105,7 @@ async function setup() {
 	let raced = false;
 	(engine as any).ensureFolder = async (p: string) => {
 		await ensure(p);
-		if (p === "E2E" && !raced) {
+		if (p === "E2E" && !raced && !opts.before) {
 			raced = true;
 			await app.vault.createFolder(NEW);
 		}
@@ -112,4 +125,33 @@ test("a folder rename refused by a taken target keeps the server's paths and mov
 	expect(tree.has(`${NEW}/a.md`)).toBe(true);
 	expect(tree.has(OLD)).toBe(false);
 	expect(engine.folderOps.index.pathFor("fD")).toBe(NEW);
+});
+
+// Review @ 5d066bc1 HIGH: a target that exists BEFORE the follow, holding a
+// DIFFERENT note at the same name. Re-keying onto it evicted that note's id
+// from the shared index and handed its file to the moved note.
+test("a different note already at the new name keeps its id; the moved note lands as a conflict copy", async () => {
+	const { engine, ids, tree } = await setup({ before: { [`${NEW}/a.md`]: "nY" } });
+	await engine.onFolderChanged({ id: "fD", parent_id: "fE", name: "Edit107-done", seq: 9 });
+	ids.flushNow();
+	expect(ids.pathForId("nY")).toBe(`${NEW}/a.md`);
+	expect(ids.get(`${NEW}/a.md`)).toBe("nY");
+	const copy = ids.pathForId("na");
+	expect(copy).toMatch(/^E2E\/Edit107-done\/a \(conflict .+\)\.md$/);
+	expect(tree.has(copy!)).toBe(true);
+	expect(ids.pathForId("nb")).toBe(`${NEW}/sub/b.md`);
+	expect(tree.has(`${NEW}/sub/b.md`)).toBe(true);
+	expect(tree.has(OLD)).toBe(false);
+});
+
+// Review @ 5d066bc1 MEDIUM: an id must not run ahead of its file. A file whose
+// move throws keeps its id where the file is, and no old path is published.
+test("a file whose move throws keeps its id where the file is", async () => {
+	const { engine, ids, tree } = await setup({ before: {}, failing: [`${OLD}/sub/b.md`] });
+	await engine.onFolderChanged({ id: "fD", parent_id: "fE", name: "Edit107-done", seq: 9 });
+	ids.flushNow();
+	expect(tree.has(`${OLD}/sub/b.md`)).toBe(true);
+	expect(ids.pathForId("nb")).toBe(`${OLD}/sub/b.md`);
+	expect(ids.pathForId("na")).toBe(`${NEW}/a.md`);
+	expect(tree.has(`${NEW}/a.md`)).toBe(true);
 });
