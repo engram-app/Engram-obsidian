@@ -6763,7 +6763,15 @@ export class SyncEngine {
 		const index = this.folderOps.index;
 		if (!at && !change.deleted && !this.resolvingFolders) {
 			const known = this.folderMovePaths(change);
-			if ((known.from === null || known.to === null) && (await this.followUnknownFolder()))
+			// Already where the server puts it: nothing to find, no fetch.
+			const inPlace =
+				known.to !== null &&
+				this.app.vault.getAbstractFileByPath(known.to) instanceof TFolder;
+			if (
+				(known.from === null || known.to === null) &&
+				!inPlace &&
+				(await this.followUnknownFolder())
+			)
 				return;
 		}
 		const { from, to } = at ?? this.folderMovePaths(change);

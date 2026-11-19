@@ -123,3 +123,11 @@ test("a known folder still moves from the index without a manifest fetch", async
 	expect(renames).toEqual([[`${ROOT}/src`, `${ROOT}/dst`]]);
 	expect(api.getManifest).not.toHaveBeenCalled();
 });
+
+test("an unknown folder already where the server puts it needs no manifest fetch", async () => {
+	const { engine, renames, api } = await setup(async () => null);
+	await engine.onFolderChanged({ id: "fE", parent_id: null, name: "E2E", seq: 9 });
+	expect(api.getManifest).not.toHaveBeenCalled();
+	expect(renames).toEqual([]);
+	expect(engine.folderOps.index.pathFor("fE")).toBe("E2E");
+});
