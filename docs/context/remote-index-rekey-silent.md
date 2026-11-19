@@ -37,9 +37,11 @@ feed, nothing ever corrected it.
 - The resolver asks where the note's FILE is (`fileOfNote`): the relocation
   record, else `staleOriginFor` (disk + sync evidence + no other claimant). Then
   the folder follows as ONE `vault.rename`.
-- A failed folder rename must not reverse-rekey ids the server already moved
-  (asked by id, so data.json-seeded notes count): putting them back publishes the
-  old path and undoes the server's move.
+- A followed folder rename that fails or finds its target taken must NOT put
+  the bookkeeping back: the id-map leg is a claim in the index the server
+  projects from, so it undid the server's move on every device (test_107
+  offline edit, feed off: the sibling note was repathed back to the old folder).
+  The bookkeeping stays at the new paths and each file follows on its own.
 
 ## Gotchas
 - `noteRef` labels (`n1`, `n2`) are numbered PER DEVICE. Comparing labels across
