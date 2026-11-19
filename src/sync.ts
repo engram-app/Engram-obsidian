@@ -6640,48 +6640,6 @@ export class SyncEngine {
 				// notes live on this device says where the folder is.
 				local ??= this.localFolderPaths(manifest);
 				const was = local.get(at);
-				if (row.id === live?.id)
-					rlog().warn(
-						"pull",
-						`TEMP unknown-folder resolve at=${noteRef(at)} was=${was === undefined ? "none" : noteRef(was)} map=${local.size}`,
-					); // TEMP 715
-				if (row.id === live?.id) {
-					// TEMP 715: every manifest note under the moved folder, where A has its id.
-					const under = (manifest?.notes ?? []).filter((n) =>
-						n.path.startsWith(`${at}/`),
-					);
-					const mseq = manifest?.change_seq;
-					const eseq = live?.seq;
-					const all = manifest?.notes ?? [];
-					const ids = this.noteIdMap;
-					const noEntry = all.filter((n) => n.id && ids?.pathForId(n.id) === null).length;
-					const differ = all.filter((n) => {
-						const m = n.id ? ids?.pathForId(n.id) : null;
-						return m != null && m !== n.path;
-					}).length;
-					rlog().warn(
-						"pull",
-						`TEMP unknown-folder ids noEntry=${noEntry} differ=${differ} total=${all.length}`,
-					); // TEMP 715
-					rlog().warn(
-						"pull",
-						`TEMP unknown-folder seqs manifest=${mseq} event=${eseq} under=${under.length}`,
-					); // TEMP 715
-					for (const n of under.slice(0, 5)) {
-						const mine = n.id ? this.noteIdMap?.pathForId(n.id) : undefined;
-						const here =
-							mine === undefined
-								? "no id"
-								: mine === null
-									? "no entry"
-									: noteRef(mine);
-						const id = n.id ?? "none";
-						rlog().warn(
-							"pull",
-							`TEMP unknown-folder note id=${id} manifest=${noteRef(n.path)} local=${here}`,
-						); // TEMP 715
-					}
-				}
 				if (was === undefined) continue;
 				this.learnAncestors(row, server);
 				// The move's seq fences stale rows naming the old path: the live
@@ -6745,15 +6703,7 @@ export class SyncEngine {
 	private async followUnknownFolder(change: FolderChange): Promise<boolean> {
 		this.resolvingFolders = true;
 		try {
-			rlog().warn(
-				"pull",
-				`TEMP unknown-folder enter id=${change.id} parent=${change.parent_id}`,
-			); // TEMP 715
 			const manifest = await this.api.getManifest();
-			rlog().warn(
-				"pull",
-				`TEMP unknown-folder manifest folders=${manifest?.folders?.length} notes=${manifest?.notes?.length} blocked=${this.syncBlocked}`,
-			); // TEMP 715
 			if (!manifest?.folders) return false;
 			await this.syncManifestFolders(manifest, change);
 			return true;
@@ -6842,21 +6792,9 @@ export class SyncEngine {
 			this.shouldIgnore(to) ||
 			this.app.vault.getAbstractFileByPath(to)
 		) {
-			const isDir = folder instanceof TFolder; // TEMP 715
-			const taken = to !== null && !!this.app.vault.getAbstractFileByPath(to); // TEMP 715
-			if (at)
-				rlog().warn(
-					"pull",
-					`TEMP unknown-folder skip from=${from === null ? "null" : noteRef(from)} to=${to === null ? "null" : noteRef(to)} isDir=${isDir} occupied=${taken}`,
-				); // TEMP 715
 			return this.applyFolderChange(change, at);
 		}
 		const moved = this.descendantMoves(from, to);
-		if (at)
-			rlog().warn(
-				"pull",
-				`TEMP unknown-folder follow ${noteRef(from)} -> ${noteRef(to)} moved=${moved.length}`,
-			); // TEMP 715
 		this.rekeyMoved(moved, false);
 		// The index moves BEFORE the rename: Obsidian fires the folder's own
 		// rename event inside it, and the echo rule must already read it at `to`.
