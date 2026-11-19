@@ -239,3 +239,53 @@ test("a failed folder rename does not undo an id the server already re-keyed", a
 	expect(ids.pathForId("n1")).toBe(`${ROOT}/dst/n.md`);
 	expect(doc.getMap<any>("filemeta_v0").get(`${ROOT}/src/n.md`)).toBeUndefined();
 });
+
+// Delta review @ 57002bcf MED: on a restart or offline catch-up the index room
+// starts empty, so the server's re-key lands as adds only and no move is
+// recorded. The folder must still be placed from where this engine last put
+// the note's file.
+test("a re-key seen only as a catch-up add still moves the unknown folder", async () => {
+	const { engine, renames } = await setup(
+		async () => ({
+			notes: [{ id: "n1", path: `${ROOT}/dst/n.md`, content_hash: "h" }],
+			attachments: [],
+			total_notes: 1,
+			total_attachments: 0,
+			folders: FOLDERS,
+		}),
+		"prod",
+	);
+	const e = engine as any;
+	const ids = new NoteIdMap();
+	ids.seed({ [`${ROOT}/src/n.md`]: "n1" });
+	e.setCrdtPorts({ noteIdMap: ids });
+	e.syncState.set(`${ROOT}/src/n.md`, { hash: 1 });
+	const server = new Y.Doc();
+	server.getMap<any>("filemeta_v0").set(`${ROOT}/dst/n.md`, { note_id: "n1" });
+	Y.applyUpdate(ids.store.doc!, Y.encodeStateAsUpdate(server), "remote");
+	expect(ids.pathForId("n1")).toBe(`${ROOT}/dst/n.md`);
+	await engine.onFolderChanged({ id: "fD", parent_id: "fR", name: "dst", seq: 9 });
+	expect(renames).toEqual([[`${ROOT}/src`, `${ROOT}/dst`]]);
+});
+
+test("the resolver never takes a path another note claims", async () => {
+	const { engine, renames } = await setup(
+		async () => ({
+			notes: [{ id: "n1", path: `${ROOT}/dst/n.md`, content_hash: "h" }],
+			attachments: [],
+			total_notes: 1,
+			total_attachments: 0,
+			folders: FOLDERS,
+		}),
+		"prod",
+	);
+	const e = engine as any;
+	const ids = new NoteIdMap();
+	ids.set(`${ROOT}/src/n.md`, "other");
+	ids.set(`${ROOT}/dst/n.md`, "n1");
+	ids.flushNow();
+	e.setCrdtPorts({ noteIdMap: ids });
+	e.rememberRelocation(`${ROOT}/src/n.md`, `${ROOT}/dst/n.md`);
+	await engine.onFolderChanged({ id: "fD", parent_id: "fR", name: "dst", seq: 9 });
+	expect(renames).toEqual([]);
+});

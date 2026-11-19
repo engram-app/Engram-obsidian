@@ -188,8 +188,11 @@ export class SyncStore {
 	 *  Keyed on the DELETE of the old key, the one moment both paths are known
 	 *  without a scan: the old path from the event, the new one from the map.
 	 *  Same transaction as the add, or a later one (the server's own order),
-	 *  both land here. The new path must be a committed claim: a staged local
-	 *  claim outranks it and `set` already reported that move. Local
+	 *  both land here (a delete BEFORE the add, or an add still pending behind a
+	 *  gap, is not paired: ponytail, keep `id -> from` until the add if the
+	 *  server ever orders it that way; the resolver's disk fallback covers
+	 *  the folder case). The new path must be a committed claim: a staged
+	 *  local claim outranks it and `set` already reported that move. Local
 	 *  transactions publish what `set` already reported, so they are skipped.
 	 *  O(keys in the update), plus the index rebuild the next read pays anyway. */
 	private reportRemoteMoves(event: Y.YMapEvent<FileMeta>): void {

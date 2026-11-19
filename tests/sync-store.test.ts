@@ -599,8 +599,8 @@ describe("a remote re-key of an id reports the move", () => {
 		const sm = server.getMap<any>("filemeta_v0");
 		const pull = () =>
 			Y.applyUpdate(doc, Y.encodeStateAsUpdate(server, Y.encodeStateVector(doc)), "remote");
-		const moves: [string, string, string][] = [];
-		store.onRelocate = (from, to, id) => moves.push([from, to, id]);
+		const moves: [string, string, string, boolean | undefined][] = [];
+		store.onRelocate = (from, to, id, remote) => moves.push([from, to, id, remote]);
 		return { store, doc, map, sm, pull, moves };
 	}
 
@@ -613,7 +613,7 @@ describe("a remote re-key of an id reports the move", () => {
 			sm.set("dst/n.md", { note_id: "n1" });
 		});
 		pull();
-		expect(moves).toEqual([["src/n.md", "dst/n.md", "n1"]]);
+		expect(moves).toEqual([["src/n.md", "dst/n.md", "n1", true]]);
 	});
 
 	test("the add and the delete arriving as separate updates, add first", () => {
@@ -624,7 +624,7 @@ describe("a remote re-key of an id reports the move", () => {
 		pull();
 		sm.delete("src/n.md");
 		pull();
-		expect(moves).toEqual([["src/n.md", "dst/n.md", "n1"]]);
+		expect(moves).toEqual([["src/n.md", "dst/n.md", "n1", true]]);
 		expect(store.pathForId("n1")).toBe("dst/n.md");
 	});
 

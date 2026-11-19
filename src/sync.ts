@@ -6687,12 +6687,20 @@ export class SyncEngine {
 	/** Where note `id`'s FILE is on this device, for the folder resolver. The
 	 *  map can already answer `listed` (the server's re-key of a moved folder's
 	 *  notes reaches the index before `folder_changed`) while the file is still
-	 *  at the old path; the relocation record says where, if a file is there. */
+	 *  at the old path. Where it came from is a hint verified on disk, and a
+	 *  path another note claims is never taken. */
 	private fileOfNote(id: string, listed: string): string | null {
 		const mine = this.noteIdMap?.pathForId(id) ?? null;
 		if (mine !== listed || this.app.vault.getAbstractFileByPath(listed)) return mine;
+		// The live record first; it is only 30 s long and never made on a
+		// catch-up (the index room is not persisted, so a restart's first sync
+		// is all adds), so then the verified fallback the materializer uses.
 		const from = this.relocatedFrom.get(listed)?.from;
-		return from && this.app.vault.getAbstractFileByPath(from) ? from : mine;
+		const holder = from ? (this.noteIdMap?.get(from) ?? null) : null;
+		if (from && (holder === null || holder === id) && this.app.vault.getFileByPath?.(from)) {
+			return from;
+		}
+		return this.staleOriginFor(listed) ?? mine;
 	}
 
 	/** Teach the index the server rows above `row` that it lacks, so a move of
