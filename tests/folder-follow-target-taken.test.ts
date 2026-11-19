@@ -10,6 +10,7 @@
 import { afterEach, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { TFile, TFolder } from "obsidian";
+import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine } from "../src/sync";
@@ -38,6 +39,8 @@ interface Opts {
 	ids?: Record<string, string>;
 	/** data.json's cached ids (path -> id), read last. */
 	seed?: Record<string, string>;
+	/** File contents overriding the defaults (path -> text). */
+	bodies?: Record<string, string>;
 }
 
 async function setup(opts: Opts = {}) {
@@ -45,6 +48,7 @@ async function setup(opts: Opts = {}) {
 	const bodies = new Map<string, string>([
 		[`${OLD}/a.md`, "alpha"],
 		[`${OLD}/sub/b.md`, "beta"],
+		...Object.entries(opts.bodies ?? {}),
 	]);
 	const parentOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 	const attach = (f: TFolder | TFile) => {
@@ -189,16 +193,24 @@ test("a different note already at the new name keeps its id; the moved note land
 	expect(tree.has(OLD)).toBe(false);
 });
 
-// Review @ 5d066bc1 MEDIUM: an id must not run ahead of its file. A file whose
-// move throws keeps its id where the file is, and no old path is published.
-test("a file whose move throws keeps its id where the file is", async () => {
-	const { engine, ids, tree } = await setup({ before: {}, failing: [`${OLD}/sub/b.md`] });
+// Review @ 5d066bc1 MEDIUM, as revised in round 4 (the id map is the
+// authority): a file whose move throws still has its id at the server's path,
+// is recorded as a stuck move, is refused for push, and follows on retry.
+test("contract: a failed file move: the id follows the server; the file catches up via the stuck record", async () => {
+	const failing = [`${OLD}/sub/b.md`];
+	const { engine, ids, tree } = await setup({ before: {}, failing });
 	await engine.onFolderChanged({ id: "fD", parent_id: "fE", name: "Edit107-done", seq: 9 });
 	ids.flushNow();
 	expect(tree.has(`${OLD}/sub/b.md`)).toBe(true);
-	expect(ids.pathForId("nb")).toBe(`${OLD}/sub/b.md`);
+	expect(ids.pathForId("nb")).toBe(`${NEW}/sub/b.md`);
 	expect(ids.pathForId("na")).toBe(`${NEW}/a.md`);
-	expect(tree.has(`${NEW}/a.md`)).toBe(true);
+	expect(engine.exportFolderIndex().stuck?.map((m) => m.from)).toEqual([`${OLD}/sub/b.md`]);
+	expect(await (engine as any).pushFile(tree.get(`${OLD}/sub/b.md`), true)).toBe(false);
+	failing.length = 0;
+	await (engine as any).retryStuckMoves();
+	expect(tree.has(`${NEW}/sub/b.md`)).toBe(true);
+	expect(tree.has(OLD)).toBe(false);
+	expect(engine.exportFolderIndex().stuck).toEqual([]);
 });
 
 const move = { id: "fD", parent_id: "fE", name: "Edit107-done", seq: 9 };
@@ -245,21 +257,19 @@ test("a stranded file survives a restart and the reconnect retry moves it", asyn
 	expect(second.engine.exportFolderIndex().stuck ?? []).toEqual([]);
 });
 
-test("another note taking the new name before the retry gets a conflict copy, never a claim", async () => {
+test("something else landing at the new name before the retry gets a conflict copy, never a claim", async () => {
 	const { engine, ids, tree, bodies, app } = await setup({ failing: [`${OLD}/sub/b.md`] });
 	await engine.onFolderChanged(move);
-	// Someone else's note lands at the new name in between.
+	// A file the user made lands at the new name in between.
 	await app.vault.create(`${NEW}/sub/b.md`, "other");
-	ids.set(`${NEW}/sub/b.md`, "nZ");
-	ids.flushNow();
 	await (engine as any).retryStuckMoves();
 	await settle();
-	expect(ids.pathForId("nZ")).toBe(`${NEW}/sub/b.md`);
 	expect(bodies.get(`${NEW}/sub/b.md`)).toBe("other");
 	expect(tree.has(`${OLD}/sub/b.md`)).toBe(false);
 	const copies = [...tree.keys()].filter((p) => p.startsWith(`${NEW}/sub/b (conflict `));
 	expect(copies.length).toBe(1);
 	expect(bodies.get(copies[0])).toBe("beta");
+	expect(ids.pathForId("nb")).toBe(`${NEW}/sub/b.md`);
 });
 
 // Review @ b09792ed LOW: the SAME note at both names is not a clash with
@@ -275,4 +285,83 @@ test("the same note at both names is deduped, not copied", async () => {
 	ids.flushNow();
 	expect(ids.pathForId("na")).toBe(`${NEW}/a.md`);
 	expect([...tree.keys()].some((p) => p.includes("(conflict "))).toBe(false);
+});
+
+// Review @ f642fd0c HIGH: the server moves the folder AGAIN before the retry.
+// The target is read from the id map at retry time, so the file lands at the
+// latest path and the moved-away folder is not recreated.
+test("a second server move before the retry: the file lands at the latest path", async () => {
+	const failing = [`${OLD}/sub/b.md`];
+	const { engine, ids, tree } = await setup({ before: {}, failing });
+	await (engine as any).followFolderMoveOnDisk(move);
+	const LATEST = "E2E/Edit107-x";
+	// The server's next re-key, arriving as a REMOTE index update.
+	ids.flushNow();
+	const doc = ids.store.doc!;
+	const server = new Y.Doc();
+	Y.applyUpdate(server, Y.encodeStateAsUpdate(doc));
+	const sm = server.getMap<any>("filemeta_v0");
+	server.transact(() => {
+		for (const [k, v] of [...sm.entries()]) {
+			if (k.startsWith(`${NEW}/`) || k.startsWith(`${OLD}/`)) {
+				sm.delete(k);
+				sm.set(k.replace(/^E2E\/Edit107(-done)?\//, `${LATEST}/`), v);
+			}
+		}
+	});
+	Y.applyUpdate(doc, Y.encodeStateAsUpdate(server, Y.encodeStateVector(doc)), "remote");
+	failing.length = 0;
+	await (engine as any).retryStuckMoves();
+	expect(tree.has(`${LATEST}/sub/b.md`)).toBe(true);
+	expect(tree.has(`${NEW}/sub/b.md`)).toBe(false);
+	expect(ids.pathForId("nb")).toBe(`${LATEST}/sub/b.md`);
+	expect(engine.exportFolderIndex().stuck).toEqual([]);
+});
+
+// Review @ f642fd0c LOW: an edit typed into the old file just before it is
+// trashed is kept as a conflict copy, not lost.
+test("the old file changing just before its trash is kept as a conflict copy", async () => {
+	const { engine, tree, bodies, app } = await setup({ raceFile: "alpha" });
+	await (engine as any).followFolderMoveOnDisk(move);
+	const read = app.vault.read;
+	let reads = 0;
+	app.vault.read = async (f: TFile) => {
+		if (f.path === `${OLD}/a.md` && ++reads === 2) bodies.set(f.path, "edited");
+		return read(f);
+	};
+	await (engine as any).retryStuckMoves();
+	expect(tree.has(`${OLD}/a.md`)).toBe(false);
+	expect(bodies.get(`${NEW}/a.md`)).toBe("alpha");
+	const copies = [...tree.keys()].filter((p) => p.startsWith(`${NEW}/a (conflict `));
+	expect(copies.map((p) => bodies.get(p))).toEqual(["edited"]);
+});
+
+// Review @ f642fd0c LOW: no silent forever-refusal. After the retry cap the
+// old file's content becomes a conflict copy and the record is cleared.
+test("a move that keeps failing ends in a conflict copy after the retry cap", async () => {
+	const { engine, tree, bodies } = await setup({ before: {}, failing: [`${OLD}/sub/b.md`] });
+	await (engine as any).followFolderMoveOnDisk(move);
+	for (let i = 0; i < 6; i++) await (engine as any).retryStuckMoves();
+	expect(engine.exportFolderIndex().stuck).toEqual([]);
+	const copies = [...tree.keys()].filter((p) => p.startsWith(`${NEW}/sub/b (conflict `));
+	expect(copies.map((p) => bodies.get(p))).toEqual(["beta"]);
+	expect(tree.has(`${OLD}/sub/b.md`)).toBe(false);
+});
+
+// Review @ f642fd0c LOW: a restored record whose old file no longer matches
+// (the user replaced it while the plugin was off) is dropped, file untouched.
+test("a restored record is dropped when the old file was replaced", async () => {
+	const first = await setup({ before: {}, failing: [`${OLD}/sub/b.md`] });
+	await (first.engine as any).followFolderMoveOnDisk(move);
+	const saved = JSON.parse(JSON.stringify(first.engine.exportFolderIndex()));
+	expect(saved.stuck.length).toBe(1);
+	const second = await setup({
+		restore: saved,
+		ids: { [`${NEW}/a.md`]: "na", [`${NEW}/sub/b.md`]: "nb" },
+		bodies: { [`${OLD}/sub/b.md`]: "a new file the user made" },
+	});
+	await (second.engine as any).retryStuckMoves();
+	expect(second.tree.has(`${OLD}/sub/b.md`)).toBe(true);
+	expect(second.tree.has(`${NEW}/sub/b.md`)).toBe(false);
+	expect(second.engine.exportFolderIndex().stuck).toEqual([]);
 });
