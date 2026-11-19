@@ -356,6 +356,10 @@ const STALE_HOLD_ISSUE_AT = 5;
  *  Generous next to the milliseconds a racing flush needs, and short next to
  *  the lifetime of a path that might legitimately be recreated. */
 const RELOCATION_MEMORY_MS = 30_000;
+/** Retries of one stuck folder-move file before it is kept as a conflict
+ *  copy instead (`stuckMoves`): no silent forever-refusal of its push. */
+const STUCK_MAX_TRIES = 5;
+const STUCK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /** `discoveryBases` bounds. The genesis fan-out lands seconds after
  *  discovery; ten minutes covers a slow reconnect. The char cap bounds a
@@ -6874,7 +6878,7 @@ export class SyncEngine {
 			// one; one that cannot is recorded so its next write moves it.
 			for (const [o, n] of free) {
 				if (!(await this.renameFollowingIdentity(o, n)))
-					this.noteStuck(o, n, ids?.get(n) ?? null);
+					await this.noteStuck(o, ids?.get(n) ?? null);
 			}
 			await this.leaveMovedFolder(from, change.seq);
 			return;
@@ -6882,11 +6886,18 @@ export class SyncEngine {
 		// The target was already there: each file moves FIRST and its
 		// bookkeeping follows only if it did, so no id runs ahead of its file and
 		// nothing claims the old path.
+		// A file that cannot move still has its id follow the server (the pair
+		// is not a clash, so no other note id holds the name, and the server
+		// already holds the id there): the file catches up through its stuck
+		// record.
 		const done: [string, string][] = [];
+		const stuck: [string, string | null][] = [];
 		for (const [o, n] of free) {
 			const id = ids?.get(o) ?? ids?.get(n) ?? null;
-			if (await this.renameFollowingIdentity(o, n)) done.push([o, n]);
-			else if (this.app.vault.getFileByPath?.(o)) this.noteStuck(o, n, id);
+			if (!(await this.renameFollowingIdentity(o, n)) && this.app.vault.getFileByPath?.(o)) {
+				stuck.push([o, id]);
+			}
+			done.push([o, n]);
 		}
 		for (const [o, n] of clashes) {
 			if (!this.app.vault.getFileByPath?.(o)) continue;
@@ -6894,6 +6905,7 @@ export class SyncEngine {
 			if (await this.renameFollowingIdentity(o, copy)) done.push([o, copy]);
 		}
 		this.rekeyMoved(done, false);
+		for (const [o, id] of stuck) await this.noteStuck(o, id);
 		await this.leaveMovedFolder(from, change.seq);
 	}
 
@@ -7016,7 +7028,13 @@ export class SyncEngine {
 		return {
 			vaultId: this.settings.vaultId ?? null,
 			rows: this.folderOps.index.all(),
-			stuck: [...this.stuckMoves].map(([from, m]) => ({ from, ...m })),
+			stuck: [...this.stuckMoves].map(([from, m]) => ({
+				from,
+				id: m.id,
+				hash: m.hash,
+				tries: m.tries,
+				since: m.since,
+			})),
 		};
 	}
 
@@ -7024,28 +7042,62 @@ export class SyncEngine {
 		if (saved && saved.vaultId === (this.settings.vaultId ?? null)) {
 			this.folderOps.index.load(saved.rows);
 			for (const m of saved.stuck ?? []) {
-				if (typeof m?.from === "string" && typeof m.to === "string") {
-					this.stuckMoves.set(m.from, { to: m.to, id: m.id ?? null });
-				}
+				if (typeof m?.from !== "string" || typeof m.id !== "string") continue;
+				if (typeof m.hash !== "number") continue;
+				// Verified against the file at the first retry: contents are not
+				// readable this early in load.
+				this.stuckMoves.set(m.from, {
+					id: m.id,
+					hash: m.hash,
+					tries: m.tries ?? 0,
+					since: m.since ?? this.time.now(),
+					restored: true,
+				});
 			}
 		}
 	}
 
-	/** Files a followed folder move could not carry (old path -> where the
-	 *  note's bookkeeping is). The race that strands one leaves no other record:
-	 *  the old file has no id and no sync row, so without this an idle note sat
-	 *  at the old path for good and a push sweep would upload it as a NEW note.
-	 *  Persisted with the folder index; retried on reconnect, on folder_changed
-	 *  and before every push sweep; cleared when the file is gone from the old
-	 *  path or resolved, and on vault switch. */
+	/** Files a followed folder move could not carry: old path -> the note whose
+	 *  file it is. The race that strands one leaves no other record (the old
+	 *  file has no id and no sync row), so without this an idle note sat at the
+	 *  old path for good and a push sweep would upload it as a NEW note.
+	 *
+	 *  Only the note id is kept, never a target path: the id map is the
+	 *  authority for where the note is and already tracks every later server
+	 *  move (a stored path went stale on the next one). Persisted with the
+	 *  folder index; retried on reconnect, after folder_changed and before
+	 *  every push sweep; `pushFile` refuses the old file meanwhile. Cleared when
+	 *  resolved, when the file leaves the old path, when the id has no path any
+	 *  more, after `STUCK_MAX_TRIES` / `STUCK_MAX_AGE_MS` (conflict copy), and
+	 *  on vault switch. A restored record whose file no longer matches `hash`
+	 *  is dropped (the user replaced the file). */
 	private stuckMoves = this.track(
 		["vault", "destroy"],
-		new Map<string, { to: string; id: string | null }>(),
+		new Map<
+			string,
+			{ id: string; hash: number; tries: number; since: number; restored?: boolean }
+		>(),
 	);
 
-	private noteStuck(from: string, to: string, id: string | null): void {
-		this.stuckMoves.set(normalizePath(from), { to: normalizePath(to), id });
-		this.persistGateJournalSoon();
+	/** Record a stuck move. Notes only: a file with no note id (an attachment)
+	 *  has nothing to follow and takes the normal path. */
+	private async noteStuck(from: string, id: string | null): Promise<void> {
+		const file = this.app.vault.getFileByPath?.(from);
+		if (!id || !file) return;
+		try {
+			const hash = fnv1a(await this.app.vault.read(file));
+			this.stuckMoves.set(normalizePath(from), {
+				id,
+				hash,
+				tries: 0,
+				since: this.time.now(),
+			});
+			this.persistGateJournalSoon();
+		} catch (e) {
+			// Unreadable now: the follow still finishes; the file takes the
+			// normal path, as one with no note id does.
+			rlog().warn("pull", `Stuck move not recorded (${noteRef(from)}): ${errMsg(e, from)}`);
+		}
 	}
 
 	/** The file left the old path (deleted or moved by the user or by us). */
@@ -7055,10 +7107,7 @@ export class SyncEngine {
 
 	private stuckRetry: Promise<void> | null = null;
 
-	/** Resolve every stuck move (see `stuckMoves`). Target free: the file
-	 *  follows. The same note already there with the same bytes: the old copy
-	 *  goes. Anything else at the new name (another note, other bytes): a
-	 *  conflict copy beside it, never a claim on it. */
+	/** Resolve every stuck move (see `stuckMoves`). */
 	retryStuckMoves(): Promise<void> {
 		if (this.stuckMoves.size === 0) return Promise.resolve();
 		this.stuckRetry ??= this.resolveStuckMoves().finally(() => {
@@ -7068,11 +7117,9 @@ export class SyncEngine {
 	}
 
 	private async resolveStuckMoves(): Promise<void> {
-		for (const [from, { to, id }] of [...this.stuckMoves]) {
+		for (const [from, rec] of [...this.stuckMoves]) {
 			try {
-				const file = this.app.vault.getFileByPath?.(from);
-				if (file) await this.resolveStuckMove(file, to, id);
-				if (!this.app.vault.getFileByPath?.(from)) this.stuckMoves.delete(from);
+				if (await this.resolveStuckMove(from, rec)) this.stuckMoves.delete(from);
 			} catch (e) {
 				rlog().warn(
 					"pull",
@@ -7083,20 +7130,39 @@ export class SyncEngine {
 		this.persistGateJournalSoon();
 	}
 
-	private async resolveStuckMove(file: TFile, to: string, id: string | null): Promise<void> {
-		const from = file.path;
-		const at = this.app.vault.getAbstractFileByPath(to);
-		const holder = this.noteIdMap?.get(to) ?? null;
-		if (!at && (holder === null || holder === id)) {
-			if (await this.renameFollowingIdentity(from, to)) this.rekeyMoved([[from, to]], false);
-			return;
-		}
+	/** True when the record is done with. Target free: the file follows. The
+	 *  same note already there with the same bytes: the old copy goes.
+	 *  Anything else at the target, or the retry cap reached: a conflict copy
+	 *  of the old file beside it, never a claim on it. */
+	private async resolveStuckMove(
+		from: string,
+		rec: { id: string; hash: number; tries: number; since: number; restored?: boolean },
+	): Promise<boolean> {
+		const file = this.app.vault.getFileByPath?.(from);
+		if (!file) return true;
 		const text = await this.app.vault.read(file);
-		const same =
-			at instanceof TFile &&
-			id !== null &&
-			holder === id &&
-			(await this.app.vault.read(at)) === text;
+		if (rec.restored && fnv1a(text) !== rec.hash) return true; // replaced while off
+		rec.restored = false;
+		const to = this.noteIdMap?.pathForId(rec.id) ?? null;
+		// The note is gone from the index (deleted on the server): nothing to
+		// follow, the normal path handles the file.
+		if (to === null || to === from) return true;
+		const at = this.app.vault.getAbstractFileByPath(to);
+		if (!at) {
+			if (await this.renameFollowingIdentity(from, to)) return true;
+			rec.tries++;
+			const capped =
+				rec.tries >= STUCK_MAX_TRIES || this.time.now() - rec.since >= STUCK_MAX_AGE_MS;
+			if (!capped) return false;
+			rlog().warn(
+				"pull",
+				`Stuck move gave up after ${rec.tries} tries: ${noteRef(from)} -> ${noteRef(to)}, keeping it as a conflict copy`,
+			);
+			await this.writeDriftConflictCopy(to, text);
+			await this.trashKeeping(file, text, to);
+			return true;
+		}
+		const same = at instanceof TFile && (await this.app.vault.read(at)) === text;
 		if (!same) {
 			const copy = await this.writeDriftConflictCopy(to, text);
 			rlog().warn(
@@ -7104,6 +7170,17 @@ export class SyncEngine {
 				`Stuck move: ${noteRef(to)} is taken, kept the old file as ${noteRef(copy)}`,
 			);
 		}
+		await this.trashKeeping(file, text, to);
+		return true;
+	}
+
+	/** Trash the old copy of a stuck move, unless it changed since `text` was
+	 *  read (an edit typed into it meanwhile): then that edit is kept as a
+	 *  conflict copy beside `to` first. */
+	private async trashKeeping(file: TFile, text: string, to: string): Promise<void> {
+		const now = await this.app.vault.read(file);
+		if (now !== text) await this.writeDriftConflictCopy(to, now);
+		const from = file.path;
 		await this.trashRemotelyDeleted(file);
 		await this.removeEmptyFolders(from);
 	}
