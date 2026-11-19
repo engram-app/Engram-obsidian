@@ -448,6 +448,9 @@ export const OFFLINE_RETRY_MAX_MS = 5 * 60_000;
 /** Shortest wait after a rate-limited failure, whatever Retry-After says (0,
  *  a past date from a skewed clock): re-sending at once re-hits the limiter. */
 export const RATE_LIMIT_FLOOR_MS = 1_000;
+/** Hard bound on re-snapshotting passes in one drain, so an unforeseen dequeue
+ *  miss can never become a tight POST loop. */
+export const MAX_DRAIN_PASSES = 20;
 /** A delete held for a vault that never becomes active again is dropped
  *  after this long (logged). */
 export const HELD_DELETE_MAX_AGE_MS = 7 * 86_400_000;
@@ -14946,10 +14949,12 @@ export class SyncEngine {
 		classified: ReturnType<typeof categorizeError>,
 	): Promise<void> {
 		this.rateLimitStreak += 1;
+		// Whichever is longer: what the server asked (capped in retryAfterMs) or
+		// our own progressive backoff. A tiny Retry-After must not shorten it.
 		const wait = Math.max(
 			RATE_LIMIT_FLOOR_MS,
-			classified.retryAfterMs ??
-				expBackoff(OFFLINE_RETRY_BASE_MS, this.rateLimitStreak - 1, OFFLINE_RETRY_MAX_MS),
+			classified.retryAfterMs ?? 0,
+			expBackoff(OFFLINE_RETRY_BASE_MS, this.rateLimitStreak - 1, OFFLINE_RETRY_MAX_MS),
 		);
 		await this.queue.enqueue({
 			...entry,
@@ -15166,7 +15171,7 @@ export class SyncEngine {
 				this.releasedUnpulled = true;
 			}
 		}
-		while (this.queue.size > 0) {
+		for (let pass = 0; this.queue.size > 0 && pass < MAX_DRAIN_PASSES; pass++) {
 			const before = this.queue.all();
 			const flushed = await this.runFlushQueue();
 			total += flushed;
@@ -15695,6 +15700,26 @@ export class SyncEngine {
 					// tests pin pushNote's exact arguments.length).
 					const replayState = this.syncState.get(replayNp);
 					const replayBase = replayState?.serverHash;
+					// Echo skip, same predicate as the live push (pushFile): the row's
+					// hash is the last content that landed server-side (stamped only
+					// after a 2xx or a pull), cleared with the row on delete/rename/
+					// vault switch. Identical bytes need no POST; a failed push never
+					// stamped, so it still retries.
+					if (
+						replayState !== undefined &&
+						!replayState.relocating &&
+						!entry.crdt &&
+						replayState.hash === fnv1a(content)
+					) {
+						rlog().warn(
+							"queue",
+							`Echo skip (replay): ${noteRef(entry.path)} | hash=${replayState.hash}`,
+						);
+						await this.queue.dequeue(entry);
+						this.issues.clear(entry.path);
+						flushed++;
+						continue;
+					}
 					const resp =
 						replayCtime !== undefined
 							? await this.api.pushNote(

@@ -13,7 +13,7 @@ import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { destroyRemoteLog } from "../src/remote-log";
-import { SyncEngine } from "../src/sync";
+import { MAX_DRAIN_PASSES, SyncEngine } from "../src/sync";
 import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -283,4 +283,65 @@ test("a backoff re-enqueue keeps its generation, so the replay's dequeue still r
 	await q.enqueue({ ...replayed, nextAttemptAt: 99 });
 	await q.dequeue(replayed);
 	expect(q.size).toBe(0);
+});
+
+// ---- spam minimisation: identical-push skip, retry-after, pass cap ----
+test("identical content is not POSTed twice; changed content is", async () => {
+	let body = "same";
+	const { engine, api } = build(["a.md"], async (p: string) => ok(p)());
+	(engine as any).app.vault.cachedRead = mock(async () => body);
+	engine.queue.load([entry("a.md")]);
+	await engine.flushQueue();
+	expect((api.pushNote as any).mock.calls.length).toBe(1);
+	engine.queue.load([{ ...entry("a.md"), timestamp: 2 }]);
+	await engine.flushQueue();
+	expect((api.pushNote as any).mock.calls.length).toBe(1); // identical: zero POSTs
+	expect(engine.queue.size).toBe(0);
+	body = "changed";
+	engine.queue.load([{ ...entry("a.md"), timestamp: 3 }]);
+	await engine.flushQueue();
+	expect((api.pushNote as any).mock.calls.length).toBe(2);
+});
+
+test("a failed push is not recorded: the retry still POSTs", async () => {
+	let fail = true;
+	const { engine, api } = build(["a.md"], async (p: string) => {
+		if (fail) throw new Error("boom");
+		return ok(p)();
+	});
+	engine.queue.load([entry("a.md")]);
+	await engine.flushQueue();
+	fail = false;
+	engine.queue.load([{ ...entry("a.md"), timestamp: 2 }]);
+	await engine.flushQueue();
+	expect(engine.queue.size).toBe(0);
+	expect((api.pushNote as any).mock.calls.length).toBe(2);
+});
+
+test("429 retry-after longer than the backoff delays the next attempt by retry-after", async () => {
+	const { engine } = build(["a.md"], async () => {
+		throw Object.assign(new Error("rl"), { status: 429, headers: { "retry-after": "120" } });
+	});
+	engine.queue.load([entry("a.md")]);
+	await engine.flushQueue();
+	expect(engine.queue.all()[0].nextAttemptAt).toBe(120_000);
+});
+
+test("429 with a SHORT retry-after still waits the progressive backoff", async () => {
+	const { engine } = build(["a.md"], async () => {
+		throw Object.assign(new Error("rl"), { status: 429, headers: { "retry-after": "1" } });
+	});
+	engine.queue.load([entry("a.md")]);
+	await engine.flushQueue();
+	expect(engine.queue.all()[0].nextAttemptAt).toBeGreaterThanOrEqual(5_000);
+});
+
+test("a stuck entry is bounded by the drain pass cap", async () => {
+	const { engine, api } = build(["a.md"], async (p: string) => ok(p)());
+	// Simulate an unforeseen dequeue miss: the entry never leaves the queue.
+	(engine.queue as any).dequeue = async () => {};
+	(engine.queue as any).has = () => false; // and the progress check is fooled too
+	engine.queue.load([entry("a.md")]);
+	await engine.flushQueue();
+	expect((api.pushNote as any).mock.calls.length).toBeLessThanOrEqual(MAX_DRAIN_PASSES);
 });
