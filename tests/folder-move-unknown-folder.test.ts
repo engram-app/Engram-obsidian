@@ -22,7 +22,7 @@ afterEach(() => {
 
 const ROOT = "E2E/Att108";
 
-async function setup(getManifest: () => Promise<unknown>) {
+async function setup(getManifest: () => Promise<unknown>, wire: "test" | "prod" = "test") {
 	const tree = new Map<string, TFolder | TFile>();
 	const parentOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 	const attach = (f: TFolder | TFile) => {
@@ -69,7 +69,10 @@ async function setup(getManifest: () => Promise<unknown>) {
 	engine.setReady();
 	const ids = new NoteIdMap();
 	ids.set(`${ROOT}/src/n.md`, "n1");
-	engine.setNoteIdMap(ids);
+	// "prod": the way main.ts hands the map over (setCrdtPorts), not the
+	// test-only setNoteIdMap.
+	if (wire === "prod") engine.setCrdtPorts({ noteIdMap: ids });
+	else engine.setNoteIdMap(ids);
 	await engine.setFolderOpsEnabled(true);
 	return { engine, renames, api, tree };
 }
@@ -145,4 +148,25 @@ test("the followed move fences a stale row naming the old path", async () => {
 	const e = engine as any;
 	expect(e.predatesFolderMove(`${ROOT}/src/n.md`, 8)).toBe(true);
 	expect(e.predatesFolderMove(`${ROOT}/src/n.md`, 10)).toBe(false);
+});
+
+// Map/disk split (e2e run 44516034894): the manifest id reconcile claimed the
+// moved note's id at its new path, and the file stayed at the old one, because
+// the hook that moves the file when a claim moves was wired only by the
+// test-only setNoteIdMap. main.ts wires the map through setCrdtPorts.
+test("a claim moving to a moved folder's path moves the file with it (production wiring)", async () => {
+	const { engine, tree } = await setup(
+		async () => ({
+			notes: [{ id: "n1", path: `${ROOT}/dst/n.md`, content_hash: "h" }],
+			attachments: [],
+			total_notes: 1,
+			total_attachments: 0,
+		}),
+		"prod",
+	);
+	await engine.reconcileNoteIdMapFromManifest();
+	for (let i = 0; i < 20; i++) await Promise.resolve();
+	expect(tree.has(`${ROOT}/dst/n.md`)).toBe(true);
+	expect(tree.has(`${ROOT}/src/n.md`)).toBe(false);
+	expect((engine as any).noteIdMap.pathForId("n1")).toBe(`${ROOT}/dst/n.md`);
 });
