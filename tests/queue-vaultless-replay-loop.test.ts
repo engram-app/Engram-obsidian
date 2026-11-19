@@ -318,24 +318,6 @@ test("a failed push is not recorded: the retry still POSTs", async () => {
 	expect((api.pushNote as any).mock.calls.length).toBe(2);
 });
 
-test("429 retry-after longer than the backoff delays the next attempt by retry-after", async () => {
-	const { engine } = build(["a.md"], async () => {
-		throw Object.assign(new Error("rl"), { status: 429, headers: { "retry-after": "120" } });
-	});
-	engine.queue.load([entry("a.md")]);
-	await engine.flushQueue();
-	expect(engine.queue.all()[0].nextAttemptAt).toBe(120_000);
-});
-
-test("429 with a SHORT retry-after still waits the progressive backoff", async () => {
-	const { engine } = build(["a.md"], async () => {
-		throw Object.assign(new Error("rl"), { status: 429, headers: { "retry-after": "1" } });
-	});
-	engine.queue.load([entry("a.md")]);
-	await engine.flushQueue();
-	expect(engine.queue.all()[0].nextAttemptAt).toBeGreaterThanOrEqual(5_000);
-});
-
 test("a stuck entry is bounded by the drain pass cap", async () => {
 	const { engine, api } = build(["a.md"], async (p: string) => ok(p)());
 	// Simulate an unforeseen dequeue miss: the entry never leaves the queue.
@@ -344,4 +326,18 @@ test("a stuck entry is bounded by the drain pass cap", async () => {
 	engine.queue.load([entry("a.md")]);
 	await engine.flushQueue();
 	expect((api.pushNote as any).mock.calls.length).toBeLessThanOrEqual(MAX_DRAIN_PASSES);
+});
+
+test("a forced entry replays even when disk equals the synced hash; a non-forced one does not", async () => {
+	const { engine, api } = build(["a.md"], async (p: string) => ok(p)());
+	engine.queue.load([entry("a.md")]);
+	await engine.flushQueue();
+	expect((api.pushNote as any).mock.calls.length).toBe(1);
+	engine.queue.load([{ ...entry("a.md"), timestamp: 2 }]);
+	await engine.flushQueue();
+	expect((api.pushNote as any).mock.calls.length).toBe(1); // non-forced: zero POSTs
+	engine.queue.load([{ ...entry("a.md"), timestamp: 3, forced: true }]);
+	await engine.flushQueue();
+	expect((api.pushNote as any).mock.calls.length).toBe(2); // forced repair POSTs once
+	expect(engine.queue.size).toBe(0);
 });

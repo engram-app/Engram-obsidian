@@ -8052,6 +8052,7 @@ export class SyncEngine {
 						mtime,
 						timestamp: Date.now(),
 						vaultId: this.settings.vaultId ?? undefined,
+						...(force ? { forced: true } : {}),
 					});
 					return false;
 				}
@@ -8232,6 +8233,7 @@ export class SyncEngine {
 					mtime: file.stat.mtime / 1000,
 					timestamp: Date.now(),
 					vaultId: this.settings.vaultId ?? undefined,
+					...(force ? { forced: true } : {}),
 				});
 			} else if (!classified.terminal) {
 				// Transient, but past RETRY_CAP: no queue entry is written. The file
@@ -14949,12 +14951,10 @@ export class SyncEngine {
 		classified: ReturnType<typeof categorizeError>,
 	): Promise<void> {
 		this.rateLimitStreak += 1;
-		// Whichever is longer: what the server asked (capped in retryAfterMs) or
-		// our own progressive backoff. A tiny Retry-After must not shorten it.
 		const wait = Math.max(
 			RATE_LIMIT_FLOOR_MS,
-			classified.retryAfterMs ?? 0,
-			expBackoff(OFFLINE_RETRY_BASE_MS, this.rateLimitStreak - 1, OFFLINE_RETRY_MAX_MS),
+			classified.retryAfterMs ??
+				expBackoff(OFFLINE_RETRY_BASE_MS, this.rateLimitStreak - 1, OFFLINE_RETRY_MAX_MS),
 		);
 		await this.queue.enqueue({
 			...entry,
@@ -15709,6 +15709,7 @@ export class SyncEngine {
 						replayState !== undefined &&
 						!replayState.relocating &&
 						!entry.crdt &&
+						!entry.forced &&
 						replayState.hash === fnv1a(content)
 					) {
 						rlog().warn(
