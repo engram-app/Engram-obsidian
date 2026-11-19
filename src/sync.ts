@@ -1756,7 +1756,7 @@ export class SyncEngine {
 	 *  bounded). Keyed by note_id → the entry's dequeue coordinates. */
 	private pendingQueueDeliveries = this.track(
 		["vault", "destroy"],
-		new Map<string, { path: string; vaultId?: string }>(),
+		new Map<string, QueueEntry>(),
 	);
 
 	/** Public: true once this SESSION observed this note's create-ack. Was
@@ -3841,6 +3841,7 @@ export class SyncEngine {
 		 *  instead of sleeping through it. */
 		private time: TimeProvider = new DefaultTimeProvider(),
 	) {
+		this.queue.setActiveVault(() => this.settings.vaultId ?? undefined);
 		this.identityMoves = new KeyedSerial(this.time, STREAM_EVENT_STALL_MS, () =>
 			rlog().warn("pull", `Identity move still running after ${STREAM_EVENT_STALL_MS}ms`),
 		);
@@ -10097,7 +10098,7 @@ export class SyncEngine {
 		if (queued) {
 			this.pendingQueueDeliveries.delete(noteId);
 			try {
-				await this.queue.dequeue(queued.path, queued.vaultId);
+				await this.queue.dequeue(queued);
 				this.issues.clear(queued.path);
 				rlog().info(
 					"queue",
@@ -15610,10 +15611,7 @@ export class SyncEngine {
 								continue;
 							}
 
-							this.pendingQueueDeliveries.set(entry.noteId, {
-								path: entry.path,
-								vaultId: this.entryVaultId(entry),
-							});
+							this.pendingQueueDeliveries.set(entry.noteId, entry);
 							this.socketConverge(
 								normalizePath(entry.path),
 								entry.noteId,
