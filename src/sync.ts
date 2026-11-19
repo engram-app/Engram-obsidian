@@ -1099,26 +1099,18 @@ export class SyncEngine {
 	/** The id-map hooks the engine owns, wired wherever the map is: main.ts
 	 *  hands it over through `setCrdtPorts`, never `setNoteIdMap`, so a hook
 	 *  wired only there never runs in production (the folder-op commit hold
-	 *  shipped dead in 55611f45: e2e run 44006602418). Optional calls: suites
-	 *  pass structural doubles for this port. */
+	 *  shipped dead in 55611f45: e2e run 44006602418; the relocate handler
+	 *  below sat in `setNoteIdMap` from #441 to Engram-obsidian#715, so every
+	 *  map-only claim moved the id and left the file behind: e2e run
+	 *  44516034894). Optional calls: suites pass structural doubles for this
+	 *  port. */
 	private bindNoteIdMapHooks(map: NoteIdMap | null): void {
 		// A pending folder op's moves stay local until the op leaves the queue:
 		// the shared index is what the server derives rows from and what peers
 		// read their maps from (see SyncStore.holdsCommit).
 		map?.setCommitHold?.((p) => this.folderOps.touches(p));
-	}
-
-	/** Tests only: main.ts never calls this, so the relocate handler below is
-	 *  not wired in production (see bindNoteIdMapHooks). */
-	setNoteIdMap(map: NoteIdMap | null): void {
-		this.setCrdtPorts({ noteIdMap: map });
 		// Follow identity with the bytes. The store reports a claim MOVING; this
 		// engine owns the vault, so it performs the corresponding file move.
-		//
-		// Optional call: several suites pass structural doubles for this port
-		// (a bare `{ tag: "map" }`, a stub with only the two methods under test),
-		// and wiring a diagnostic-adjacent hook must not be what breaks them. In
-		// production this is always a real NoteIdMap, so the method is always there.
 		map?.setRelocateHandler?.((from, to) => {
 			// RECORD FIRST, move second. The move can lose: a concurrent flush or
 			// the discovery create may reach the new path first, and then this
@@ -1129,6 +1121,11 @@ export class SyncEngine {
 			this.rememberRelocation(normalizePath(from), normalizePath(to));
 			void this.renameFollowingIdentity(from, to);
 		});
+	}
+
+	/** Tests' shorthand for `setCrdtPorts({ noteIdMap })`. */
+	setNoteIdMap(map: NoteIdMap | null): void {
+		this.setCrdtPorts({ noteIdMap: map });
 	}
 
 	/** Move a note's file to follow a relocation of its identity.
