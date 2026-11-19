@@ -6645,6 +6645,43 @@ export class SyncEngine {
 						"pull",
 						`TEMP unknown-folder resolve at=${noteRef(at)} was=${was === undefined ? "none" : noteRef(was)} map=${local.size}`,
 					); // TEMP 715
+				if (row.id === live?.id) {
+					// TEMP 715: every manifest note under the moved folder, where A has its id.
+					const under = (manifest?.notes ?? []).filter((n) =>
+						n.path.startsWith(`${at}/`),
+					);
+					const mseq = manifest?.change_seq;
+					const eseq = live?.seq;
+					const all = manifest?.notes ?? [];
+					const ids = this.noteIdMap;
+					const noEntry = all.filter((n) => n.id && ids?.pathForId(n.id) === null).length;
+					const differ = all.filter((n) => {
+						const m = n.id ? ids?.pathForId(n.id) : null;
+						return m != null && m !== n.path;
+					}).length;
+					rlog().warn(
+						"pull",
+						`TEMP unknown-folder ids noEntry=${noEntry} differ=${differ} total=${all.length}`,
+					); // TEMP 715
+					rlog().warn(
+						"pull",
+						`TEMP unknown-folder seqs manifest=${mseq} event=${eseq} under=${under.length}`,
+					); // TEMP 715
+					for (const n of under.slice(0, 5)) {
+						const mine = n.id ? this.noteIdMap?.pathForId(n.id) : undefined;
+						const here =
+							mine === undefined
+								? "no id"
+								: mine === null
+									? "no entry"
+									: noteRef(mine);
+						const id = n.id ?? "none";
+						rlog().warn(
+							"pull",
+							`TEMP unknown-folder note id=${id} manifest=${noteRef(n.path)} local=${here}`,
+						); // TEMP 715
+					}
+				}
 				if (was === undefined) continue;
 				this.learnAncestors(row, server);
 				// The move's seq fences stale rows naming the old path: the live
