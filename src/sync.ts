@@ -6578,6 +6578,12 @@ export class SyncEngine {
 	 *  off (as on main). Our own echo is dropped by `device_id`, the key the
 	 *  server already stamps on note broadcasts. */
 	async onFolderChanged(change: FolderChange): Promise<void> {
+		const on = this.folderOps.enabled(); // TEMP 715
+		const known = this.folderOps.index.pathFor(change.id) !== null; // TEMP 715
+		rlog().diag(
+			"ws",
+			`TEMP715 fc-arrive id=${change.id} seq=${change.seq} on=${on} blocked=${this.syncBlocked} known=${known}`,
+		); // TEMP 715
 		if (!this.folderOps.enabled() || this.syncBlocked) return; // the manifest re-teaches it
 		if (this.deviceId && change.device_id === this.deviceId) {
 			rlog().info("ws", `Echo skip (own device): folder ${change.id}`);
@@ -6637,6 +6643,19 @@ export class SyncEngine {
 				// notes live on this device says where the folder is.
 				local ??= this.localFolderPaths(manifest);
 				const was = local.get(at);
+				if (row.id === live?.id) {
+					const under = (manifest?.notes ?? []).filter((n) =>
+						n.path.startsWith(`${at}/`),
+					); // TEMP 715
+					const mapped = under.filter(
+						(n) => n.id && this.noteIdMap?.pathForId(n.id),
+					).length; // TEMP 715
+					const found = was !== undefined; // TEMP 715
+					rlog().diag(
+						"pull",
+						`TEMP715 unknown-folder at=${noteRef(at)} placed=${found} under=${under.length} mapped=${mapped} mseq=${manifest?.change_seq}`,
+					); // TEMP 715
+				}
 				if (was === undefined) continue;
 				this.learnAncestors(row, server);
 				// The move's seq fences stale rows naming the old path: the live
@@ -10804,6 +10823,11 @@ export class SyncEngine {
 	 *  unordered application is the bug. Per-note lanes if it ever matters. */
 	handleStreamEvent(event: NoteStreamEvent): Promise<void> {
 		const vault = this.settings.vaultId;
+		const kind = event.kind ?? "note"; // TEMP 715
+		rlog().diag(
+			"ws",
+			`TEMP715 note-arrive ${event.event_type} ${kind} id=${event.id ?? "none"} seq=${event.seq} at=${noteRef(event.path)}`,
+		); // TEMP 715
 		return this.serial.run("stream", async () => {
 			// Queued before a vault switch: an old-vault event, drop it.
 			if (vault === this.settings.vaultId) await this.applyStreamEvent(event);
