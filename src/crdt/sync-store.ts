@@ -1,13 +1,5 @@
 import type * as Y from "yjs";
-import { noteRef } from "../note-ref"; // TEMP 715
-import { rlog } from "../remote-log"; // TEMP 715
 import { uuid7 } from "./uuid7";
-
-/** TEMP 715: the caller frames of a map write, no arguments. */
-function who715(): string {
-	const lines = (new Error().stack ?? "").split("\n").slice(3, 7);
-	return lines.map((l) => l.trim().split(" ")[1] ?? "?").join("<");
-}
 
 /** One entry in `filemeta_v0`: what the vault knows about a path.
  *
@@ -159,17 +151,6 @@ export class SyncStore {
 		// Without this a path learned from another device answers `pathForId`
 		// with a stale answer, or none.
 		this.map.observe((event) => {
-			const before = this.reverse; // TEMP 715
-			const remote = !event.transaction.local; // TEMP 715
-			for (const [key, change] of event.changes.keys) {
-				const meta = this.map.get(key) as FileMeta | undefined; // TEMP 715
-				const id = meta?.note_id ?? (change.oldValue as FileMeta | undefined)?.note_id;
-				const was = id && before ? before.get(id) : undefined;
-				rlog().diag(
-					"pull",
-					`TEMP715 map-observe remote=${remote} ${change.action} id=${id ?? "none"} key=${noteRef(key)} was=${was ? noteRef(was) : "unknown"}`,
-				); // TEMP 715
-			}
 			// A forget is a bridge, not a verdict: every caller forgets a path
 			// because some OTHER device has removed or moved it, and is covering
 			// the window until that device's frame arrives. When the frame lands
@@ -478,10 +459,6 @@ export class SyncStore {
 			//
 			// Emit here: derive one `rename` op from the same observation rather
 			// than reconciling a delete against a create.
-			rlog().diag(
-				"pull",
-				`TEMP715 map-set-move id=${meta.note_id} ${noteRef(prior)} -> ${noteRef(resolved)} hook=${!!this.onRelocate} by=${who715()}`,
-			); // TEMP 715
 			this.onRelocate?.(prior, resolved, meta.note_id);
 		}
 
@@ -620,10 +597,6 @@ export class SyncStore {
 
 		const meta = this.getMeta(oldPath);
 		const from = this.resolvePath(oldPath);
-		rlog().diag(
-			"pull",
-			`TEMP715 map-rename id=${meta?.note_id ?? "none"} ${noteRef(oldPath)} -> ${noteRef(newPath)} by=${who715()}`,
-		); // TEMP 715
 		// Known ONLY from the data.json cache: nothing says the server has this
 		// note. Staging it at the new path would publish the cache as a claim
 		// (the cache is evidence, never a claim; see `cache`). Hold it as pending
