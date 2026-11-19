@@ -6755,22 +6755,25 @@ export class SyncEngine {
 		index.set(change);
 		this.persistGateJournalSoon();
 		if (from === null || to === null) return;
-		if (from !== to) {
-			this.movedAwayFolders.add(from);
-			this.recordFolderMove(from, change.seq);
-			// The per-note moves may already have emptied it (they can reach the
-			// stream lane first): clean up now as well as after each move.
-			const left = this.app.vault.getAbstractFileByPath(from);
-			if (left instanceof TFolder) {
-				const deepestFirst: string[] = [];
-				const walk = (f: TFolder) => {
-					for (const c of f.children) if (c instanceof TFolder) walk(c);
-					deepestFirst.push(f.path);
-				};
-				walk(left);
-				for (const f of deepestFirst) await this.removeEmptyFolders(`${f}/_`);
-			}
-		}
+		if (from !== to) await this.leaveMovedFolder(from, change.seq);
+	}
+
+	/** The server moved the folder away from `from`: record it as moved away
+	 *  and remove what is already empty under it. The per-note moves may have
+	 *  emptied it first (they can reach the stream lane first), so clean up now
+	 *  as well as after each move. */
+	private async leaveMovedFolder(from: string, seq: number | null | undefined): Promise<void> {
+		this.movedAwayFolders.add(from);
+		this.recordFolderMove(from, seq);
+		const left = this.app.vault.getAbstractFileByPath(from);
+		if (!(left instanceof TFolder)) return;
+		const deepestFirst: string[] = [];
+		const walk = (f: TFolder) => {
+			for (const c of f.children) if (c instanceof TFolder) walk(c);
+			deepestFirst.push(f.path);
+		};
+		walk(left);
+		for (const f of deepestFirst) await this.removeEmptyFolders(`${f}/_`);
 	}
 
 	/** Follow a server folder move with ONE vault.rename (a live
@@ -6783,8 +6786,8 @@ export class SyncEngine {
 	 *  legs arrived first and created the target, which is the occupied case.
 	 *  Manifest moves run before the delete pass, which would otherwise trash
 	 *  every file of a folder moved elsewhere. Target already on disk, or a
-	 *  rename that throws: the index learns the move, the folder's files
-	 *  converge per note, and the emptied old folder is removed as moved away. */
+	 *  rename that throws: the bookkeeping stays at the new paths, each file
+	 *  follows on its own, and the emptied old folder is removed as moved away. */
 	private async followFolderMoveOnDisk(
 		change: FolderChange,
 		at?: FolderMovePaths,
@@ -6812,58 +6815,42 @@ export class SyncEngine {
 			from === to ||
 			!(folder instanceof TFolder) ||
 			this.shouldIgnore(from) ||
-			this.shouldIgnore(to) ||
-			this.app.vault.getAbstractFileByPath(to)
+			this.shouldIgnore(to)
 		) {
 			return this.applyFolderChange(change, at);
 		}
 		const moved = this.descendantMoves(from, to);
-		// Ids the server's index already re-keyed to the new path (a remote
-		// claim landed first): the rekey below has nothing to move for them, so
-		// a failed rename must not "put them back" and publish the old path.
-		const ids = this.noteIdMap;
-		const rekeyed = new Set(
-			moved
-				.filter(([o, n]) => {
-					// Asked by id, not by "is the old path empty": a note known
-					// from data.json still answers its cached id at the old path.
-					const id = ids?.get(o) ?? ids?.get(n) ?? null;
-					return id !== null && ids?.pathForId(id) === n;
-				})
-				.map(([, n]) => n),
-		);
 		this.rekeyMoved(moved, false);
 		// The index moves BEFORE the rename: Obsidian fires the folder's own
 		// rename event inside it, and the echo rule must already read it at `to`.
-		const prior = index.all().find((r) => r.id === change.id);
 		index.set(change);
 		this.persistGateJournalSoon();
-		try {
-			if (parent) await this.ensureFolder(parent);
-			await this.app.vault.rename(folder, to);
-			this.recordFolderMove(from, change.seq);
-			rlog().info(
-				"pull",
-				`Followed folder move: ${noteRef(from)} -> ${noteRef(to)} | ${moved.length} files`,
-			);
-		} catch (e) {
-			// Not moved: bookkeeping back where the disk is; the files converge
-			// per note. Then the same fallback as a target already on disk (the
-			// check above raced a concurrent create of `to`, e2e test_107):
-			// applyFolderChange teaches the index the move from the restored
-			// `from` and records `from` as moved away, so the per-note moves
-			// that empty it (and its subfolders) remove it.
-			if (prior) index.set(prior);
-			this.rekeyMoved(
-				moved.filter(([, n]) => !rekeyed.has(n)).map(([o, n]): [string, string] => [n, o]),
-				false,
-			);
-			rlog().warn(
-				"pull",
-				`Folder move could not follow on disk (${noteRef(from)} -> ${noteRef(to)}): ${errMsg(e, to)}`,
-			);
-			await this.applyFolderChange(change, at);
+		if (!this.app.vault.getAbstractFileByPath(to)) {
+			try {
+				if (parent) await this.ensureFolder(parent);
+				await this.app.vault.rename(folder, to);
+				this.recordFolderMove(from, change.seq);
+				rlog().info(
+					"pull",
+					`Followed folder move: ${noteRef(from)} -> ${noteRef(to)} | ${moved.length} files`,
+				);
+				return;
+			} catch (e) {
+				rlog().warn(
+					"pull",
+					`Folder move could not follow on disk (${noteRef(from)} -> ${noteRef(to)}): ${errMsg(e, to)}`,
+				);
+			}
 		}
+		// The target is taken: a sibling leg, or this device's own flush of a
+		// note in the folder, got there first (e2e test_107 offline edit). The
+		// server HAS moved the folder and the bookkeeping already says so, so
+		// the files follow one by one. Putting the bookkeeping back instead
+		// published the old paths into the index, which the server projects
+		// from, and undid the move on every device; with no moved-folder feed
+		// nothing moved the files either.
+		for (const [o, n] of moved) await this.renameFollowingIdentity(o, n);
+		await this.leaveMovedFolder(from, change.seq);
 	}
 
 	/** Where folder `change.id` is in the index now, and where the change puts

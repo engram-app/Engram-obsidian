@@ -295,13 +295,17 @@ describe("live folder_changed: one rename, or index only when the disk cannot fo
 		expect(s.ids.get("Moved/a.md")).toBe("id-a");
 	});
 
-	test("rename throws: bookkeeping restored, the index learns it, the emptied old folder goes", async () => {
+	// The server has moved the folder: the bookkeeping keeps its new paths.
+	// Restoring the old ones published them into the index the server projects
+	// from and undid the move everywhere (e2e test_107 offline edit; see
+	// folder-follow-target-taken.test.ts).
+	test("rename throws: bookkeeping stays at the new paths, the index learns it, the emptied old folder goes", async () => {
 		const s = inbound(true, false);
 		await s.e.setFolderOpsEnabled(true);
 		await s.e.onFolderChanged(change);
 		expect(s.e.folderOps.index.pathFor("f1")).toBe("Moved");
-		expect(s.ids.get("Proj/a.md")).toBe("id-a");
-		expect(s.ids.get("Moved/a.md")).toBeNull();
+		expect(s.ids.get("Moved/a.md")).toBe("id-a");
+		expect(s.ids.get("Proj/a.md")).toBeNull();
 		expect(s.trashed).toEqual(["Proj"]);
 	});
 
