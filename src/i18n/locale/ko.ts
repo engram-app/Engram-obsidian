@@ -97,8 +97,7 @@ const ko: Dict = {
 	"Couldn't send your feedback, please try again.":
 		"의견 전송에 실패했습니다. 다시 시도해주세요.",
 	Create: "만들기",
-	"Create a hosted account at {signup}, or self-host the server ({guide}).":
-		"{signup}에서 호스팅 계정을 만들거나, 서버를 직접 호스팅합니다 ({guide}).",
+	"Create a hosted account at {signup}.": "{signup}에서 호스팅 계정을 만드세요.",
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"서버에 새 보관함을 만들고, 이 Obsidian 보관함을 동기화합니다.",
 	"Custom patterns": "사용자 정의 패턴",
@@ -578,7 +577,6 @@ const ko: Dict = {
 	"meaning + exact": "의미 + 정확히 일치",
 	"not linked": "연결되지 않음",
 	notes: "노트",
-	"setup guide": "2. Engram에 보관함 연결하기",
 	"sync is paused": "동기화 일시 중지됨",
 	"syncing now": "현재 동기화 중",
 	unknown: "알 수 없음",

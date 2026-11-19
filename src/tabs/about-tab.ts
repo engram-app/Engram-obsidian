@@ -7,7 +7,6 @@ import {
 	ENGRAM_ISSUES_URL,
 	ENGRAM_MCP_URL,
 	ENGRAM_PRICING_URL,
-	ENGRAM_SELFHOST_URL,
 	ENGRAM_SETUP_VIDEO_URL,
 	ENGRAM_SIGN_UP_URL,
 } from "./urls";
@@ -89,14 +88,9 @@ export function renderAboutTab(ctx: TabContext): void {
 	heading(containerEl, t("Getting set up"));
 
 	const account = new Setting(containerEl).setName(t("1. Make an account"));
-	tInto(
-		account.descEl,
-		"Create a hosted account at {signup}, or self-host the server ({guide}).",
-		{
-			signup: (p) => externalLink(p, asIs("app.engram.page"), ENGRAM_SIGN_UP_URL),
-			guide: (p) => externalLink(p, t("setup guide"), ENGRAM_SELFHOST_URL),
-		},
-	);
+	tInto(account.descEl, "Create a hosted account at {signup}.", {
+		signup: (p) => externalLink(p, asIs("app.engram.page"), ENGRAM_SIGN_UP_URL),
+	});
 
 	new Setting(containerEl)
 		.setName(t("2. Connect your vault to Engram"))
