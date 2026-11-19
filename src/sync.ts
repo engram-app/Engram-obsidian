@@ -39,6 +39,7 @@ import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } fr
 import {
 	type FolderChange,
 	FolderIndex,
+	type FolderIndexSnapshot,
 	type FolderOp,
 	type FolderOpResult,
 	FolderOps,
@@ -6047,6 +6048,8 @@ export class SyncEngine {
 
 	/** Handle a vault delete event. */
 	async handleDelete(file: TAbstractFile): Promise<void> {
+		// The user deleted a file a folder move left behind: nothing to resolve.
+		this.forgetStuckMove(file.path);
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "handleDelete deferred — gate closed");
 			// Same reasoning as handleModify: a delete the user believes synced
@@ -6387,6 +6390,7 @@ export class SyncEngine {
 	 *  re-keys every descendant before their own events run; those then hit
 	 *  the Relay echo rule in `handleRenameNow` and send nothing. */
 	async handleRename(file: TAbstractFile, oldPath: string): Promise<void> {
+		this.forgetStuckMove(oldPath);
 		if (!this.folderOps.enabled()) return this.handleRenameNow(file, oldPath);
 		this.renameBatch.push({ file, oldPath });
 		this.renameBatchFlush ??= Promise.resolve().then(() => this.flushRenameBatch());
@@ -6604,7 +6608,9 @@ export class SyncEngine {
 		// the attachment was lost on the server and every vault (e2e test_107).
 		const vault = this.settings.vaultId;
 		await this.serial.run("stream", async () => {
-			if (vault === this.settings.vaultId) await this.folderOps.inbound(change);
+			if (vault !== this.settings.vaultId) return;
+			await this.folderOps.inbound(change);
+			await this.retryStuckMoves();
 		});
 	}
 
@@ -6833,7 +6839,9 @@ export class SyncEngine {
 		const clashes = moved.filter(([o, n]) => {
 			const mine = ids?.get(o) ?? null;
 			const theirs = ids?.get(n) ?? null;
-			if (mine !== null && theirs !== null && mine !== theirs) return true;
+			// Ids decide when both are known: the SAME note at both names is
+			// not a clash with itself (it is deduped as a stuck move).
+			if (mine !== null && theirs !== null) return mine !== theirs;
 			return !!this.app.vault.getFileByPath?.(o) && !!this.app.vault.getAbstractFileByPath(n);
 		});
 		const free = moved.filter((p) => !clashes.includes(p));
@@ -6865,7 +6873,8 @@ export class SyncEngine {
 			// from and undid the move on every device. The files follow one by
 			// one; one that cannot is recorded so its next write moves it.
 			for (const [o, n] of free) {
-				if (!(await this.renameFollowingIdentity(o, n))) this.rememberRelocation(o, n);
+				if (!(await this.renameFollowingIdentity(o, n)))
+					this.noteStuck(o, n, ids?.get(n) ?? null);
 			}
 			await this.leaveMovedFolder(from, change.seq);
 			return;
@@ -6875,7 +6884,9 @@ export class SyncEngine {
 		// nothing claims the old path.
 		const done: [string, string][] = [];
 		for (const [o, n] of free) {
+			const id = ids?.get(o) ?? ids?.get(n) ?? null;
 			if (await this.renameFollowingIdentity(o, n)) done.push([o, n]);
+			else if (this.app.vault.getFileByPath?.(o)) this.noteStuck(o, n, id);
 		}
 		for (const [o, n] of clashes) {
 			if (!this.app.vault.getFileByPath?.(o)) continue;
@@ -6977,6 +6988,7 @@ export class SyncEngine {
 		if (this.folderOps.enabled() || this.folderOps.all().length > 0) {
 			await this.folderOps.onReconnect();
 		}
+		await this.retryStuckMoves();
 	}
 
 	/** Learn the server's folder rows (manifest `folders`). */
@@ -7000,14 +7012,100 @@ export class SyncEngine {
 	}
 
 	/** The persisted folder index (rows + their vault), and its restore. */
-	exportFolderIndex(): { vaultId: string | null; rows: FolderRow[] } {
-		return { vaultId: this.settings.vaultId ?? null, rows: this.folderOps.index.all() };
+	exportFolderIndex(): FolderIndexSnapshot {
+		return {
+			vaultId: this.settings.vaultId ?? null,
+			rows: this.folderOps.index.all(),
+			stuck: [...this.stuckMoves].map(([from, m]) => ({ from, ...m })),
+		};
 	}
 
-	restoreFolderIndex(saved: { vaultId: string | null; rows: FolderRow[] } | undefined): void {
+	restoreFolderIndex(saved: FolderIndexSnapshot | undefined): void {
 		if (saved && saved.vaultId === (this.settings.vaultId ?? null)) {
 			this.folderOps.index.load(saved.rows);
+			for (const m of saved.stuck ?? []) {
+				if (typeof m?.from === "string" && typeof m.to === "string") {
+					this.stuckMoves.set(m.from, { to: m.to, id: m.id ?? null });
+				}
+			}
 		}
+	}
+
+	/** Files a followed folder move could not carry (old path -> where the
+	 *  note's bookkeeping is). The race that strands one leaves no other record:
+	 *  the old file has no id and no sync row, so without this an idle note sat
+	 *  at the old path for good and a push sweep would upload it as a NEW note.
+	 *  Persisted with the folder index; retried on reconnect, on folder_changed
+	 *  and before every push sweep; cleared when the file is gone from the old
+	 *  path or resolved, and on vault switch. */
+	private stuckMoves = this.track(
+		["vault", "destroy"],
+		new Map<string, { to: string; id: string | null }>(),
+	);
+
+	private noteStuck(from: string, to: string, id: string | null): void {
+		this.stuckMoves.set(normalizePath(from), { to: normalizePath(to), id });
+		this.persistGateJournalSoon();
+	}
+
+	/** The file left the old path (deleted or moved by the user or by us). */
+	private forgetStuckMove(path: string): void {
+		if (this.stuckMoves.delete(normalizePath(path))) this.persistGateJournalSoon();
+	}
+
+	private stuckRetry: Promise<void> | null = null;
+
+	/** Resolve every stuck move (see `stuckMoves`). Target free: the file
+	 *  follows. The same note already there with the same bytes: the old copy
+	 *  goes. Anything else at the new name (another note, other bytes): a
+	 *  conflict copy beside it, never a claim on it. */
+	retryStuckMoves(): Promise<void> {
+		if (this.stuckMoves.size === 0) return Promise.resolve();
+		this.stuckRetry ??= this.resolveStuckMoves().finally(() => {
+			this.stuckRetry = null;
+		});
+		return this.stuckRetry;
+	}
+
+	private async resolveStuckMoves(): Promise<void> {
+		for (const [from, { to, id }] of [...this.stuckMoves]) {
+			try {
+				const file = this.app.vault.getFileByPath?.(from);
+				if (file) await this.resolveStuckMove(file, to, id);
+				if (!this.app.vault.getFileByPath?.(from)) this.stuckMoves.delete(from);
+			} catch (e) {
+				rlog().warn(
+					"pull",
+					`Stuck move retry failed (${noteRef(from)}): ${errMsg(e, from)}`,
+				);
+			}
+		}
+		this.persistGateJournalSoon();
+	}
+
+	private async resolveStuckMove(file: TFile, to: string, id: string | null): Promise<void> {
+		const from = file.path;
+		const at = this.app.vault.getAbstractFileByPath(to);
+		const holder = this.noteIdMap?.get(to) ?? null;
+		if (!at && (holder === null || holder === id)) {
+			if (await this.renameFollowingIdentity(from, to)) this.rekeyMoved([[from, to]], false);
+			return;
+		}
+		const text = await this.app.vault.read(file);
+		const same =
+			at instanceof TFile &&
+			id !== null &&
+			holder === id &&
+			(await this.app.vault.read(at)) === text;
+		if (!same) {
+			const copy = await this.writeDriftConflictCopy(to, text);
+			rlog().warn(
+				"pull",
+				`Stuck move: ${noteRef(to)} is taken, kept the old file as ${noteRef(copy)}`,
+			);
+		}
+		await this.trashRemotelyDeleted(file);
+		await this.removeEmptyFolders(from);
 	}
 
 	/** The server took a note create at `path` (a create is also how a note
@@ -7443,6 +7541,9 @@ export class SyncEngine {
 		report?: (r: PushReport) => void,
 	): Promise<boolean> {
 		if (this.pushing.has(file.path)) return false;
+		// A file a folder move left behind is the old copy of a note whose id
+		// lives elsewhere: pushing it would create a second note.
+		if (this.stuckMoves.has(normalizePath(file.path))) return false;
 
 		// Persistence shortcut: if this attachment was already parked under an
 		// informational plan-skip (Free-tier 402 attachments-disabled, or a
@@ -14358,6 +14459,8 @@ export class SyncEngine {
 		// A renamed file still in the gate journal (#247) has no sync-state at its
 		// new path, so the sweep below would upload it as a brand-new note.
 		await this.replayGateJournal();
+		// Same for a file a folder move left behind (`stuckMoves`).
+		await this.retryStuckMoves();
 		// Use ?? not || so an empty-string prePullSync (first connect, never
 		// synced) is preserved and maps to epoch below — || would discard "" and
 		// fall back to this.lastSync, which pull() just advanced to server_time,

@@ -77,6 +77,17 @@ export function parentFolder(path: string): string {
 /** One `folders` row as the server sends it. `parent_id: null` = root. */
 export type FolderRow = { id: string; parent_id: string | null; name: string };
 
+/** A file a followed folder move could not carry: its note's bookkeeping is
+ *  at `to`, its bytes are still at `from`. Retried until resolved. */
+export type StuckMove = { from: string; to: string; id: string | null };
+
+/** The folder index as last applied to disk, for plugin data. */
+export type FolderIndexSnapshot = {
+	vaultId: string | null;
+	rows: FolderRow[];
+	stuck?: StuckMove[];
+};
+
 /** A `folder_changed` event or a feed `folders` entry. */
 export type FolderChange = FolderRow & {
 	seq?: number | null;

@@ -44,7 +44,7 @@ import { type CrdtOp, CrdtOpQueue, makeDropReporter } from "./crdt-op-queue";
 import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { isMarkdownPath } from "./file-kind";
-import type { FolderOp, FolderRow } from "./folder-ops";
+import type { FolderIndexSnapshot, FolderOp } from "./folder-ops";
 import { setLogSink } from "./has-logging";
 import { noteRef } from "./note-ref";
 import { PromiseTracker, setActiveTracker } from "./track-promise";
@@ -163,7 +163,7 @@ interface PluginData {
 	folderOps?: FolderOp[];
 	/** The folder id <-> path index as last applied to disk, and its vault, so
 	 *  a restart can follow a remote folder move before its first manifest. */
-	folderIndex?: { vaultId: string | null; rows: FolderRow[] };
+	folderIndex?: FolderIndexSnapshot;
 }
 
 /** Whether setupNoteStream() may keep the existing stream instead of
