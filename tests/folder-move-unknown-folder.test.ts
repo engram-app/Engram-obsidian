@@ -150,23 +150,18 @@ test("the followed move fences a stale row naming the old path", async () => {
 	expect(e.predatesFolderMove(`${ROOT}/src/n.md`, 10)).toBe(false);
 });
 
-// Map/disk split (e2e run 44516034894): the manifest id reconcile claimed the
-// moved note's id at its new path, and the file stayed at the old one, because
-// the hook that moves the file when a claim moves was wired only by the
-// test-only setNoteIdMap. main.ts wires the map through setCrdtPorts.
-test("a claim moving to a moved folder's path moves the file with it (production wiring)", async () => {
-	const { engine, tree } = await setup(
-		async () => ({
-			notes: [{ id: "n1", path: `${ROOT}/dst/n.md`, content_hash: "h" }],
-			attachments: [],
-			total_notes: 1,
-			total_attachments: 0,
-		}),
-		"prod",
-	);
-	await engine.reconcileNoteIdMapFromManifest();
+// Map/disk split (e2e run 44516034894): an inbound row claimed the moved
+// note's id at its new path while the file stayed at the old one. The hook that
+// moves the file when a claim moves (SyncStore.onRelocate) was wired only by the
+// test-only setNoteIdMap; main.ts hands the map over through setCrdtPorts. Every
+// claim goes through the store, so the claim itself stands in for whichever
+// caller made it (pull row, announce, manifest reconcile).
+test("an id claim moving to the moved folder moves the file with it (production wiring)", async () => {
+	const { engine, tree } = await setup(async () => null, "prod");
+	const ids = (engine as any).noteIdMap as NoteIdMap;
+	ids.set(`${ROOT}/dst/n.md`, "n1");
 	for (let i = 0; i < 20; i++) await Promise.resolve();
 	expect(tree.has(`${ROOT}/dst/n.md`)).toBe(true);
 	expect(tree.has(`${ROOT}/src/n.md`)).toBe(false);
-	expect((engine as any).noteIdMap.pathForId("n1")).toBe(`${ROOT}/dst/n.md`);
+	expect(ids.pathForId("n1")).toBe(`${ROOT}/dst/n.md`);
 });
