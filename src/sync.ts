@@ -6824,7 +6824,12 @@ export class SyncEngine {
 		const ids = this.noteIdMap;
 		const rekeyed = new Set(
 			moved
-				.filter(([o, n]) => ids && ids.get(o) === null && ids.get(n) !== null)
+				.filter(([o, n]) => {
+					// Asked by id, not by "is the old path empty": a note known
+					// from data.json still answers its cached id at the old path.
+					const id = ids?.get(o) ?? ids?.get(n) ?? null;
+					return id !== null && ids?.pathForId(id) === n;
+				})
 				.map(([, n]) => n),
 		);
 		this.rekeyMoved(moved, false);

@@ -289,3 +289,27 @@ test("the resolver never takes a path another note claims", async () => {
 	await engine.onFolderChanged({ id: "fD", parent_id: "fR", name: "dst", seq: 9 });
 	expect(renames).toEqual([]);
 });
+
+// Re-review @ a64a6430 MED: the same guard for a note known only from
+// data.json. The store still answers the cached id at the old path, so "the
+// old path is empty" never held and the failed rename put the note back.
+test("a failed folder rename does not undo a server re-key of a data.json note", async () => {
+	const { engine, tree } = await setup(async () => null, "prod");
+	const e = engine as any;
+	const ids = new NoteIdMap();
+	ids.seed({ [`${ROOT}/src/n.md`]: "n1" });
+	e.setCrdtPorts({ noteIdMap: ids });
+	const server = new Y.Doc();
+	server.getMap<any>("filemeta_v0").set(`${ROOT}/dst/n.md`, { note_id: "n1" });
+	Y.applyUpdate(ids.store.doc!, Y.encodeStateAsUpdate(server), "remote");
+	e.app.vault.createFolder = async () => {};
+	e.app.vault.rename = async () => {
+		throw new Error("Destination file already exists!");
+	};
+	engine.learnFolders([...FOLDERS.slice(0, 2), { id: "fD", parent_id: "fR", name: "src" }]);
+	await engine.onFolderChanged({ id: "fD", parent_id: "fR", name: "dst", seq: 9 });
+	ids.flushNow();
+	expect(tree.has(`${ROOT}/src/n.md`)).toBe(true);
+	expect(ids.pathForId("n1")).toBe(`${ROOT}/dst/n.md`);
+	expect(ids.store.doc!.getMap<any>("filemeta_v0").get(`${ROOT}/src/n.md`)).toBeUndefined();
+});
