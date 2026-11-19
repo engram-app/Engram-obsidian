@@ -174,55 +174,32 @@ export class SyncStore {
 			if (!pending) this.parked.clear();
 			this.reverse = null;
 			this.cacheById = null;
-			if (this.remoteBefore) this.reportRemoteMoves(event, this.remoteBefore);
-		});
-		// A REMOTE claim moves an id as surely as a local `set` does (the server
-		// re-keys every note of a moved folder: Identity.claim, folder-op C5), and
-		// the observer only runs after the map changed, so the answer from before
-		// is taken here. Remote transactions only: a local commit publishes what
-		// `set` already reported.
-		//
-		// ponytail: costs one O(entries) index build per remote index update
-		// that no read followed anyway. Keep the index incrementally if that
-		// shows up in a profile.
-		const doc = this.map.doc;
-		doc?.on("beforeTransaction", (tr: Y.Transaction) => {
-			if (!tr.local) this.remoteBefore = this.reverseIndex();
-		});
-		doc?.on("afterTransaction", () => {
-			this.remoteBefore = null;
+			if (!event.transaction.local) this.reportRemoteMoves(event);
 		});
 	}
 
-	/** `reverse` as it was before the remote transaction now being observed. */
-	private remoteBefore: Map<string, string> | null = null;
-
-	/** Report through `onRelocate` every id a remote update moved: it answered
-	 *  one path before and another now. The old path must be one the shared doc
-	 *  held (still, or deleted by this update); an answer known only from the
-	 *  data.json cache is a hint, not evidence the file there is that note.
+	/** Report through `onRelocate` every id a REMOTE update moved off a path.
+	 *  A remote claim moves an id as surely as a local `set` does (the server
+	 *  re-keys every note of a moved folder: Identity.claim, folder-op C5), and
+	 *  only `set` used to report it, so the map moved and the file stayed.
 	 *
-	 *  ponytail: a delete that lands in an EARLIER update than the add (delete
-	 *  first) is not paired: the old answer is gone by then. The server writes
-	 *  the add first or both at once; pair across updates if that changes. */
-	private reportRemoteMoves(event: Y.YMapEvent<FileMeta>, before: Map<string, string>): void {
+	 *  Keyed on the DELETE of the old key, the one moment both paths are known
+	 *  without a scan: the old path from the event, the new one from the map.
+	 *  Same transaction as the add, or a later one (the server's own order),
+	 *  both land here. The new path must be a committed claim: a staged local
+	 *  claim outranks it and `set` already reported that move. Local
+	 *  transactions publish what `set` already reported, so they are skipped.
+	 *  O(keys in the update), plus the index rebuild the next read pays anyway. */
+	private reportRemoteMoves(event: Y.YMapEvent<FileMeta>): void {
 		if (!this.onRelocate) return;
-		const ids = new Set<string>();
-		for (const [key, change] of event.changes.keys) {
-			const now = this.map.get(key)?.note_id;
-			if (now) ids.add(now);
-			const old = (change.oldValue as FileMeta | undefined)?.note_id;
-			if (old) ids.add(old);
-		}
-		for (const id of ids) {
-			const from = before.get(id);
+		for (const [from, change] of event.changes.keys) {
+			if (change.action !== "delete") continue;
+			const id = (change.oldValue as FileMeta | undefined)?.note_id;
+			if (!id) continue;
 			const to = this.pathForId(id);
-			if (!from || !to || from === to) continue;
-			const held =
-				this.map.get(from)?.note_id === id ||
-				this.overlay.get(from)?.note_id === id ||
-				(event.changes.keys.get(from)?.oldValue as FileMeta | undefined)?.note_id === id;
-			if (held) this.onRelocate(from, to, id);
+			if (to && to !== from && this.map.get(to)?.note_id === id) {
+				this.onRelocate(from, to, id);
+			}
 		}
 	}
 
@@ -715,11 +692,6 @@ export class SyncStore {
 
 	/** Reverse lookup, over committed + overlay. */
 	pathForId(note_id: string): string | null {
-		return this.reverseIndex().get(note_id) ?? null;
-	}
-
-	/** id -> path over every layer; see `reverse`. */
-	private reverseIndex(): Map<string, string> {
 		if (!this.reverse) {
 			const index = new Map<string, string>();
 			// Cache first so committed/overlay overwrite it — but ONLY where they
@@ -758,7 +730,8 @@ export class SyncStore {
 			for (const id of this.evicted) index.delete(id);
 			this.reverse = index;
 		}
-		return this.reverse;
+
+		return this.reverse.get(note_id) ?? null;
 	}
 
 	/** Every live entry, committed + staged, with deletions applied. The
