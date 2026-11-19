@@ -119,7 +119,7 @@ export class SyncStore {
 	 *  identity, not the filesystem, so it reports the move and lets the engine
 	 *  decide what to do about the bytes on disk. Optional so the store stays
 	 *  usable headless (tests, the index room before the engine exists). */
-	onRelocate?: (from: string, to: string, note_id: string) => void;
+	onRelocate?: (from: string, to: string, note_id: string, remote?: boolean) => void;
 
 	/** Paths whose staged state `commit()` must keep LOCAL for now: the paths a
 	 *  still-pending folder op touches. This doc is authoritative for paths
@@ -174,7 +174,38 @@ export class SyncStore {
 			if (!pending) this.parked.clear();
 			this.reverse = null;
 			this.cacheById = null;
+			if (!event.transaction.local) this.reportRemoteMoves(event);
 		});
+	}
+
+	/** Report through `onRelocate` every id a REMOTE update moved off a path.
+	 *  A remote claim moves an id as surely as a local `set` does (the server
+	 *  re-keys every note of a moved folder: Identity.claim, folder-op C5), and
+	 *  only `set` used to report it, so nothing recorded where the note's file
+	 *  still is. Reported with `remote` set: the engine records the move but
+	 *  does not move the file itself (a folder move follows as ONE rename).
+	 *
+	 *  Keyed on the DELETE of the old key, the one moment both paths are known
+	 *  without a scan: the old path from the event, the new one from the map.
+	 *  Same transaction as the add, or a later one (the server's own order),
+	 *  both land here (a delete BEFORE the add, or an add still pending behind a
+	 *  gap, is not paired: ponytail, keep `id -> from` until the add if the
+	 *  server ever orders it that way; the resolver's disk fallback covers
+	 *  the folder case). The new path must be a committed claim: a staged
+	 *  local claim outranks it and `set` already reported that move. Local
+	 *  transactions publish what `set` already reported, so they are skipped.
+	 *  O(keys in the update), plus the index rebuild the next read pays anyway. */
+	private reportRemoteMoves(event: Y.YMapEvent<FileMeta>): void {
+		if (!this.onRelocate) return;
+		for (const [from, change] of event.changes.keys) {
+			if (change.action !== "delete") continue;
+			const id = (change.oldValue as FileMeta | undefined)?.note_id;
+			if (!id) continue;
+			const to = this.pathForId(id);
+			if (to && to !== from && this.map.get(to)?.note_id === id) {
+				this.onRelocate(from, to, id, true);
+			}
+		}
 	}
 
 	/** Follow the rename chain to the path an entry lives at NOW.

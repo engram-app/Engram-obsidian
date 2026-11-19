@@ -39,12 +39,14 @@ import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } fr
 import {
 	type FolderChange,
 	FolderIndex,
+	type FolderIndexSnapshot,
 	type FolderOp,
 	type FolderOpResult,
 	FolderOps,
 	type FolderRow,
 	HOLD_MAX_MS,
 	isFolderRow,
+	parentFolder,
 } from "./folder-ops";
 import { t } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
@@ -354,6 +356,10 @@ const STALE_HOLD_ISSUE_AT = 5;
  *  Generous next to the milliseconds a racing flush needs, and short next to
  *  the lifetime of a path that might legitimately be recreated. */
 const RELOCATION_MEMORY_MS = 30_000;
+/** Retries of one stuck folder-move file before it is kept as a conflict
+ *  copy instead (`stuckMoves`): no silent forever-refusal of its push. */
+const STUCK_MAX_TRIES = 5;
+const STUCK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /** `discoveryBases` bounds. The genesis fan-out lands seconds after
  *  discovery; ten minutes covers a slow reconnect. The char cap bounds a
@@ -471,6 +477,9 @@ type CrdtCatchupSinceFn = (
 const DOC_STATE_FRAME = "crdt_doc_state";
 
 /** Room-free full Yjs state for one note — see `CrdtChannel.crdtDocState`. */
+/** A server folder move as paths on this device; null for an end it cannot place. */
+type FolderMovePaths = { from: string | null; to: string | null };
+
 type CrdtDocStateFn = (docId: string) => Promise<{ b64: string; head: string }>;
 
 /** Byte size at or below which a `Yjs.encodeStateAsUpdate` result carries no
@@ -1095,27 +1104,19 @@ export class SyncEngine {
 	/** The id-map hooks the engine owns, wired wherever the map is: main.ts
 	 *  hands it over through `setCrdtPorts`, never `setNoteIdMap`, so a hook
 	 *  wired only there never runs in production (the folder-op commit hold
-	 *  shipped dead in 55611f45: e2e run 44006602418). Optional calls: suites
-	 *  pass structural doubles for this port. */
+	 *  shipped dead in 55611f45: e2e run 44006602418; the relocate handler
+	 *  below sat in `setNoteIdMap` from #441 to Engram-obsidian#715, so every
+	 *  map-only claim moved the id and left the file behind: e2e run
+	 *  44516034894). Optional calls: suites pass structural doubles for this
+	 *  port. */
 	private bindNoteIdMapHooks(map: NoteIdMap | null): void {
 		// A pending folder op's moves stay local until the op leaves the queue:
 		// the shared index is what the server derives rows from and what peers
 		// read their maps from (see SyncStore.holdsCommit).
 		map?.setCommitHold?.((p) => this.folderOps.touches(p));
-	}
-
-	/** Tests only: main.ts never calls this, so the relocate handler below is
-	 *  not wired in production (see bindNoteIdMapHooks). */
-	setNoteIdMap(map: NoteIdMap | null): void {
-		this.setCrdtPorts({ noteIdMap: map });
 		// Follow identity with the bytes. The store reports a claim MOVING; this
 		// engine owns the vault, so it performs the corresponding file move.
-		//
-		// Optional call: several suites pass structural doubles for this port
-		// (a bare `{ tag: "map" }`, a stub with only the two methods under test),
-		// and wiring a diagnostic-adjacent hook must not be what breaks them. In
-		// production this is always a real NoteIdMap, so the method is always there.
-		map?.setRelocateHandler?.((from, to) => {
+		map?.setRelocateHandler?.((from, to, _id, remote) => {
 			// RECORD FIRST, move second. The move can lose: a concurrent flush or
 			// the discovery create may reach the new path first, and then this
 			// rename finds the target occupied and gives up -- which is exactly how
@@ -1123,8 +1124,20 @@ export class SyncEngine {
 			// lets whoever DOES materialize the path turn its create into a move,
 			// so the outcome no longer depends on who wins.
 			this.rememberRelocation(normalizePath(from), normalizePath(to));
-			void this.renameFollowingIdentity(from, to);
+			// A REMOTE claim only records. The server re-keys every note of a
+			// folder it moved BEFORE `folder_changed`, so moving each file here
+			// turned one folder rename into N file moves, left files with no id
+			// (attachments) behind, and made the folder's own move find its
+			// target taken (e2e test_107 one-folder-op case). The folder move
+			// reads the record (`fileOfNote`); a single note's move is followed
+			// when its row materializes, as before.
+			if (!remote) void this.renameFollowingIdentity(from, to);
 		});
+	}
+
+	/** Tests' shorthand for `setCrdtPorts({ noteIdMap })`. */
+	setNoteIdMap(map: NoteIdMap | null): void {
+		this.setCrdtPorts({ noteIdMap: map });
 	}
 
 	/** Move a note's file to follow a relocation of its identity.
@@ -1258,15 +1271,23 @@ export class SyncEngine {
 		return undefined;
 	}
 
-	private async renameFollowingIdentity(from: string, to: string): Promise<void> {
+	/** True when nothing is left at `from` for this move (moved, or no file
+	 *  there); false when the target is taken or the rename failed. */
+	private async renameFollowingIdentity(from: string, to: string): Promise<boolean> {
 		const src = normalizePath(from);
 		const dest = normalizePath(to);
-		if (src === dest) return;
+		if (src === dest) return true;
 		const file = this.app.vault.getFileByPath?.(src);
-		if (!file) return;
-		if (this.app.vault.getAbstractFileByPath?.(dest)) return;
+		if (!file) return true;
+		if (this.app.vault.getAbstractFileByPath?.(dest)) {
+			rlog().warn(
+				"pull",
+				`Identity move skipped, target taken: ${noteRef(src)} -> ${noteRef(dest)}`,
+			);
+			return false;
+		}
 		try {
-			const folder = dest.includes("/") ? dest.slice(0, dest.lastIndexOf("/")) : "";
+			const folder = parentFolder(dest);
 			if (folder) await this.ensureFolder(folder);
 			// Obsidian fires a vault `rename` for this move exactly as it would for
 			// a user drag; without the marker the echo is pushed back as a fresh
@@ -1296,6 +1317,7 @@ export class SyncEngine {
 			// The move may have emptied a folder the server moved away: remove it
 			// (removeEmptyFolders keeps user-intended empty folders).
 			await this.removeEmptyFolders(src);
+			return true;
 		} catch (e) {
 			this.files.clearMarker(src, "remotelyRenamed");
 			this.files.clearMarker(dest, "remotelyRenamed");
@@ -1305,6 +1327,7 @@ export class SyncEngine {
 				"pull",
 				`Identity move could not follow on disk (${noteRef(src)} -> ${noteRef(dest)}): ${errMsg(e, dest)}`,
 			);
+			return false;
 		}
 	}
 
@@ -3659,12 +3682,7 @@ export class SyncEngine {
 		// resolutions on the SAME note within one day would otherwise produce an
 		// identical path, and createFileWithFolders degrades that collision to an
 		// in-place modify — silently clobbering the first preserved copy.
-		const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-		// Preserve the note's own extension (.md or .canvas) so a canvas drift copy
-		// stays a canvas file, not a stray .md.
-		const ext = canvasPath(normalized) ? "canvas" : "md";
-		const base = normalized.replace(/\.(md|canvas)$/, "");
-		const conflictPath = `${base} (conflict ${stamp}).${ext}`;
+		const conflictPath = conflictCopyPath(normalized);
 		await this.createFileWithFolders(conflictPath, localDisk);
 		return conflictPath;
 	}
@@ -6034,6 +6052,8 @@ export class SyncEngine {
 
 	/** Handle a vault delete event. */
 	async handleDelete(file: TAbstractFile): Promise<void> {
+		// The user deleted a file a folder move left behind: nothing to resolve.
+		this.forgetStuckMove(file.path);
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "handleDelete deferred — gate closed");
 			// Same reasoning as handleModify: a delete the user believes synced
@@ -6374,6 +6394,7 @@ export class SyncEngine {
 	 *  re-keys every descendant before their own events run; those then hit
 	 *  the Relay echo rule in `handleRenameNow` and send nothing. */
 	async handleRename(file: TAbstractFile, oldPath: string): Promise<void> {
+		this.forgetStuckMove(oldPath);
 		if (!this.folderOps.enabled()) return this.handleRenameNow(file, oldPath);
 		this.renameBatch.push({ file, oldPath });
 		this.renameBatchFlush ??= Promise.resolve().then(() => this.flushRenameBatch());
@@ -6591,7 +6612,9 @@ export class SyncEngine {
 		// the attachment was lost on the server and every vault (e2e test_107).
 		const vault = this.settings.vaultId;
 		await this.serial.run("stream", async () => {
-			if (vault === this.settings.vaultId) await this.folderOps.inbound(change);
+			if (vault !== this.settings.vaultId) return;
+			await this.folderOps.inbound(change);
+			await this.retryStuckMoves();
 		});
 	}
 
@@ -6604,7 +6627,10 @@ export class SyncEngine {
 	 *  signal, and the features reply (user topic, best effort) can land after
 	 *  the first catch-up of a restart, whose delete pass would otherwise trash
 	 *  every file of a folder moved elsewhere and download it again. */
-	private async syncManifestFolders(manifest: ManifestResponse | null): Promise<void> {
+	private async syncManifestFolders(
+		manifest: ManifestResponse | null,
+		live?: FolderChange,
+	): Promise<void> {
 		const rows = manifest?.folders;
 		if (!rows) return;
 		this.serverSentFolders = true;
@@ -6616,6 +6642,7 @@ export class SyncEngine {
 				.map((r) => ({ row: r, at: server.pathFor(r.id) }))
 				.filter((m): m is { row: FolderRow; at: string } => m.at !== null)
 				.sort((a, b) => a.at.split("/").length - b.at.split("/").length);
+			let local: Map<string, string> | null = null;
 			for (const { row, at } of moves) {
 				const here = this.folderOps.index.pathFor(row.id);
 				// A folder with OUR op pending: the manifest is the server's state
@@ -6624,10 +6651,106 @@ export class SyncEngine {
 				if (this.folderOps.hasPending(row.id)) continue;
 				// Before the manifest delete pass, which would otherwise trash every
 				// file of the moved folder.
-				if (here !== null && here !== at) await this.followFolderMoveOnDisk(row);
+				if (here !== null) {
+					if (here !== at) await this.followFolderMoveOnDisk(row);
+					continue;
+				}
+				// Never learned here (made over REST, MCP or the web app): where its
+				// notes live on this device says where the folder is.
+				local ??= this.localFolderPaths(manifest);
+				const was = local.get(at);
+				if (was === undefined) continue;
+				this.learnAncestors(row, server);
+				// The move's seq fences stale rows naming the old path: the live
+				// event's own, else the manifest's (the move is at or before it).
+				const seq = row.id === live?.id ? live.seq : manifest?.change_seq;
+				await this.followFolderMoveOnDisk({ ...row, seq }, { from: was, to: at });
 			}
 		}
 		this.learnFolders(rows);
+	}
+
+	/** Server folder path -> this device's path for it, from the manifest notes:
+	 *  a note id this device holds at `X/rest` that the server lists at `S/rest`
+	 *  puts server folder `S` at `X` here. Keyed at the deepest differing
+	 *  folder only (a moved parent carries the rest). O(notes x depth), once
+	 *  per manifest. */
+	private localFolderPaths(manifest: ManifestResponse): Map<string, string> {
+		const out = new Map<string, string>();
+		if (!this.noteIdMap) return out;
+		for (const n of manifest.notes ?? []) {
+			if (!n.id) continue;
+			const mine = this.fileOfNote(n.id, n.path);
+			if (mine === null || mine === n.path) continue;
+			const a = mine.split("/");
+			const b = n.path.split("/");
+			let i = a.length - 1;
+			let j = b.length - 1;
+			while (i > 0 && j > 0 && a[i] === b[j]) {
+				i--;
+				j--;
+			}
+			// Only the file name differs (a note rename, not a folder move), or
+			// the paths share no tail at all.
+			if (i === a.length - 1) continue;
+			const s = b.slice(0, j + 1).join("/");
+			if (!out.has(s)) out.set(s, a.slice(0, i + 1).join("/"));
+		}
+		return out;
+	}
+
+	/** Where note `id`'s FILE is on this device, for the folder resolver. The
+	 *  map can already answer `listed` (the server's re-key of a moved folder's
+	 *  notes reaches the index before `folder_changed`) while the file is still
+	 *  at the old path. Where it came from is a hint verified on disk, and a
+	 *  path another note claims is never taken. */
+	private fileOfNote(id: string, listed: string): string | null {
+		const mine = this.noteIdMap?.pathForId(id) ?? null;
+		if (mine !== listed || this.app.vault.getAbstractFileByPath(listed)) return mine;
+		// The live record first; it is only 30 s long and never made on a
+		// catch-up (the index room is not persisted, so a restart's first sync
+		// is all adds), so then the verified fallback the materializer uses.
+		const from = this.relocatedFrom.get(listed)?.from;
+		const holder = from ? (this.noteIdMap?.get(from) ?? null) : null;
+		if (from && (holder === null || holder === id) && this.app.vault.getFileByPath?.(from)) {
+			return from;
+		}
+		return this.staleOriginFor(listed) ?? mine;
+	}
+
+	/** Teach the index the server rows above `row` that it lacks, so a move of
+	 *  a folder this device never learned lands under a known parent. */
+	private learnAncestors(row: FolderRow, server: FolderIndex): void {
+		const rows = new Map(server.all().map((r) => [r.id, r]));
+		for (let p = row.parent_id; p !== null; ) {
+			const r = rows.get(p);
+			if (!r) return;
+			if (this.folderOps.index.pathFor(r.id) === null) this.folderOps.index.set(r);
+			p = r.parent_id;
+		}
+	}
+
+	/** True while a manifest fetch resolves an unknown folder: the moves it
+	 *  runs must not fetch again. */
+	private resolvingFolders = false;
+
+	/** A folder change naming a folder (or parent) this device never learned:
+	 *  one manifest fetch teaches it, and moves the folder on disk when its
+	 *  notes show where it is (`syncManifestFolders`). False when the manifest
+	 *  could not be read; the caller then only learns the row. */
+	private async followUnknownFolder(change: FolderChange): Promise<boolean> {
+		this.resolvingFolders = true;
+		try {
+			const manifest = await this.api.getManifest();
+			if (!manifest?.folders) return false;
+			await this.syncManifestFolders(manifest, change);
+			return true;
+		} catch (e) {
+			rlog().warn("pull", `Unknown folder: manifest fetch failed: ${errMsg(e)}`);
+			return false;
+		} finally {
+			this.resolvingFolders = false;
+		}
 	}
 
 	/** The INDEX half of a server folder change, and the fallback when the
@@ -6635,7 +6758,7 @@ export class SyncEngine {
 	 *  move, the files converge per note, and the old path is recorded as
 	 *  moved away (`movedAwayFolders`) so the per-note moves that empty it can
 	 *  remove it (`removeEmptyFolders`). */
-	private async applyFolderChange(change: FolderChange): Promise<void> {
+	private async applyFolderChange(change: FolderChange, at?: FolderMovePaths): Promise<void> {
 		const index = this.folderOps.index;
 		if (change.deleted) {
 			// Folder delete stays per note until the deletes overhaul (parked).
@@ -6643,28 +6766,29 @@ export class SyncEngine {
 			this.persistGateJournalSoon();
 			return;
 		}
-		const from = index.pathFor(change.id);
-		const parent = index.pathFor(change.parent_id);
+		const { from, to } = at ?? this.folderMovePaths(change);
 		index.set(change);
 		this.persistGateJournalSoon();
-		if (from === null || parent === null) return;
-		const to = parent ? `${parent}/${change.name}` : change.name;
-		if (from !== to) {
-			this.movedAwayFolders.add(from);
-			this.recordFolderMove(from, change.seq);
-			// The per-note moves may already have emptied it (they can reach the
-			// stream lane first): clean up now as well as after each move.
-			const left = this.app.vault.getAbstractFileByPath(from);
-			if (left instanceof TFolder) {
-				const deepestFirst: string[] = [];
-				const walk = (f: TFolder) => {
-					for (const c of f.children) if (c instanceof TFolder) walk(c);
-					deepestFirst.push(f.path);
-				};
-				walk(left);
-				for (const f of deepestFirst) await this.removeEmptyFolders(`${f}/_`);
-			}
-		}
+		if (from === null || to === null) return;
+		if (from !== to) await this.leaveMovedFolder(from, change.seq);
+	}
+
+	/** The server moved the folder away from `from`: record it as moved away
+	 *  and remove what is already empty under it. The per-note moves may have
+	 *  emptied it first (they can reach the stream lane first), so clean up now
+	 *  as well as after each move. */
+	private async leaveMovedFolder(from: string, seq: number | null | undefined): Promise<void> {
+		this.movedAwayFolders.add(from);
+		this.recordFolderMove(from, seq);
+		const left = this.app.vault.getAbstractFileByPath(from);
+		if (!(left instanceof TFolder)) return;
+		const deepestFirst: string[] = [];
+		const walk = (f: TFolder) => {
+			for (const c of f.children) if (c instanceof TFolder) walk(c);
+			deepestFirst.push(f.path);
+		};
+		walk(left);
+		for (const f of deepestFirst) await this.removeEmptyFolders(`${f}/_`);
 	}
 
 	/** Follow a server folder move with ONE vault.rename (a live
@@ -6677,13 +6801,28 @@ export class SyncEngine {
 	 *  legs arrived first and created the target, which is the occupied case.
 	 *  Manifest moves run before the delete pass, which would otherwise trash
 	 *  every file of a folder moved elsewhere. Target already on disk, or a
-	 *  rename that throws: the index learns the move, the folder's files
-	 *  converge per note, and the emptied old folder is removed as moved away. */
-	private async followFolderMoveOnDisk(change: FolderChange): Promise<void> {
+	 *  rename that throws: the bookkeeping stays at the new paths, each file
+	 *  follows on its own, and the emptied old folder is removed as moved away. */
+	private async followFolderMoveOnDisk(
+		change: FolderChange,
+		at?: FolderMovePaths,
+	): Promise<void> {
 		const index = this.folderOps.index;
-		const from = index.pathFor(change.id);
-		const parent = index.pathFor(change.parent_id);
-		const to = parent === null ? null : parent ? `${parent}/${change.name}` : change.name;
+		if (!at && !change.deleted && !this.resolvingFolders) {
+			const known = this.folderMovePaths(change);
+			// Already where the server puts it: nothing to find, no fetch.
+			const inPlace =
+				known.to !== null &&
+				this.app.vault.getAbstractFileByPath(known.to) instanceof TFolder;
+			if (
+				(known.from === null || known.to === null) &&
+				!inPlace &&
+				(await this.followUnknownFolder(change))
+			)
+				return;
+		}
+		const { from, to } = at ?? this.folderMovePaths(change);
+		const parent = to === null ? null : parentFolder(to);
 		const folder = from === null ? null : this.app.vault.getAbstractFileByPath(from);
 		if (
 			from === null ||
@@ -6691,44 +6830,94 @@ export class SyncEngine {
 			from === to ||
 			!(folder instanceof TFolder) ||
 			this.shouldIgnore(from) ||
-			this.shouldIgnore(to) ||
-			this.app.vault.getAbstractFileByPath(to)
+			this.shouldIgnore(to)
 		) {
-			return this.applyFolderChange(change);
+			return this.applyFolderChange(change, at);
 		}
 		const moved = this.descendantMoves(from, to);
-		this.rekeyMoved(moved, false);
+		// A DIFFERENT note already at a new name (another id there, or a second
+		// file): it keeps its id and its path, and the moved note lands beside
+		// it as a conflict copy. Re-keying onto it evicted that note's id from
+		// the shared index and handed its file to the moved note.
+		const ids = this.noteIdMap;
+		const clashes = moved.filter(([o, n]) => {
+			const mine = ids?.get(o) ?? null;
+			const theirs = ids?.get(n) ?? null;
+			// Ids decide when both are known: the SAME note at both names is
+			// not a clash with itself (it is deduped as a stuck move).
+			if (mine !== null && theirs !== null) return mine !== theirs;
+			return !!this.app.vault.getFileByPath?.(o) && !!this.app.vault.getAbstractFileByPath(n);
+		});
+		const free = moved.filter((p) => !clashes.includes(p));
 		// The index moves BEFORE the rename: Obsidian fires the folder's own
 		// rename event inside it, and the echo rule must already read it at `to`.
-		const prior = index.all().find((r) => r.id === change.id);
 		index.set(change);
 		this.persistGateJournalSoon();
-		try {
-			if (parent) await this.ensureFolder(parent);
-			await this.app.vault.rename(folder, to);
-			this.recordFolderMove(from, change.seq);
-			rlog().info(
-				"pull",
-				`Followed folder move: ${noteRef(from)} -> ${noteRef(to)} | ${moved.length} files`,
-			);
-		} catch (e) {
-			// Not moved: bookkeeping back where the disk is; the files converge
-			// per note. Then the same fallback as a target already on disk (the
-			// check above raced a concurrent create of `to`, e2e test_107):
-			// applyFolderChange teaches the index the move from the restored
-			// `from` and records `from` as moved away, so the per-note moves
-			// that empty it (and its subfolders) remove it.
-			if (prior) index.set(prior);
-			this.rekeyMoved(
-				moved.map(([o, n]): [string, string] => [n, o]),
-				false,
-			);
-			rlog().warn(
-				"pull",
-				`Folder move could not follow on disk (${noteRef(from)} -> ${noteRef(to)}): ${errMsg(e, to)}`,
-			);
-			await this.applyFolderChange(change);
+		if (clashes.length === 0 && !this.app.vault.getAbstractFileByPath(to)) {
+			// Bookkeeping first, for the same echo rule.
+			this.rekeyMoved(free, false);
+			try {
+				if (parent) await this.ensureFolder(parent);
+				await this.app.vault.rename(folder, to);
+				this.recordFolderMove(from, change.seq);
+				rlog().info(
+					"pull",
+					`Followed folder move: ${noteRef(from)} -> ${noteRef(to)} | ${moved.length} files`,
+				);
+				return;
+			} catch (e) {
+				rlog().warn(
+					"pull",
+					`Folder move could not follow on disk (${noteRef(from)} -> ${noteRef(to)}): ${errMsg(e, to)}`,
+				);
+			}
+			// Raced (this device's own flush made the target, e2e test_107
+			// offline edit). The bookkeeping stays at the server's paths: putting
+			// it back published the old paths into the index the server projects
+			// from and undid the move on every device. The files follow one by
+			// one; one that cannot is recorded so its next write moves it.
+			for (const [o, n] of free) {
+				if (!(await this.renameFollowingIdentity(o, n)))
+					await this.noteStuck(o, ids?.get(n) ?? null);
+			}
+			await this.leaveMovedFolder(from, change.seq);
+			return;
 		}
+		// The target was already there: each file moves FIRST and its
+		// bookkeeping follows only if it did, so no id runs ahead of its file and
+		// nothing claims the old path.
+		// A file that cannot move still has its id follow the server (the pair
+		// is not a clash, so no other note id holds the name, and the server
+		// already holds the id there): the file catches up through its stuck
+		// record.
+		const done: [string, string][] = [];
+		const stuck: [string, string | null][] = [];
+		for (const [o, n] of free) {
+			const id = ids?.get(o) ?? ids?.get(n) ?? null;
+			if (!(await this.renameFollowingIdentity(o, n)) && this.app.vault.getFileByPath?.(o)) {
+				stuck.push([o, id]);
+			}
+			done.push([o, n]);
+		}
+		for (const [o, n] of clashes) {
+			if (!this.app.vault.getFileByPath?.(o)) continue;
+			const copy = conflictCopyPath(n);
+			if (await this.renameFollowingIdentity(o, copy)) done.push([o, copy]);
+		}
+		this.rekeyMoved(done, false);
+		for (const [o, id] of stuck) await this.noteStuck(o, id);
+		await this.leaveMovedFolder(from, change.seq);
+	}
+
+	/** Where folder `change.id` is in the index now, and where the change puts
+	 *  it; null for either end the index cannot place. */
+	private folderMovePaths(change: FolderChange): FolderMovePaths {
+		const index = this.folderOps.index;
+		const parent = index.pathFor(change.parent_id);
+		return {
+			from: index.pathFor(change.id),
+			to: parent === null ? null : parent ? `${parent}/${change.name}` : change.name,
+		};
 	}
 
 	/** Old paths of folders the server moved (folder_changed or the manifest
@@ -6811,6 +7000,7 @@ export class SyncEngine {
 		if (this.folderOps.enabled() || this.folderOps.all().length > 0) {
 			await this.folderOps.onReconnect();
 		}
+		await this.retryStuckMoves();
 	}
 
 	/** Learn the server's folder rows (manifest `folders`). */
@@ -6834,14 +7024,165 @@ export class SyncEngine {
 	}
 
 	/** The persisted folder index (rows + their vault), and its restore. */
-	exportFolderIndex(): { vaultId: string | null; rows: FolderRow[] } {
-		return { vaultId: this.settings.vaultId ?? null, rows: this.folderOps.index.all() };
+	exportFolderIndex(): FolderIndexSnapshot {
+		return {
+			vaultId: this.settings.vaultId ?? null,
+			rows: this.folderOps.index.all(),
+			stuck: [...this.stuckMoves].map(([from, m]) => ({
+				from,
+				id: m.id,
+				hash: m.hash,
+				tries: m.tries,
+				since: m.since,
+			})),
+		};
 	}
 
-	restoreFolderIndex(saved: { vaultId: string | null; rows: FolderRow[] } | undefined): void {
+	restoreFolderIndex(saved: FolderIndexSnapshot | undefined): void {
 		if (saved && saved.vaultId === (this.settings.vaultId ?? null)) {
 			this.folderOps.index.load(saved.rows);
+			for (const m of saved.stuck ?? []) {
+				if (typeof m?.from !== "string" || typeof m.id !== "string") continue;
+				if (typeof m.hash !== "number") continue;
+				// Verified against the file at the first retry: contents are not
+				// readable this early in load.
+				this.stuckMoves.set(m.from, {
+					id: m.id,
+					hash: m.hash,
+					tries: m.tries ?? 0,
+					since: m.since ?? this.time.now(),
+					restored: true,
+				});
+			}
 		}
+	}
+
+	/** Files a followed folder move could not carry: old path -> the note whose
+	 *  file it is. The race that strands one leaves no other record (the old
+	 *  file has no id and no sync row), so without this an idle note sat at the
+	 *  old path for good and a push sweep would upload it as a NEW note.
+	 *
+	 *  Only the note id is kept, never a target path: the id map is the
+	 *  authority for where the note is and already tracks every later server
+	 *  move (a stored path went stale on the next one). Persisted with the
+	 *  folder index; retried on reconnect, after folder_changed and before
+	 *  every push sweep; `pushFile` refuses the old file meanwhile. Cleared when
+	 *  resolved, when the file leaves the old path, when the id has no path any
+	 *  more, after `STUCK_MAX_TRIES` / `STUCK_MAX_AGE_MS` (conflict copy), and
+	 *  on vault switch. A restored record whose file no longer matches `hash`
+	 *  is dropped (the user replaced the file). */
+	private stuckMoves = this.track(
+		["vault", "destroy"],
+		new Map<
+			string,
+			{ id: string; hash: number; tries: number; since: number; restored?: boolean }
+		>(),
+	);
+
+	/** Record a stuck move. Notes only: a file with no note id (an attachment)
+	 *  has nothing to follow and takes the normal path. */
+	private async noteStuck(from: string, id: string | null): Promise<void> {
+		const file = this.app.vault.getFileByPath?.(from);
+		if (!id || !file) return;
+		try {
+			const hash = fnv1a(await this.app.vault.read(file));
+			this.stuckMoves.set(normalizePath(from), {
+				id,
+				hash,
+				tries: 0,
+				since: this.time.now(),
+			});
+			this.persistGateJournalSoon();
+		} catch (e) {
+			// Unreadable now: the follow still finishes; the file takes the
+			// normal path, as one with no note id does.
+			rlog().warn("pull", `Stuck move not recorded (${noteRef(from)}): ${errMsg(e, from)}`);
+		}
+	}
+
+	/** The file left the old path (deleted or moved by the user or by us). */
+	private forgetStuckMove(path: string): void {
+		if (this.stuckMoves.delete(normalizePath(path))) this.persistGateJournalSoon();
+	}
+
+	private stuckRetry: Promise<void> | null = null;
+
+	/** Resolve every stuck move (see `stuckMoves`). */
+	retryStuckMoves(): Promise<void> {
+		if (this.stuckMoves.size === 0) return Promise.resolve();
+		this.stuckRetry ??= this.resolveStuckMoves().finally(() => {
+			this.stuckRetry = null;
+		});
+		return this.stuckRetry;
+	}
+
+	private async resolveStuckMoves(): Promise<void> {
+		for (const [from, rec] of [...this.stuckMoves]) {
+			try {
+				if (await this.resolveStuckMove(from, rec)) this.stuckMoves.delete(from);
+			} catch (e) {
+				rlog().warn(
+					"pull",
+					`Stuck move retry failed (${noteRef(from)}): ${errMsg(e, from)}`,
+				);
+			}
+		}
+		this.persistGateJournalSoon();
+	}
+
+	/** True when the record is done with. Target free: the file follows. The
+	 *  same note already there with the same bytes: the old copy goes.
+	 *  Anything else at the target, or the retry cap reached: a conflict copy
+	 *  of the old file beside it, never a claim on it. */
+	private async resolveStuckMove(
+		from: string,
+		rec: { id: string; hash: number; tries: number; since: number; restored?: boolean },
+	): Promise<boolean> {
+		const file = this.app.vault.getFileByPath?.(from);
+		if (!file) return true;
+		const text = await this.app.vault.read(file);
+		if (rec.restored && fnv1a(text) !== rec.hash) return true; // replaced while off
+		rec.restored = false;
+		const to = this.noteIdMap?.pathForId(rec.id) ?? null;
+		// The note is gone from the index (deleted on the server): nothing to
+		// follow, the normal path handles the file.
+		if (to === null || to === from) return true;
+		const at = this.app.vault.getAbstractFileByPath(to);
+		if (!at) {
+			if (await this.renameFollowingIdentity(from, to)) return true;
+			rec.tries++;
+			const capped =
+				rec.tries >= STUCK_MAX_TRIES || this.time.now() - rec.since >= STUCK_MAX_AGE_MS;
+			if (!capped) return false;
+			rlog().warn(
+				"pull",
+				`Stuck move gave up after ${rec.tries} tries: ${noteRef(from)} -> ${noteRef(to)}, keeping it as a conflict copy`,
+			);
+			await this.writeDriftConflictCopy(to, text);
+			await this.trashKeeping(file, text, to);
+			return true;
+		}
+		const same = at instanceof TFile && (await this.app.vault.read(at)) === text;
+		if (!same) {
+			const copy = await this.writeDriftConflictCopy(to, text);
+			rlog().warn(
+				"pull",
+				`Stuck move: ${noteRef(to)} is taken, kept the old file as ${noteRef(copy)}`,
+			);
+		}
+		await this.trashKeeping(file, text, to);
+		return true;
+	}
+
+	/** Trash the old copy of a stuck move, unless it changed since `text` was
+	 *  read (an edit typed into it meanwhile): then that edit is kept as a
+	 *  conflict copy beside `to` first. */
+	private async trashKeeping(file: TFile, text: string, to: string): Promise<void> {
+		const now = await this.app.vault.read(file);
+		if (now !== text) await this.writeDriftConflictCopy(to, now);
+		const from = file.path;
+		await this.trashRemotelyDeleted(file);
+		await this.removeEmptyFolders(from);
 	}
 
 	/** The server took a note create at `path` (a create is also how a note
@@ -7277,6 +7618,9 @@ export class SyncEngine {
 		report?: (r: PushReport) => void,
 	): Promise<boolean> {
 		if (this.pushing.has(file.path)) return false;
+		// A file a folder move left behind is the old copy of a note whose id
+		// lives elsewhere: pushing it would create a second note.
+		if (this.stuckMoves.has(normalizePath(file.path))) return false;
 
 		// Persistence shortcut: if this attachment was already parked under an
 		// informational plan-skip (Free-tier 402 attachments-disabled, or a
@@ -14192,6 +14536,8 @@ export class SyncEngine {
 		// A renamed file still in the gate journal (#247) has no sync-state at its
 		// new path, so the sweep below would upload it as a brand-new note.
 		await this.replayGateJournal();
+		// Same for a file a folder move left behind (`stuckMoves`).
+		await this.retryStuckMoves();
 		// Use ?? not || so an empty-string prePullSync (first connect, never
 		// synced) is preserved and maps to epoch below — || would discard "" and
 		// fall back to this.lastSync, which pull() just advanced to server_time,
@@ -15869,4 +16215,16 @@ export class SyncEngine {
 		this.queueRetryTimer = null;
 		this.queue.destroy();
 	}
+}
+
+/** A dated `<name> (conflict <stamp>).<ext>` path beside `normalized`.
+ *  Millisecond-precision stamp (not date-only): two copies of the SAME note
+ *  within one day would otherwise collide, and a collision degrades to an
+ *  in-place modify that silently clobbers the first copy. Keeps the note's own
+ *  extension (.md or .canvas) so a canvas copy stays a canvas file. */
+function conflictCopyPath(normalized: string): string {
+	const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+	const ext = canvasPath(normalized) ? "canvas" : "md";
+	const base = normalized.replace(/\.(md|canvas)$/, "");
+	return `${base} (conflict ${stamp}).${ext}`;
 }

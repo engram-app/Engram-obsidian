@@ -586,3 +586,76 @@ describe("a deletion whose replacement is still pending is not a vacancy (CI run
 		expect(store.get(P)).toBe(X);
 	});
 });
+
+// e2e test_108 (backend run 44533055015): a REST folder move re-keys the
+// server's index (Identity.claim, folder-op condition C5), so the moved note's
+// id reaches this device as a REMOTE add at the new path plus a delete at the
+// old one. Only a local `set` reported the move, so the map moved and the file
+// stayed behind for good on a plugin that gets no moved-folder feed.
+describe("a remote re-key of an id reports the move", () => {
+	function pair() {
+		const { store, doc, map } = store_();
+		const server = new Y.Doc();
+		const sm = server.getMap<any>("filemeta_v0");
+		const pull = () =>
+			Y.applyUpdate(doc, Y.encodeStateAsUpdate(server, Y.encodeStateVector(doc)), "remote");
+		const moves: [string, string, string, boolean | undefined][] = [];
+		store.onRelocate = (from, to, id, remote) => moves.push([from, to, id, remote]);
+		return { store, doc, map, sm, pull, moves };
+	}
+
+	test("one remote transaction moving the claim", () => {
+		const { sm, pull, moves } = pair();
+		sm.set("src/n.md", { note_id: "n1" });
+		pull();
+		sm.doc!.transact(() => {
+			sm.delete("src/n.md");
+			sm.set("dst/n.md", { note_id: "n1" });
+		});
+		pull();
+		expect(moves).toEqual([["src/n.md", "dst/n.md", "n1", true]]);
+	});
+
+	test("the add and the delete arriving as separate updates, add first", () => {
+		const { store, sm, pull, moves } = pair();
+		sm.set("src/n.md", { note_id: "n1" });
+		pull();
+		sm.set("dst/n.md", { note_id: "n1" });
+		pull();
+		sm.delete("src/n.md");
+		pull();
+		expect(moves).toEqual([["src/n.md", "dst/n.md", "n1", true]]);
+		expect(store.pathForId("n1")).toBe("dst/n.md");
+	});
+
+	test("an id known here only from the data.json cache is not moved", () => {
+		const { store, sm, pull, moves } = pair();
+		store.seed("src/n.md", { note_id: "n1" });
+		sm.set("dst/n.md", { note_id: "n1" });
+		pull();
+		expect(moves).toEqual([]);
+	});
+
+	test("a new remote claim and our own commit report nothing", () => {
+		const { store, sm, pull, moves } = pair();
+		sm.set("a.md", { note_id: "n1" });
+		pull();
+		store.set("b.md", { note_id: "n2" });
+		store.commit();
+		expect(moves).toEqual([]);
+	});
+
+	test("a staged local claim outranks the remote one", () => {
+		const { store, sm, pull, moves } = pair();
+		sm.set("src/n.md", { note_id: "n1" });
+		pull();
+		store.set("mine/n.md", { note_id: "n1" });
+		moves.length = 0;
+		sm.doc!.transact(() => {
+			sm.delete("src/n.md");
+			sm.set("dst/n.md", { note_id: "n1" });
+		});
+		pull();
+		expect(moves).toEqual([]);
+	});
+});

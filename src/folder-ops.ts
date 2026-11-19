@@ -68,8 +68,26 @@ import {
 	RateLimitPause,
 } from "./crdt-op-queue";
 
+/** The folder holding `path` ("" at the vault root). */
+export function parentFolder(path: string): string {
+	const cut = path.lastIndexOf("/");
+	return cut < 0 ? "" : path.slice(0, cut);
+}
+
 /** One `folders` row as the server sends it. `parent_id: null` = root. */
 export type FolderRow = { id: string; parent_id: string | null; name: string };
+
+/** A file a followed folder move could not carry: its bytes are still at
+ *  `from`, its note `id` lives wherever the id map says now. `hash` is the
+ *  file's content when recorded; `tries` and `since` bound the retries. */
+export type StuckMove = { from: string; id: string; hash: number; tries: number; since: number };
+
+/** The folder index as last applied to disk, for plugin data. */
+export type FolderIndexSnapshot = {
+	vaultId: string | null;
+	rows: FolderRow[];
+	stuck?: StuckMove[];
+};
 
 /** A `folder_changed` event or a feed `folders` entry. */
 export type FolderChange = FolderRow & {

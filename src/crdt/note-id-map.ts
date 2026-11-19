@@ -153,12 +153,14 @@ export class NoteIdMap {
 	 *  vault. Set here rather than on the store directly so callers keep dealing
 	 *  with one identity object and a `rebind` (vault switch) cannot silently
 	 *  leave the handler attached to the discarded store. */
-	setRelocateHandler(fn: (from: string, to: string, id: string) => void): void {
+	setRelocateHandler(fn: (from: string, to: string, id: string, remote?: boolean) => void): void {
 		this.relocateHandler = fn;
 		this.store.onRelocate = fn;
 	}
 
-	private relocateHandler: ((from: string, to: string, id: string) => void) | null = null;
+	private relocateHandler:
+		| ((from: string, to: string, id: string, remote?: boolean) => void)
+		| null = null;
 
 	/** Where this note used to live. See `SyncStore.priorPathsForId`. */
 	priorPathsForId(id: string): string[] {
