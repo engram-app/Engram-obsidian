@@ -49,6 +49,11 @@ feed, nothing ever corrected it.
   folder_changed and before every push sweep, and `pushFile` refuses it
   until then. Another note at the new name means a conflict copy, never a
   claim; a different note already at a new name is never re-keyed onto.
+- A stuck move stores the note ID, never a target path: the target is
+  `pathForId(id)` at retry time, so a later server move re-targets it (a
+  stored path went stale and the retry recreated a moved-away folder).
+  Retries are capped (5 or 24 h) and end in a conflict copy; the old file is
+  re-read before any trash. Files with no note id (attachments) get no record.
 
 ## Gotchas
 - `noteRef` labels (`n1`, `n2`) are numbered PER DEVICE. Comparing labels across
