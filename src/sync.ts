@@ -6792,6 +6792,15 @@ export class SyncEngine {
 			return this.applyFolderChange(change, at);
 		}
 		const moved = this.descendantMoves(from, to);
+		// Ids the server's index already re-keyed to the new path (a remote
+		// claim landed first): the rekey below has nothing to move for them, so
+		// a failed rename must not "put them back" and publish the old path.
+		const ids = this.noteIdMap;
+		const rekeyed = new Set(
+			moved
+				.filter(([o, n]) => ids && ids.get(o) === null && ids.get(n) !== null)
+				.map(([, n]) => n),
+		);
 		this.rekeyMoved(moved, false);
 		// The index moves BEFORE the rename: Obsidian fires the folder's own
 		// rename event inside it, and the echo rule must already read it at `to`.
@@ -6815,7 +6824,7 @@ export class SyncEngine {
 			// that empty it (and its subfolders) remove it.
 			if (prior) index.set(prior);
 			this.rekeyMoved(
-				moved.map(([o, n]): [string, string] => [n, o]),
+				moved.filter(([, n]) => !rekeyed.has(n)).map(([o, n]): [string, string] => [n, o]),
 				false,
 			);
 			rlog().warn(

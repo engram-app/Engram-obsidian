@@ -189,3 +189,38 @@ test("a remote index re-key of the moved note moves the file", async () => {
 	expect(tree.has(`${ROOT}/dst/n.md`)).toBe(true);
 	expect(tree.has(`${ROOT}/src/n.md`)).toBe(false);
 });
+
+// Review @ 44b05509 HIGH: a folder rename that fails puts every descendant's
+// bookkeeping back at the old path. An id the server's index had already
+// re-keyed to the new path was "put back" too, and the next commit published
+// the old path as a claim, undoing the server's move.
+test("a failed folder rename does not undo an id the server already re-keyed", async () => {
+	const { engine, tree } = await setup(async () => null, "prod");
+	const ids = (engine as any).noteIdMap as NoteIdMap;
+	ids.flushNow();
+	const doc = ids.store.doc!;
+	const server = new Y.Doc();
+	Y.applyUpdate(server, Y.encodeStateAsUpdate(doc));
+	const sm = server.getMap<any>("filemeta_v0");
+	const app = (engine as any).app;
+	// Neither move lands: the target never appears, so the folder rename runs
+	// and fails (the race where a concurrent create takes it mid-await).
+	app.vault.createFolder = async () => {};
+	const tried: string[] = [];
+	app.vault.rename = async (f: { path: string }) => {
+		tried.push(f.path);
+		throw new Error("Destination file already exists!");
+	};
+	server.transact(() => {
+		sm.delete(`${ROOT}/src/n.md`);
+		sm.set(`${ROOT}/dst/n.md`, { note_id: "n1" });
+	});
+	Y.applyUpdate(doc, Y.encodeStateAsUpdate(server, Y.encodeStateVector(doc)), "remote");
+	engine.learnFolders([...FOLDERS.slice(0, 2), { id: "fD", parent_id: "fR", name: "src" }]);
+	await engine.onFolderChanged({ id: "fD", parent_id: "fR", name: "dst", seq: 9 });
+	ids.flushNow();
+	expect(tried).toContain(`${ROOT}/src`);
+	expect(tree.has(`${ROOT}/src/n.md`)).toBe(true);
+	expect(ids.pathForId("n1")).toBe(`${ROOT}/dst/n.md`);
+	expect(doc.getMap<any>("filemeta_v0").get(`${ROOT}/src/n.md`)).toBeUndefined();
+});
