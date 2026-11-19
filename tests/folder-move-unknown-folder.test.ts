@@ -131,3 +131,18 @@ test("an unknown folder already where the server puts it needs no manifest fetch
 	expect(renames).toEqual([]);
 	expect(engine.folderOps.index.pathFor("fE")).toBe("E2E");
 });
+
+test("the followed move fences a stale row naming the old path", async () => {
+	const { engine } = await setup(async () => ({
+		notes: [{ id: "n1", path: `${ROOT}/dst/n.md`, content_hash: "h" }],
+		attachments: [],
+		total_notes: 1,
+		total_attachments: 0,
+		change_seq: 12,
+		folders: FOLDERS,
+	}));
+	await engine.onFolderChanged({ id: "fD", parent_id: "fR", name: "dst", seq: 9 });
+	const e = engine as any;
+	expect(e.predatesFolderMove(`${ROOT}/src/n.md`, 8)).toBe(true);
+	expect(e.predatesFolderMove(`${ROOT}/src/n.md`, 10)).toBe(false);
+});

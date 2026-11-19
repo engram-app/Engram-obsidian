@@ -6608,7 +6608,10 @@ export class SyncEngine {
 	 *  signal, and the features reply (user topic, best effort) can land after
 	 *  the first catch-up of a restart, whose delete pass would otherwise trash
 	 *  every file of a folder moved elsewhere and download it again. */
-	private async syncManifestFolders(manifest: ManifestResponse | null): Promise<void> {
+	private async syncManifestFolders(
+		manifest: ManifestResponse | null,
+		live?: FolderChange,
+	): Promise<void> {
 		const rows = manifest?.folders;
 		if (!rows) return;
 		this.serverSentFolders = true;
@@ -6639,7 +6642,10 @@ export class SyncEngine {
 				const was = local.get(at);
 				if (was === undefined) continue;
 				this.learnAncestors(row, server);
-				await this.followFolderMoveOnDisk(row, { from: was, to: at });
+				// The move's seq fences stale rows naming the old path: the live
+				// event's own, else the manifest's (the move is at or before it).
+				const seq = row.id === live?.id ? live.seq : manifest?.change_seq;
+				await this.followFolderMoveOnDisk({ ...row, seq }, { from: was, to: at });
 			}
 		}
 		this.learnFolders(rows);
@@ -6694,12 +6700,12 @@ export class SyncEngine {
 	 *  one manifest fetch teaches it, and moves the folder on disk when its
 	 *  notes show where it is (`syncManifestFolders`). False when the manifest
 	 *  could not be read; the caller then only learns the row. */
-	private async followUnknownFolder(): Promise<boolean> {
+	private async followUnknownFolder(change: FolderChange): Promise<boolean> {
 		this.resolvingFolders = true;
 		try {
 			const manifest = await this.api.getManifest();
 			if (!manifest?.folders) return false;
-			await this.syncManifestFolders(manifest);
+			await this.syncManifestFolders(manifest, change);
 			return true;
 		} catch (e) {
 			rlog().warn("pull", `Unknown folder: manifest fetch failed: ${errMsg(e)}`);
@@ -6770,7 +6776,7 @@ export class SyncEngine {
 			if (
 				(known.from === null || known.to === null) &&
 				!inPlace &&
-				(await this.followUnknownFolder())
+				(await this.followUnknownFolder(change))
 			)
 				return;
 		}
@@ -6786,7 +6792,7 @@ export class SyncEngine {
 			this.shouldIgnore(to) ||
 			this.app.vault.getAbstractFileByPath(to)
 		) {
-			return this.applyFolderChange(change);
+			return this.applyFolderChange(change, at);
 		}
 		const moved = this.descendantMoves(from, to);
 		this.rekeyMoved(moved, false);
