@@ -9,6 +9,7 @@
 import { afterEach, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { TFile, TFolder } from "obsidian";
+import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine } from "../src/sync";
@@ -164,4 +165,27 @@ test("an id claim moving to the moved folder moves the file with it (production 
 	expect(tree.has(`${ROOT}/dst/n.md`)).toBe(true);
 	expect(tree.has(`${ROOT}/src/n.md`)).toBe(false);
 	expect(ids.pathForId("n1")).toBe(`${ROOT}/dst/n.md`);
+});
+
+// e2e run 44533055015: the REST folder move re-keys the server's index, and
+// that claim reaches this device as a REMOTE index update before
+// `folder_changed`. The map then reports the note at the new path, so the
+// unknown-folder resolver cannot place the folder, and the file stayed at the
+// old path. A remote claim moving an id must move the file like a local one.
+test("a remote index re-key of the moved note moves the file", async () => {
+	const { engine, tree } = await setup(async () => null, "prod");
+	const ids = (engine as any).noteIdMap as NoteIdMap;
+	ids.flushNow();
+	const doc = ids.store.doc!;
+	const server = new Y.Doc();
+	Y.applyUpdate(server, Y.encodeStateAsUpdate(doc));
+	const sm = server.getMap<any>("filemeta_v0");
+	server.transact(() => {
+		sm.delete(`${ROOT}/src/n.md`);
+		sm.set(`${ROOT}/dst/n.md`, { note_id: "n1" });
+	});
+	Y.applyUpdate(doc, Y.encodeStateAsUpdate(server, Y.encodeStateVector(doc)), "remote");
+	for (let i = 0; i < 20; i++) await Promise.resolve();
+	expect(tree.has(`${ROOT}/dst/n.md`)).toBe(true);
+	expect(tree.has(`${ROOT}/src/n.md`)).toBe(false);
 });
