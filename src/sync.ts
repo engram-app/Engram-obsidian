@@ -1119,6 +1119,7 @@ export class SyncEngine {
 			// lets whoever DOES materialize the path turn its create into a move,
 			// so the outcome no longer depends on who wins.
 			this.rememberRelocation(normalizePath(from), normalizePath(to));
+			rlog().diag("pull", `TEMP715 relocate claim ${noteRef(from)} -> ${noteRef(to)}`); // TEMP 715
 			void this.renameFollowingIdentity(from, to);
 		});
 	}
@@ -1264,6 +1265,11 @@ export class SyncEngine {
 		const dest = normalizePath(to);
 		if (src === dest) return;
 		const file = this.app.vault.getFileByPath?.(src);
+		const taken = !!this.app.vault.getAbstractFileByPath?.(dest); // TEMP 715
+		rlog().diag(
+			"pull",
+			`TEMP715 follow-identity ${noteRef(src)} -> ${noteRef(dest)} have=${!!file} taken=${taken}`,
+		); // TEMP 715
 		if (!file) return;
 		if (this.app.vault.getAbstractFileByPath?.(dest)) return;
 		try {
@@ -1276,6 +1282,7 @@ export class SyncEngine {
 			this.files.mark(src, "remotelyRenamed", ECHO_COOLDOWN_MS);
 			this.files.mark(dest, "remotelyRenamed", ECHO_COOLDOWN_MS);
 			await this.app.vault.rename(file, dest);
+			rlog().diag("pull", `TEMP715 follow-identity renamed ${noteRef(dest)}`); // TEMP 715
 			// The move step: having moved the bytes, move the
 			// bookkeeping that was filed under the old path. Skipping it is not
 			// harmless — the rename echo guard below returns early precisely
@@ -6778,6 +6785,9 @@ export class SyncEngine {
 				return;
 		}
 		const { from, to } = at ?? this.folderMovePaths(change);
+		const a = from === null ? "null" : noteRef(from); // TEMP 715
+		const b = to === null ? "null" : noteRef(to); // TEMP 715
+		rlog().diag("pull", `TEMP715 folder-follow id=${change.id} ${a} -> ${b} resolved=${!!at}`); // TEMP 715
 		const parent = to === null ? null : parentFolder(to);
 		const folder = from === null ? null : this.app.vault.getAbstractFileByPath(from);
 		if (
