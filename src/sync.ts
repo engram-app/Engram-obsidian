@@ -1266,13 +1266,21 @@ export class SyncEngine {
 		return undefined;
 	}
 
-	private async renameFollowingIdentity(from: string, to: string): Promise<void> {
+	/** True when nothing is left at `from` for this move (moved, or no file
+	 *  there); false when the target is taken or the rename failed. */
+	private async renameFollowingIdentity(from: string, to: string): Promise<boolean> {
 		const src = normalizePath(from);
 		const dest = normalizePath(to);
-		if (src === dest) return;
+		if (src === dest) return true;
 		const file = this.app.vault.getFileByPath?.(src);
-		if (!file) return;
-		if (this.app.vault.getAbstractFileByPath?.(dest)) return;
+		if (!file) return true;
+		if (this.app.vault.getAbstractFileByPath?.(dest)) {
+			rlog().warn(
+				"pull",
+				`Identity move skipped, target taken: ${noteRef(src)} -> ${noteRef(dest)}`,
+			);
+			return false;
+		}
 		try {
 			const folder = parentFolder(dest);
 			if (folder) await this.ensureFolder(folder);
@@ -1304,6 +1312,7 @@ export class SyncEngine {
 			// The move may have emptied a folder the server moved away: remove it
 			// (removeEmptyFolders keeps user-intended empty folders).
 			await this.removeEmptyFolders(src);
+			return true;
 		} catch (e) {
 			this.files.clearMarker(src, "remotelyRenamed");
 			this.files.clearMarker(dest, "remotelyRenamed");
@@ -1313,6 +1322,7 @@ export class SyncEngine {
 				"pull",
 				`Identity move could not follow on disk (${noteRef(src)} -> ${noteRef(dest)}): ${errMsg(e, dest)}`,
 			);
+			return false;
 		}
 	}
 
@@ -3667,12 +3677,7 @@ export class SyncEngine {
 		// resolutions on the SAME note within one day would otherwise produce an
 		// identical path, and createFileWithFolders degrades that collision to an
 		// in-place modify — silently clobbering the first preserved copy.
-		const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-		// Preserve the note's own extension (.md or .canvas) so a canvas drift copy
-		// stays a canvas file, not a stray .md.
-		const ext = canvasPath(normalized) ? "canvas" : "md";
-		const base = normalized.replace(/\.(md|canvas)$/, "");
-		const conflictPath = `${base} (conflict ${stamp}).${ext}`;
+		const conflictPath = conflictCopyPath(normalized);
 		await this.createFileWithFolders(conflictPath, localDisk);
 		return conflictPath;
 	}
@@ -6820,12 +6825,25 @@ export class SyncEngine {
 			return this.applyFolderChange(change, at);
 		}
 		const moved = this.descendantMoves(from, to);
-		this.rekeyMoved(moved, false);
+		// A DIFFERENT note already at a new name (another id there, or a second
+		// file): it keeps its id and its path, and the moved note lands beside
+		// it as a conflict copy. Re-keying onto it evicted that note's id from
+		// the shared index and handed its file to the moved note.
+		const ids = this.noteIdMap;
+		const clashes = moved.filter(([o, n]) => {
+			const mine = ids?.get(o) ?? null;
+			const theirs = ids?.get(n) ?? null;
+			if (mine !== null && theirs !== null && mine !== theirs) return true;
+			return !!this.app.vault.getFileByPath?.(o) && !!this.app.vault.getAbstractFileByPath(n);
+		});
+		const free = moved.filter((p) => !clashes.includes(p));
 		// The index moves BEFORE the rename: Obsidian fires the folder's own
 		// rename event inside it, and the echo rule must already read it at `to`.
 		index.set(change);
 		this.persistGateJournalSoon();
-		if (!this.app.vault.getAbstractFileByPath(to)) {
+		if (clashes.length === 0 && !this.app.vault.getAbstractFileByPath(to)) {
+			// Bookkeeping first, for the same echo rule.
+			this.rekeyMoved(free, false);
 			try {
 				if (parent) await this.ensureFolder(parent);
 				await this.app.vault.rename(folder, to);
@@ -6841,15 +6859,30 @@ export class SyncEngine {
 					`Folder move could not follow on disk (${noteRef(from)} -> ${noteRef(to)}): ${errMsg(e, to)}`,
 				);
 			}
+			// Raced (this device's own flush made the target, e2e test_107
+			// offline edit). The bookkeeping stays at the server's paths: putting
+			// it back published the old paths into the index the server projects
+			// from and undid the move on every device. The files follow one by
+			// one; one that cannot is recorded so its next write moves it.
+			for (const [o, n] of free) {
+				if (!(await this.renameFollowingIdentity(o, n))) this.rememberRelocation(o, n);
+			}
+			await this.leaveMovedFolder(from, change.seq);
+			return;
 		}
-		// The target is taken: a sibling leg, or this device's own flush of a
-		// note in the folder, got there first (e2e test_107 offline edit). The
-		// server HAS moved the folder and the bookkeeping already says so, so
-		// the files follow one by one. Putting the bookkeeping back instead
-		// published the old paths into the index, which the server projects
-		// from, and undid the move on every device; with no moved-folder feed
-		// nothing moved the files either.
-		for (const [o, n] of moved) await this.renameFollowingIdentity(o, n);
+		// The target was already there: each file moves FIRST and its
+		// bookkeeping follows only if it did, so no id runs ahead of its file and
+		// nothing claims the old path.
+		const done: [string, string][] = [];
+		for (const [o, n] of free) {
+			if (await this.renameFollowingIdentity(o, n)) done.push([o, n]);
+		}
+		for (const [o, n] of clashes) {
+			if (!this.app.vault.getFileByPath?.(o)) continue;
+			const copy = conflictCopyPath(n);
+			if (await this.renameFollowingIdentity(o, copy)) done.push([o, copy]);
+		}
+		this.rekeyMoved(done, false);
 		await this.leaveMovedFolder(from, change.seq);
 	}
 
@@ -16002,4 +16035,16 @@ export class SyncEngine {
 		this.queueRetryTimer = null;
 		this.queue.destroy();
 	}
+}
+
+/** A dated `<name> (conflict <stamp>).<ext>` path beside `normalized`.
+ *  Millisecond-precision stamp (not date-only): two copies of the SAME note
+ *  within one day would otherwise collide, and a collision degrades to an
+ *  in-place modify that silently clobbers the first copy. Keeps the note's own
+ *  extension (.md or .canvas) so a canvas copy stays a canvas file. */
+function conflictCopyPath(normalized: string): string {
+	const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+	const ext = canvasPath(normalized) ? "canvas" : "md";
+	const base = normalized.replace(/\.(md|canvas)$/, "");
+	return `${base} (conflict ${stamp}).${ext}`;
 }
