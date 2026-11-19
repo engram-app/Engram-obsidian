@@ -448,6 +448,9 @@ export const OFFLINE_RETRY_MAX_MS = 5 * 60_000;
 /** Shortest wait after a rate-limited failure, whatever Retry-After says (0,
  *  a past date from a skewed clock): re-sending at once re-hits the limiter. */
 export const RATE_LIMIT_FLOOR_MS = 1_000;
+/** Hard bound on re-snapshotting passes in one drain, so an unforeseen dequeue
+ *  miss can never become a tight POST loop. */
+export const MAX_DRAIN_PASSES = 20;
 /** A delete held for a vault that never becomes active again is dropped
  *  after this long (logged). */
 export const HELD_DELETE_MAX_AGE_MS = 7 * 86_400_000;
@@ -1756,7 +1759,7 @@ export class SyncEngine {
 	 *  bounded). Keyed by note_id → the entry's dequeue coordinates. */
 	private pendingQueueDeliveries = this.track(
 		["vault", "destroy"],
-		new Map<string, { path: string; vaultId?: string }>(),
+		new Map<string, QueueEntry>(),
 	);
 
 	/** Public: true once this SESSION observed this note's create-ack. Was
@@ -3841,6 +3844,7 @@ export class SyncEngine {
 		 *  instead of sleeping through it. */
 		private time: TimeProvider = new DefaultTimeProvider(),
 	) {
+		this.queue.setActiveVault(() => this.settings.vaultId ?? undefined);
 		this.identityMoves = new KeyedSerial(this.time, STREAM_EVENT_STALL_MS, () =>
 			rlog().warn("pull", `Identity move still running after ${STREAM_EVENT_STALL_MS}ms`),
 		);
@@ -8048,6 +8052,7 @@ export class SyncEngine {
 						mtime,
 						timestamp: Date.now(),
 						vaultId: this.settings.vaultId ?? undefined,
+						...(force ? { forced: true } : {}),
 					});
 					return false;
 				}
@@ -8228,6 +8233,7 @@ export class SyncEngine {
 					mtime: file.stat.mtime / 1000,
 					timestamp: Date.now(),
 					vaultId: this.settings.vaultId ?? undefined,
+					...(force ? { forced: true } : {}),
 				});
 			} else if (!classified.terminal) {
 				// Transient, but past RETRY_CAP: no queue entry is written. The file
@@ -10097,7 +10103,7 @@ export class SyncEngine {
 		if (queued) {
 			this.pendingQueueDeliveries.delete(noteId);
 			try {
-				await this.queue.dequeue(queued.path, queued.vaultId);
+				await this.queue.dequeue(queued);
 				this.issues.clear(queued.path);
 				rlog().info(
 					"queue",
@@ -14866,7 +14872,7 @@ export class SyncEngine {
 			this.firstFailureMessageThisBatch ??= classified.userMessage;
 			this.firstFailureCategoryThisBatch ??= classified.category;
 		}
-		await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+		await this.queue.dequeue(entry);
 	}
 
 	/** The CRDT op queue gave up on an op. Creates are counted by the drop
@@ -15165,9 +15171,14 @@ export class SyncEngine {
 				this.releasedUnpulled = true;
 			}
 		}
-		while (this.queue.size > 0) {
+		for (let pass = 0; this.queue.size > 0 && pass < MAX_DRAIN_PASSES; pass++) {
+			const before = this.queue.all();
 			const flushed = await this.runFlushQueue();
 			total += flushed;
+			// A pass that "flushed" entries but removed none of them is not progress
+			// (a replay whose dequeue missed looped forever, 10 POST/s, 2026-11-18).
+			// Stop; scheduleQueueRetry owns the backoff for entries that carry one.
+			if (flushed > 0 && before.every((e) => this.queue.has(e))) break;
 			// Stop on no progress (queue empty or all remaining entries failing)
 			// or once a push tripped maybeGoOffline — don't hammer the server.
 			if (flushed === 0 || this.offline) break;
@@ -15336,7 +15347,7 @@ export class SyncEngine {
 		if (!there || (there.crdt && this.isRestReplay(entry))) {
 			await this.queue.enqueue({ ...entry, path: cur, nextAttemptAt: undefined });
 		}
-		await this.queue.dequeue(entry.path, owner);
+		await this.queue.dequeue(entry);
 		rlog().info(
 			"queue",
 			`Replay re-keyed to the moved path: ${noteRef(entry.path)} -> ${noteRef(cur)}`,
@@ -15441,7 +15452,7 @@ export class SyncEngine {
 					`Dropping queued op for ${noteRef(entry.path)} — queued under a different ` +
 						`vault (${owner.slice(0, 8)}), active is ${active.slice(0, 8)}`,
 				);
-				await this.queue.dequeue(entry.path, owner);
+				await this.queue.dequeue(entry);
 				continue;
 			}
 
@@ -15494,7 +15505,7 @@ export class SyncEngine {
 					if (!content) {
 						const file = this.app.vault.getFileByPath(entry.path);
 						if (!file) {
-							await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+							await this.queue.dequeue(entry);
 							this.issues.clear(entry.path);
 							flushed++;
 							continue;
@@ -15573,7 +15584,7 @@ export class SyncEngine {
 						// fails, the fallback enroll no-ops for a removed id, and no
 						// inbound frame ever settles it. A rename keeps the id mapped.
 						if (this.noteIdMap && this.noteIdMap.pathForId(entry.noteId) === null) {
-							await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+							await this.queue.dequeue(entry);
 							continue;
 						}
 						// The socket is the ONLY delivery path for a crdt entry — the
@@ -15599,16 +15610,13 @@ export class SyncEngine {
 								(await this.deliverQueuedOpsRoomFree(entry))
 							) {
 								this.resetHealBackoff(entry.noteId);
-								await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+								await this.queue.dequeue(entry);
 								this.issues.clear(entry.path);
 								flushed++;
 								continue;
 							}
 
-							this.pendingQueueDeliveries.set(entry.noteId, {
-								path: entry.path,
-								vaultId: this.entryVaultId(entry),
-							});
+							this.pendingQueueDeliveries.set(entry.noteId, entry);
 							this.socketConverge(
 								normalizePath(entry.path),
 								entry.noteId,
@@ -15654,7 +15662,7 @@ export class SyncEngine {
 							// non-crdt entry has nothing left to send.
 							if (entry.crdt && entry.noteId)
 								this.openRoomPooled(entry.path, entry.noteId, "undelivered");
-							await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+							await this.queue.dequeue(entry);
 							this.issues.clear(entry.path);
 							flushed++;
 							continue;
@@ -15692,6 +15700,27 @@ export class SyncEngine {
 					// tests pin pushNote's exact arguments.length).
 					const replayState = this.syncState.get(replayNp);
 					const replayBase = replayState?.serverHash;
+					// Echo skip, same predicate as the live push (pushFile): the row's
+					// hash is the last content that landed server-side (stamped only
+					// after a 2xx or a pull), cleared with the row on delete/rename/
+					// vault switch. Identical bytes need no POST; a failed push never
+					// stamped, so it still retries.
+					if (
+						replayState !== undefined &&
+						!replayState.relocating &&
+						!entry.crdt &&
+						!entry.forced &&
+						replayState.hash === fnv1a(content)
+					) {
+						rlog().warn(
+							"queue",
+							`Echo skip (replay): ${noteRef(entry.path)} | hash=${replayState.hash}`,
+						);
+						await this.queue.dequeue(entry);
+						this.issues.clear(entry.path);
+						flushed++;
+						continue;
+					}
 					const resp =
 						replayCtime !== undefined
 							? await this.api.pushNote(
@@ -15751,7 +15780,7 @@ export class SyncEngine {
 						}
 					}
 				}
-				await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+				await this.queue.dequeue(entry);
 				this.issues.clear(entry.path);
 				this.rateLimitStreak = 0;
 				flushed++;

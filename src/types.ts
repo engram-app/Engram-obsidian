@@ -296,6 +296,12 @@ export interface NoteStreamEvent {
 /** A queued change waiting to be pushed when connectivity returns. */
 export interface QueueEntry {
 	path: string;
+	/** The queued push was FORCED (push-all reconcile, blob-heal re-upload): a
+	 *  repair that must reach the server even when disk equals the synced hash. */
+	forced?: boolean;
+	/** Generation id assigned by OfflineQueue; copies of the same queued change
+	 *  (backoff re-enqueue) keep it, a new edit gets a fresh one. */
+	qid?: number;
 	action: "upsert" | "delete";
 	/** Note content (only for text upserts). */
 	content?: string;

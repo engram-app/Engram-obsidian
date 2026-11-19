@@ -90,9 +90,62 @@ export class OfflineQueue {
 	private persistFn: ((entries: QueueEntry[]) => Promise<void>) | null = null;
 	private persistTimer: number | null = null;
 	private persistDelayMs: number;
+	/** The active vault. Every entry is keyed AND stamped with its own vault, or
+	 *  with this one when it has none (saved by an old plugin), so the stored key
+	 *  and the key a caller resolves from settings can never disagree. */
+	private activeVault: () => string | undefined = () => undefined;
+	/** True while an entry may be stored without a vault (loaded or enqueued
+	 *  while unlinked). `adoptActive` re-keys those once a vault is active. */
+	private maybeBare = false;
+	/** Monotonic generation id; see QueueEntry.qid. */
+	private qidSeq = 0;
 
 	constructor(persistDelayMs = 1000) {
 		this.persistDelayMs = persistDelayMs;
+	}
+
+	setActiveVault(fn: () => string | undefined): void {
+		this.activeVault = fn;
+	}
+
+	/** Stamp the active vault (if any) and a generation id. */
+	private stamp(entry: QueueEntry): QueueEntry {
+		const vaultId = entry.vaultId ?? this.activeVault();
+		const qid = entry.qid ?? ++this.qidSeq;
+		this.qidSeq = Math.max(this.qidSeq, qid);
+		const out = vaultId && !entry.vaultId ? { ...entry, vaultId, qid } : { ...entry, qid };
+		if (!out.vaultId) this.maybeBare = true;
+		return out;
+	}
+
+	/** Re-key vault-less entries under the vault that has become active (linking
+	 *  after the queue loaded unlinked, or a first vault pick). The stored key is
+	 *  always derived from the entry's own vaultId, so this is the only place a
+	 *  bare key changes. A stamped entry already at the target key is newer or
+	 *  equal work and wins. Idempotent and O(1) when nothing is bare. */
+	private adoptActive(): void {
+		const active = this.activeVault();
+		if (!this.maybeBare || !active) return;
+		this.maybeBare = false;
+		for (const [k, e] of [...this.entries]) {
+			if (e.vaultId) continue;
+			this.entries.delete(k);
+			const stamped = { ...e, vaultId: active };
+			const nk = dedupKey(stamped);
+			const there = this.entries.get(nk);
+			if (!there || there.timestamp <= stamped.timestamp) this.entries.set(nk, stamped);
+		}
+		this.schedulePersist();
+	}
+
+	private key(path: string, vaultId?: string): string {
+		this.adoptActive();
+		return dedupKey(path, vaultId ?? this.activeVault());
+	}
+
+	/** True when this exact queued generation is still stored. */
+	has(entry: QueueEntry): boolean {
+		return this.entries.get(this.key(entry.path, entry.vaultId))?.qid === entry.qid;
 	}
 
 	/** Register a callback to persist queue state. */
@@ -103,7 +156,8 @@ export class OfflineQueue {
 	/** Load previously persisted entries (call once on startup). */
 	load(entries: QueueEntry[]): void {
 		this.entries.clear();
-		for (const entry of entries) {
+		for (const raw of entries) {
+			const entry = this.stamp(raw);
 			this.entries.set(dedupKey(entry), entry);
 		}
 	}
@@ -127,25 +181,40 @@ export class OfflineQueue {
 
 	/** Add or replace a queued change for a path. Persistence is debounced. */
 	async enqueue(entry: QueueEntry): Promise<void> {
-		this.entries.set(dedupKey(entry), entry);
+		this.adoptActive();
+		const stamped = this.stamp(entry);
+		this.entries.set(dedupKey(stamped), stamped);
 		this.schedulePersist();
 	}
 
-	/** Remove a path from the queue (after successful sync). Persists immediately. */
-	async dequeue(path: string, vaultId?: string): Promise<void> {
-		this.entries.delete(dedupKey(path, vaultId));
+	/** Remove a path from the queue (after successful sync). Persists immediately.
+	 *  Given the REPLAYED entry, deletes only if the stored one is that same
+	 *  generation (same timestamp and action): a newer edit queued while the
+	 *  replay was in flight replaces the entry under the same key and must
+	 *  survive. */
+	async dequeue(entry: QueueEntry): Promise<void>;
+	async dequeue(path: string, vaultId?: string): Promise<void>;
+	async dequeue(pathOrEntry: string | QueueEntry, vaultId?: string): Promise<void> {
+		if (typeof pathOrEntry === "object") {
+			const k = this.key(pathOrEntry.path, pathOrEntry.vaultId);
+			const cur = this.entries.get(k);
+			if (cur && pathOrEntry.qid !== undefined && cur.qid !== pathOrEntry.qid) return;
+			this.entries.delete(k);
+		} else {
+			this.entries.delete(this.key(pathOrEntry, vaultId));
+		}
 		await this.persistNow();
 	}
 
 	/** The queued change for a path, if any. */
 	get(path: string, vaultId?: string): QueueEntry | undefined {
-		return this.entries.get(dedupKey(path, vaultId));
+		return this.entries.get(this.key(path, vaultId));
 	}
 
 	/** True when a not-yet-synced DELETE is queued for this path. Catch-up uses
 	 *  this to avoid recreating a note the user deleted locally while offline. */
 	hasPendingDelete(path: string, vaultId?: string): boolean {
-		return this.entries.get(dedupKey(path, vaultId))?.action === "delete";
+		return this.entries.get(this.key(path, vaultId))?.action === "delete";
 	}
 
 	/** Like hasPendingDelete, but only for entries the drain will actually
@@ -153,7 +222,7 @@ export class OfflineQueue {
 	 *  drain gate — letting them suppress catch-up recreation would hide a
 	 *  note behind a delete that never happens. */
 	hasPendingEvidencedDelete(path: string, vaultId?: string): boolean {
-		const entry = this.entries.get(dedupKey(path, vaultId));
+		const entry = this.entries.get(this.key(path, vaultId));
 		return entry?.action === "delete" && entry.evidenced === true;
 	}
 
@@ -163,7 +232,7 @@ export class OfflineQueue {
 	 *  the entry gone before the flush loop can pick up work for a path that no
 	 *  longer exists. Returns whether anything was removed. */
 	cancel(path: string, vaultId?: string): boolean {
-		const removed = this.entries.delete(dedupKey(path, vaultId));
+		const removed = this.entries.delete(this.key(path, vaultId));
 		if (removed) this.schedulePersist();
 		return removed;
 	}
@@ -172,6 +241,7 @@ export class OfflineQueue {
 	 *  a priority. An entry with no `priority` (persisted before the field
 	 *  existed) counts as Normal, so an upgrade never demotes pending work. */
 	all(): QueueEntry[] {
+		this.adoptActive();
 		return Array.from(this.entries.values()).sort(
 			(a, b) =>
 				(a.priority ?? QueuePriority.Normal) - (b.priority ?? QueuePriority.Normal) ||
