@@ -25,6 +25,7 @@ const zh: Dict = {
 	About: "关于",
 	"Accept it to keep syncing.": "同意以继续同步。",
 	"Access token": "访问令牌",
+	"Account paused: Engram is not syncing": "账户已暂停：Engram 正在暂停同步",
 	"Account setup incomplete.": "账号设置未完成。",
 	"Account suspended. Contact support.": "账号已暂停。请联系客服。",
 	"Activity ({count})": "活动 ({count})",
@@ -54,6 +55,7 @@ const zh: Dict = {
 	"Cargo cache": "Cargo 缓存",
 	Change: "更改",
 	"Change vault": "更改仓库",
+	"Check again": "重新检查",
 	"Check sync status": "检查同步状态",
 	"Checking for changes.": "正在检查更改。",
 	"Checking server…": "正在检查服务器…",
@@ -160,6 +162,11 @@ const zh: Dict = {
 	"Engram's {document} update, effective {date}.":
 		"Engram 的 {document} 更新，自 {date} 起生效。",
 	"Engram: This vault has been deleted on the server.": "Engram: 此仓库已在服务器上删除。",
+	"Engram: account paused": "Engram: 账户已暂停",
+	"Engram: checked a moment ago. Try again in a few seconds.":
+		"Engram: 刚刚检查过。请在几秒钟后重试。",
+	"Engram: could not reach the server. We will keep checking automatically.":
+		"Engram: 无法连接到服务器。我们将自动持续检查。",
 	"Engram: disconnected. Open Engram settings to reconnect.":
 		"Engram：已断开连接。在 Engram 设置中重新连接。",
 	"Engram: error": "Engram：错误",
@@ -180,6 +187,8 @@ const zh: Dict = {
 	"Engram: settings tab failed to render ({error})": "Engram：设置选项卡加载失败 ({error})",
 	"Engram: sign-in failed ({error})": "Engram: 登录失败 ({error})",
 	"Engram: signed out": "Engram：已注销",
+	"Engram: still refused by the server. We will keep checking automatically.":
+		"Engram: 仍然被服务器拒绝。我们将自动持续检查。",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram：{path}同步冲突，您的本地修改已保存为{copy}",
 	"Engram: sync failed. Open the sync log for details.":
@@ -191,10 +200,16 @@ const zh: Dict = {
 	"Engram: sync paused": "Engram：同步已暂停",
 	"Engram: syncing": "Engram：同步中",
 	"Engram: syncing ({count})": "Engram：同步中 ({count})",
+	"Engram: the server accepts this device again. Sync is resuming.":
+		"Engram: 服务器已重新接受此设备。同步正在恢复。",
+	"Engram: this account is paused, so syncing is off. Your changes stay on this device. Contact {email} to get it restored.":
+		"Engram: 此账户已暂停，因此同步已关闭。您的更改将保留在此设备上。联系 {email} 以恢复。",
 	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
 		"Engram：此插件版本过旧，无法同步（需要 {version} 或更高版本）。更新后继续。",
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram：此插件版本过旧，无法同步。更新后继续。",
+	"Engram: this plugin is too old to sync. {versions}":
+		"Engram: 此插件版本过旧，无法同步。{versions}",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: 此仓库不再存在于服务器上。选择或创建仓库以继续。",
 	"Engram: update required": "Engram: 需要更新",
@@ -290,6 +305,8 @@ const zh: Dict = {
 		"未登录，或会话已过期。请在 Engram 设置中重新登录。",
 	"Not signed in. Click to open settings and reconnect.": "尚未登录。点击打开设置并重新连接。",
 	"Not synced on your plan ({count})": "您的计划不支持同步 ({count})",
+	"Not syncing: this account is paused. Contact {email}.":
+		"暂停同步：此账户已暂停。联系 {email}。",
 	"Not syncing: this plugin version is too old (needs {version} or newer). Click to update.":
 		"暂未同步：此插件版本过旧（需要 {version} 或更高版本）。点击更新。",
 	"Not syncing: this plugin version is too old. Click to update.":
@@ -440,6 +457,8 @@ const zh: Dict = {
 		"Engram 服务器不再接受此插件版本（需要 {version} 或更高版本），因此笔记无法发送或接收。在此设备上进行的更改将在此处保留，直到您更新。",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Engram 服务器不再接受此插件版本，因此笔记无法发送或接收。在此设备上进行的更改将在此处保留，直到您更新。",
+	"The Engram server no longer accepts this plugin version. {versions} Changes made on this device stay here until you update.":
+		"Engram 服务器不再接受此插件版本。{versions} 在此设备上进行的更改将在此处保留，直到您更新。",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"文件超过服务器大小限制。压缩或拆分后，即可同步。",
 	"The file is too large for the server.": "文件过大，服务器无法处理。",
@@ -454,6 +473,8 @@ const zh: Dict = {
 	"The server took too long to respond. Try again.": "服务器响应时间过长。请重试。",
 	"These files are fine. Each card below says why they did not sync.":
 		"这些文件没问题。下方卡片说明了未同步的原因。",
+	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":
+		"此账户已暂停，因此笔记不会发送或接收。在此设备上进行的更改将保留在此处。联系 {email} 以恢复。恢复后，同步会自动继续。",
 	"This account was deleted. Contact support if that is wrong.":
 		"账号已删除。如果错误，请联系支持。",
 	"This cannot be undone.": "此操作不可撤销。",
@@ -518,6 +539,8 @@ const zh: Dict = {
 	"You are now pointing at a different cloud vault": "您当前指向的是另一个云端仓库",
 	"You can close this and the sync keeps running in the background.":
 		"您可以关闭此窗口，同步将在后台继续。",
+	"You have {current}. Update to {target} or newer to keep syncing.":
+		"您有 {current}。更新到 {target} 或更高版本以继续同步。",
 	"You've used all the attachment storage on your plan. Upgrade for more.":
 		"您已用完计划中的所有附件存储空间。升级以获得更多空间。",
 	"Your code:": "您的代码：",

@@ -32,6 +32,8 @@ const ru: Dict = {
 	About: "О программе",
 	"Accept it to keep syncing.": "Примите его, чтобы продолжить синхронизацию.",
 	"Access token": "Токен доступа",
+	"Account paused: Engram is not syncing":
+		"Учётная запись приостановлена: Engram не синхронизируется",
 	"Account setup incomplete.": "Настройка учётной записи не завершена.",
 	"Account suspended. Contact support.":
 		"Учётная запись приостановлена. Обратитесь в службу поддержки.",
@@ -66,6 +68,7 @@ const ru: Dict = {
 	"Cargo cache": "Кэш Cargo",
 	Change: "Изменить",
 	"Change vault": "Изменить хранилище",
+	"Check again": "Проверьте ещё раз",
 	"Check sync status": "Проверить статус синхронизации",
 	"Checking for changes.": "Проверка на наличие изменений.",
 	"Checking server…": "Проверка сервера…",
@@ -229,6 +232,11 @@ const ru: Dict = {
 		"Обновление Engram для {document}, вступает в силу {date}.",
 	"Engram: This vault has been deleted on the server.":
 		"Engram: это хранилище было удалено на сервере.",
+	"Engram: account paused": "Engram: учётная запись приостановлена",
+	"Engram: checked a moment ago. Try again in a few seconds.":
+		"Engram: проверка была выполнена несколько секунд назад. Попробуйте ещё через несколько секунд.",
+	"Engram: could not reach the server. We will keep checking automatically.":
+		"Engram: не удалось связаться с сервером. Мы будем автоматически проверять снова.",
 	"Engram: disconnected. Open Engram settings to reconnect.":
 		"Engram: отключено. Откройте настройки Engram, чтобы подключиться снова.",
 	"Engram: error": "Engram: ошибка",
@@ -259,6 +267,8 @@ const ru: Dict = {
 		"Engram: произошла ошибка при отображении вкладки настроек ({error})",
 	"Engram: sign-in failed ({error})": "Engram: ошибка при входе ({error})",
 	"Engram: signed out": "Engram: выход из системы",
+	"Engram: still refused by the server. We will keep checking automatically.":
+		"Engram: сервер всё ещё отклоняет запрос. Мы будем автоматически проверять снова.",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram: конфликт синхронизации для {path} — ваши локальные изменения сохранены как {copy}",
 	"Engram: sync failed. Open the sync log for details.":
@@ -270,10 +280,16 @@ const ru: Dict = {
 	"Engram: sync paused": "Engram: синхронизация приостановлена",
 	"Engram: syncing": "Engram: синхронизация",
 	"Engram: syncing ({count})": "Engram: синхронизация ({count})",
+	"Engram: the server accepts this device again. Sync is resuming.":
+		"Engram: сервер снова принимает это устройство. Синхронизация возобновляется.",
+	"Engram: this account is paused, so syncing is off. Your changes stay on this device. Contact {email} to get it restored.":
+		"Engram: эта учётная запись приостановлена, поэтому синхронизация отключена. Ваши изменения остаются на этом устройстве. Свяжитесь с {email}, чтобы восстановить синхронизацию.",
 	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
 		"Engram: этот плагин слишком старый для синхронизации (требуется {version} или новее). Обновите его, чтобы продолжить.",
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram: этот плагин слишком старый для синхронизации. Обновите его, чтобы продолжить.",
+	"Engram: this plugin is too old to sync. {versions}":
+		"Engram: этот плагин слишком старый для синхронизации. {versions}",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: это хранилище больше не существует на сервере. Выберите или создайте хранилище, чтобы продолжить.",
 	"Engram: update required": "Engram: требуется обновление",
@@ -393,6 +409,8 @@ const ru: Dict = {
 	"Not signed in. Click to open settings and reconnect.":
 		"Не вошли в систему. Нажмите, чтобы открыть настройки и подключиться заново.",
 	"Not synced on your plan ({count})": "Не синхронизировано по вашему тарифному плану ({count})",
+	"Not syncing: this account is paused. Contact {email}.":
+		"Синхронизация не происходит: эта учётная запись приостановлена. Свяжитесь с {email}.",
 	"Not syncing: this plugin version is too old (needs {version} or newer). Click to update.":
 		"Синхронизация не происходит: версия плагина слишком старая (требуется {version} или новее). Нажмите для обновления.",
 	"Not syncing: this plugin version is too old. Click to update.":
@@ -562,6 +580,8 @@ const ru: Dict = {
 		"Сервер Engram больше не принимает эту версию плагина (требуется {version} или новее), поэтому заметки не отправляются и не получаются. Изменения, сделанные на этом устройстве, остаются здесь до обновления.",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Сервер Engram больше не принимает эту версию плагина, поэтому заметки не отправляются и не получаются. Изменения, сделанные на этом устройстве, остаются здесь до обновления.",
+	"The Engram server no longer accepts this plugin version. {versions} Changes made on this device stay here until you update.":
+		"Сервер Engram больше не принимает эту версию плагина. {versions} Изменения, сделанные на этом устройстве, остаются здесь, пока вы не обновите.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"Размер файла превышает ограничение сервера. Сжатие или разделение файла позволит синхронизировать его.",
 	"The file is too large for the server.": "Файл слишком большой для сервера.",
@@ -577,6 +597,8 @@ const ru: Dict = {
 		"Сервер слишком долго отвечает. Попробуйте ещё раз.",
 	"These files are fine. Each card below says why they did not sync.":
 		"Эти файлы в порядке. Каждая карточка ниже объясняет, почему они не были синхронизированы.",
+	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":
+		"Эта учётная запись приостановлена, поэтому заметки не отправляются и не получаются. Изменения, сделанные на этом устройстве, остаются здесь. Свяжитесь с {email}, чтобы восстановить синхронизацию. Синхронизация возобновится автоматически после этого.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Эта учётная запись была удалена. Обратитесь в службу поддержки, если это не так.",
 	"This cannot be undone.": "Это действие необратимо.",
@@ -667,6 +689,8 @@ const ru: Dict = {
 		"Сейчас вы используете другое облачное хранилище",
 	"You can close this and the sync keeps running in the background.":
 		"Вы можете закрыть это окно, и синхронизация продолжит работу в фоновом режиме.",
+	"You have {current}. Update to {target} or newer to keep syncing.":
+		"У вас версия {current}. Обновите до версии {target} или новее, чтобы продолжить синхронизацию.",
 	"You've used all the attachment storage on your plan. Upgrade for more.":
 		"Вы использовали весь объём хранилища для вложений в рамках вашего тарифного плана. Обновите подписку для получения большего объёма.",
 	"Your code:": "Ваш код:",

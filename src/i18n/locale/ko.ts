@@ -26,6 +26,7 @@ const ko: Dict = {
 	About: "정보",
 	"Accept it to keep syncing.": "동기화를 계속하려면 수락하세요.",
 	"Access token": "접근 토큰",
+	"Account paused: Engram is not syncing": "계정 일시 중지: Engram은 동기화되지 않습니다",
 	"Account setup incomplete.": "계정 설정이 완료되지 않았습니다.",
 	"Account suspended. Contact support.": "계정이 정지되었습니다. 지원팀에 문의하세요.",
 	"Activity ({count})": "활동 ({count})",
@@ -60,6 +61,7 @@ const ko: Dict = {
 	"Cargo cache": "Cargo 캐시",
 	Change: "변경",
 	"Change vault": "보관함 변경",
+	"Check again": "다시 확인",
 	"Check sync status": "동기화 상태 확인",
 	"Checking for changes.": "변경 사항을 확인 중입니다.",
 	"Checking server…": "서버 확인 중…",
@@ -176,6 +178,11 @@ const ko: Dict = {
 		"Engram의 {document} 업데이트, 적용일자: {date}.",
 	"Engram: This vault has been deleted on the server.":
 		"Engram: 이 보관함이 서버에서 삭제되었습니다.",
+	"Engram: account paused": "Engram: 계정 일시 중지됨",
+	"Engram: checked a moment ago. Try again in a few seconds.":
+		"Engram: 잠시 전에 확인했습니다. 몇 초 후에 다시 시도하세요.",
+	"Engram: could not reach the server. We will keep checking automatically.":
+		"Engram: 서버에 연결할 수 없습니다. 자동으로 계속 확인하겠습니다.",
 	"Engram: disconnected. Open Engram settings to reconnect.":
 		"Engram: 연결 해제됨. 다시 연결하려면 Engram 설정으로 이동하세요.",
 	"Engram: error": "Engram: 오류",
@@ -196,6 +203,8 @@ const ko: Dict = {
 	"Engram: settings tab failed to render ({error})": "Engram: 설정 탭 로딩 실패 ({error})",
 	"Engram: sign-in failed ({error})": "Engram: 로그인 실패 ({error})",
 	"Engram: signed out": "Engram: 로그아웃됨",
+	"Engram: still refused by the server. We will keep checking automatically.":
+		"Engram: 서버에서 여전히 거부되었습니다. 자동으로 계속 확인하겠습니다.",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram: {path}에서 동기화 충돌이 발생했습니다. 로컬 편집 내용은 {copy}으로 저장되었습니다",
 	"Engram: sync failed. Open the sync log for details.":
@@ -207,10 +216,16 @@ const ko: Dict = {
 	"Engram: sync paused": "Engram: 동기화 일시 중지",
 	"Engram: syncing": "Engram: 동기화 중",
 	"Engram: syncing ({count})": "Engram: 동기화 중 ({count})",
+	"Engram: the server accepts this device again. Sync is resuming.":
+		"Engram: 서버가 이 장치를 다시 허용합니다. 동기화가 재개됩니다.",
+	"Engram: this account is paused, so syncing is off. Your changes stay on this device. Contact {email} to get it restored.":
+		"Engram: 이 계정은 일시 중지되어 동기화가 꺼져 있습니다. 변경 내용은 이 기기에만 저장됩니다. 복구를 원하시면 {email}에게 문의하세요.",
 	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
 		"Engram: 이 플러그인은 너무 오래되어 동기화할 수 없습니다 (최소 {version} 이상 필요). 계속하려면 업데이트하세요.",
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram: 이 플러그인은 너무 오래되어 동기화할 수 없습니다. 계속하려면 업데이트하세요.",
+	"Engram: this plugin is too old to sync. {versions}":
+		"Engram: 이 플러그인은 너무 오래되어 동기화할 수 없습니다. {versions}",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: 이 보관함은 더 이상 서버에 존재하지 않습니다. 계속하려면 보관함을 선택하거나 새로 만드세요.",
 	"Engram: update required": "Engram: 업데이트 필요",
@@ -313,6 +328,8 @@ const ko: Dict = {
 	"Not signed in. Click to open settings and reconnect.":
 		"아직 로그인하지 않았습니다. 설정을 클릭하여 다시 연결하세요.",
 	"Not synced on your plan ({count})": "구독 플랜에 포함되지 않아 동기화되지 않음 ({count})",
+	"Not syncing: this account is paused. Contact {email}.":
+		"동기화 중지: 이 계정은 일시 중지되었습니다. {email}에게 문의하세요.",
 	"Not syncing: this plugin version is too old (needs {version} or newer). Click to update.":
 		"동기화 중지: 이 플러그인 버전이 너무 낮습니다 (최소 {version} 이상 필요). 업데이트하려면 클릭하세요.",
 	"Not syncing: this plugin version is too old. Click to update.":
@@ -485,6 +502,8 @@ const ko: Dict = {
 		"서버 응답 시간이 너무 오래 걸렸습니다. 다시 시도해 주세요.",
 	"These files are fine. Each card below says why they did not sync.":
 		"이 파일들은 문제가 없습니다. 아래 각 항목에서 동기화되지 않은 이유를 확인하세요.",
+	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":
+		"이 계정은 일시 중지되어 노트를 보내거나 받을 수 없습니다. 이 기기에서 변경한 내용은 여기에만 저장됩니다. 복구를 원하시면 {email}에게 문의하세요. 계정이 복구되면 자동으로 동기화가 재개됩니다.",
 	"This account was deleted. Contact support if that is wrong.":
 		"이 계정이 삭제되었습니다. 오류인 경우 지원팀에 문의하세요.",
 	"This cannot be undone.": "이 작업은 되돌릴 수 없습니다.",
@@ -553,6 +572,8 @@ const ko: Dict = {
 	"You are now pointing at a different cloud vault": "현재 다른 클라우드 보관함을 사용 중입니다",
 	"You can close this and the sync keeps running in the background.":
 		"이 창을 닫아도 동기화는 백그라운드에서 계속됩니다.",
+	"You have {current}. Update to {target} or newer to keep syncing.":
+		"{current}이 있습니다. 동기화를 계속하려면 {target} 이상으로 업데이트하세요.",
 	"You've used all the attachment storage on your plan. Upgrade for more.":
 		"플랜에서 제공하는 첨부 파일 저장 공간을 모두 사용하셨습니다. 더 많은 저장 공간을 원하시면 업그레이드하세요.",
 	"Your code:": "코드:",

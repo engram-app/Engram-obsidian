@@ -27,6 +27,7 @@ const ms: Dict = {
 	About: "Mengenai",
 	"Accept it to keep syncing.": "Terima untuk terus menyegerakkan.",
 	"Access token": "Token akses",
+	"Account paused: Engram is not syncing": "Akaun ditangguhkan: Engram tidak disegerakkan",
 	"Account setup incomplete.": "Persediaan akaun belum lengkap.",
 	"Account suspended. Contact support.": "Akaun telah digantung. Hubungi sokongan.",
 	"Activity ({count})": "Aktiviti ({count})",
@@ -62,6 +63,7 @@ const ms: Dict = {
 	"Cargo cache": "Cache Cargo",
 	Change: "Tukar",
 	"Change vault": "Tukar peti nota",
+	"Check again": "Semak sekali lagi",
 	"Check sync status": "Semak status penyegerakan",
 	"Checking for changes.": "Memeriksa perubahan.",
 	"Checking server…": "Memeriksa pelayan…",
@@ -180,6 +182,11 @@ const ms: Dict = {
 		"Kemas kini Engram untuk {document}, berkuat kuasa {date}.",
 	"Engram: This vault has been deleted on the server.":
 		"Engram: Peti nota ini telah dipadamkan di server.",
+	"Engram: account paused": "Engram: akaun ditangguhkan",
+	"Engram: checked a moment ago. Try again in a few seconds.":
+		"Engram: telah disemak sebentar tadi. Cuba lagi dalam beberapa saat.",
+	"Engram: could not reach the server. We will keep checking automatically.":
+		"Engram: tidak dapat mencapai pelayan. Kami akan terus menyemak secara automatik.",
 	"Engram: disconnected. Open Engram settings to reconnect.":
 		"Engram: telah diputuskan sambungan. Buka tetapan Engram untuk menyambung semula.",
 	"Engram: error": "Engram: ralat",
@@ -201,6 +208,8 @@ const ms: Dict = {
 		"Engram: tab tetapan gagal dipaparkan ({error})",
 	"Engram: sign-in failed ({error})": "Engram: log masuk gagal ({error})",
 	"Engram: signed out": "Engram: telah log keluar",
+	"Engram: still refused by the server. We will keep checking automatically.":
+		"Engram: masih ditolak oleh pelayan. Kami akan terus menyemak secara automatik.",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram: konflik sync pada {path} — edit tempatan anda telah disimpan sebagai {copy}",
 	"Engram: sync failed. Open the sync log for details.":
@@ -212,10 +221,16 @@ const ms: Dict = {
 	"Engram: sync paused": "Engram: sync ditangguhkan",
 	"Engram: syncing": "Engram: sedang disinkronkan",
 	"Engram: syncing ({count})": "Engram: sedang disinkronkan ({count})",
+	"Engram: the server accepts this device again. Sync is resuming.":
+		"Engram: pelayan menerima peranti ini semula. Proses sync sedang disambung semula.",
+	"Engram: this account is paused, so syncing is off. Your changes stay on this device. Contact {email} to get it restored.":
+		"Engram: akaun ini ditangguhkan, jadi proses sync dimatikan. Perubahan anda kekal pada peranti ini. Hubungi {email} untuk memulihkannya.",
 	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
 		"Engram: plugin ini terlalu lama untuk melakukan sync (perlu {version} atau lebih baru). Kemas kini untuk meneruskan.",
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram: plugin ini terlalu lama untuk melakukan sync. Kemas kini untuk meneruskan.",
+	"Engram: this plugin is too old to sync. {versions}":
+		"Engram: plugin ini terlalu lama untuk disegerakkan. {versions}",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: peti nota ini tidak lagi wujud di server. Pilih atau cipta peti nota untuk meneruskan.",
 	"Engram: update required": "Engram: kemas kini diperlukan",
@@ -317,6 +332,8 @@ const ms: Dict = {
 	"Not signed in. Click to open settings and reconnect.":
 		"Belum log masuk. Klik untuk membuka tetapan dan sambungkan semula.",
 	"Not synced on your plan ({count})": "Tidak disinkronkan dalam pelan anda ({count})",
+	"Not syncing: this account is paused. Contact {email}.":
+		"Tidak disegerakkan: akaun ini ditangguhkan. Hubungi {email}.",
 	"Not syncing: this plugin version is too old (needs {version} or newer). Click to update.":
 		"Tidak disegerakkan: versi plugin ini terlalu lama (perlu {version} atau yang lebih baru). Klik untuk mengemas kini.",
 	"Not syncing: this plugin version is too old. Click to update.":
@@ -481,6 +498,8 @@ const ms: Dict = {
 		"Pelayan Engram tidak lagi menerima versi plugin ini (perlukan {version} atau versi yang lebih baru), jadi nota tidak dihantar atau diterima. Perubahan yang dibuat pada peranti ini kekal di sini sehingga anda mengemas kini.",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Pelayan Engram tidak lagi menerima versi plugin ini, jadi nota tidak dihantar atau diterima. Perubahan yang dibuat pada peranti ini kekal di sini sehingga anda mengemas kini.",
+	"The Engram server no longer accepts this plugin version. {versions} Changes made on this device stay here until you update.":
+		"Pelayan Engram tidak lagi menerima versi plugin ini. {versions} Perubahan yang dibuat pada peranti ini kekal di sini sehingga anda mengemas kini.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"Saiz fail melebihi had pelayan. Kompres atau bahagikannya, kemudian ia akan disegerakkan.",
 	"The file is too large for the server.": "Fail ini terlalu besar untuk pelayan.",
@@ -496,6 +515,8 @@ const ms: Dict = {
 		"Pelayan mengambil masa terlalu lama untuk menjawab. Cuba lagi.",
 	"These files are fine. Each card below says why they did not sync.":
 		"Fail-fail ini adalah betul. Setiap kad di bawah menyatakan mengapa ia tidak disegerakkan.",
+	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":
+		"Akaun ini ditangguhkan, jadi nota tidak dihantar atau diterima. Perubahan yang dibuat pada peranti ini kekal di sini. Hubungi {email} untuk memulihkannya. Proses sync akan berterusan secara automatik setelah ia dipulihkan.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Akaun ini telah dipadam. Hubungi sokongan jika ini tidak betul.",
 	"This cannot be undone.": "Ini tidak dapat dibatalkan.",
@@ -566,6 +587,8 @@ const ms: Dict = {
 		"Anda kini mengakses peti nota awan yang berbeza",
 	"You can close this and the sync keeps running in the background.":
 		"Anda boleh menutup ini dan proses sync akan terus berjalan di latar belakang.",
+	"You have {current}. Update to {target} or newer to keep syncing.":
+		"Anda mempunyai {current}. Kemas kini ke {target} atau versi yang lebih baru untuk terus menyegerakkan.",
 	"You've used all the attachment storage on your plan. Upgrade for more.":
 		"Anda telah menggunakan semua ruang simpan lampiran dalam langganan anda. Tingkatkan untuk lebih banyak ruang.",
 	"Your code:": "Kod anda:",

@@ -27,6 +27,8 @@ const id: Dict = {
 	About: "Tentang",
 	"Accept it to keep syncing.": "Terima untuk melanjutkan sinkronisasi.",
 	"Access token": "Token akses",
+	"Account paused: Engram is not syncing":
+		"Akun ditangguhkan: Engram tidak melakukan sinkronisasi",
 	"Account setup incomplete.": "Pengaturan akun belum selesai.",
 	"Account suspended. Contact support.": "Akun ditangguhkan. Hubungi dukungan.",
 	"Activity ({count})": "Aktivitas ({count})",
@@ -62,6 +64,7 @@ const id: Dict = {
 	"Cargo cache": "Cache Cargo",
 	Change: "Ubah",
 	"Change vault": "Ganti Vault",
+	"Check again": "Periksa kembali",
 	"Check sync status": "Periksa status sinkronisasi",
 	"Checking for changes.": "Memeriksa perubahan.",
 	"Checking server…": "Memeriksa server…",
@@ -181,6 +184,11 @@ const id: Dict = {
 		"Pembaruan Engram untuk {document}, berlaku mulai {date}.",
 	"Engram: This vault has been deleted on the server.":
 		"Engram: Vault ini telah dihapus di server.",
+	"Engram: account paused": "Engram: akun ditangguhkan",
+	"Engram: checked a moment ago. Try again in a few seconds.":
+		"Engram: diperiksa beberapa saat yang lalu. Coba lagi dalam beberapa detik.",
+	"Engram: could not reach the server. We will keep checking automatically.":
+		"Engram: tidak dapat menjangkau server. Kami akan terus memeriksa secara otomatis.",
 	"Engram: disconnected. Open Engram settings to reconnect.":
 		"Engram: terputus. Buka pengaturan Engram untuk menghubungkan kembali.",
 	"Engram: error": "Engram: kesalahan",
@@ -202,6 +210,8 @@ const id: Dict = {
 		"Engram: tab pengaturan gagal ditampilkan ({error})",
 	"Engram: sign-in failed ({error})": "Engram: proses masuk gagal ({error})",
 	"Engram: signed out": "Engram: keluar",
+	"Engram: still refused by the server. We will keep checking automatically.":
+		"Engram: masih ditolak oleh server. Kami akan terus memeriksa secara otomatis.",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram: konflik sinkronisasi pada {path} — editan lokal Anda disimpan sebagai {copy}",
 	"Engram: sync failed. Open the sync log for details.":
@@ -213,10 +223,16 @@ const id: Dict = {
 	"Engram: sync paused": "Engram: sinkronisasi dihentikan",
 	"Engram: syncing": "Engram: sedang menyinkronkan",
 	"Engram: syncing ({count})": "Engram: sedang menyinkronkan ({count})",
+	"Engram: the server accepts this device again. Sync is resuming.":
+		"Engram: server menerima perangkat ini lagi. Sinkronisasi sedang dilanjutkan.",
+	"Engram: this account is paused, so syncing is off. Your changes stay on this device. Contact {email} to get it restored.":
+		"Engram: akun ini ditangguhkan, sehingga sinkronisasi dimatikan. Perubahan Anda tetap di perangkat ini. Hubungi {email} untuk mengaktifkannya kembali.",
 	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
 		"Engram: plugin ini terlalu lama untuk disinkronkan (memerlukan {version} atau lebih baru). Perbarui untuk melanjutkan.",
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram: plugin ini terlalu lama untuk disinkronkan. Perbarui untuk melanjutkan.",
+	"Engram: this plugin is too old to sync. {versions}":
+		"Engram: plugin ini terlalu lama untuk melakukan sinkronisasi. {versions}",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: vault ini tidak lagi ada di server. Pilih atau buat vault untuk melanjutkan.",
 	"Engram: update required": "Engram: pembaruan diperlukan",
@@ -318,6 +334,8 @@ const id: Dict = {
 	"Not signed in. Click to open settings and reconnect.":
 		"Belum masuk. Klik untuk membuka pengaturan dan menghubungkan kembali.",
 	"Not synced on your plan ({count})": "Belum disinkronkan pada paket Anda ({count})",
+	"Not syncing: this account is paused. Contact {email}.":
+		"Tidak melakukan sinkronisasi: akun ini ditangguhkan. Hubungi {email}.",
 	"Not syncing: this plugin version is too old (needs {version} or newer). Click to update.":
 		"Tidak melakukan sinkronisasi: versi plugin ini terlalu lama (membutuhkan {version} atau lebih baru). Klik untuk memperbarui.",
 	"Not syncing: this plugin version is too old. Click to update.":
@@ -482,6 +500,8 @@ const id: Dict = {
 		"Server Engram tidak lagi menerima versi plugin ini (membutuhkan {version} atau lebih baru), sehingga catatan tidak dikirim atau diterima. Perubahan yang dibuat di perangkat ini akan tetap di sini sampai Anda memperbarui.",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Server Engram tidak lagi menerima versi plugin ini, sehingga catatan tidak dikirim atau diterima. Perubahan yang dibuat di perangkat ini akan tetap di sini sampai Anda memperbarui.",
+	"The Engram server no longer accepts this plugin version. {versions} Changes made on this device stay here until you update.":
+		"Server Engram tidak lagi menerima versi plugin ini. {versions} Perubahan yang dibuat di perangkat ini akan tetap di sini sampai Anda memperbarui.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"Ukuran berkas melebihi batas server. Kompres atau bagi berkas tersebut, lalu lakukan sinkronisasi.",
 	"The file is too large for the server.": "File terlalu besar untuk server.",
@@ -497,6 +517,8 @@ const id: Dict = {
 		"Server membutuhkan waktu terlalu lama untuk merespons. Coba lagi.",
 	"These files are fine. Each card below says why they did not sync.":
 		"File-file ini tidak masalah. Setiap kartu di bawah menjelaskan mengapa tidak disinkronkan.",
+	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":
+		"Akun ini ditangguhkan, sehingga catatan tidak dikirim atau diterima. Perubahan yang dibuat di perangkat ini tetap di sini. Hubungi {email} untuk mengaktifkannya kembali. Sinkronisasi akan berlanjut secara otomatis setelah itu.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Akun ini telah dihapus. Hubungi dukungan jika itu salah.",
 	"This cannot be undone.": "Ini tidak dapat dibatalkan.",
@@ -568,6 +590,8 @@ const id: Dict = {
 		"Anda sekarang menunjuk ke Vault cloud yang berbeda",
 	"You can close this and the sync keeps running in the background.":
 		"Anda dapat menutup ini, dan sinkronisasi tetap berjalan di latar belakang.",
+	"You have {current}. Update to {target} or newer to keep syncing.":
+		"Anda memiliki {current}. Perbarui ke {target} atau versi yang lebih baru untuk melanjutkan sinkronisasi.",
 	"You've used all the attachment storage on your plan. Upgrade for more.":
 		"Anda telah menggunakan semua ruang penyimpanan lampiran pada paket Anda. Tingkatkan untuk mendapatkan lebih banyak.",
 	"Your code:": "Kode Anda:",

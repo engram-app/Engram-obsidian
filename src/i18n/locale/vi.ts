@@ -27,6 +27,7 @@ const vi: Dict = {
 	About: "Giới thiệu",
 	"Accept it to keep syncing.": "Chấp nhận để tiếp tục đồng bộ hóa.",
 	"Access token": "Token truy cập",
+	"Account paused: Engram is not syncing": "Tài khoản tạm dừng: Engram không đang đồng bộ hóa",
 	"Account setup incomplete.": "Thiết lập tài khoản chưa hoàn tất.",
 	"Account suspended. Contact support.": "Tài khoản đã bị đình chỉ. Liên hệ với bộ phận hỗ trợ.",
 	"Activity ({count})": "Hoạt động ({count})",
@@ -61,6 +62,7 @@ const vi: Dict = {
 	"Cargo cache": "Bộ nhớ đệm Cargo",
 	Change: "Thay đổi",
 	"Change vault": "Thay đổi kho lưu trữ",
+	"Check again": "Kiểm tra lại",
 	"Check sync status": "Kiểm tra trạng thái đồng bộ hóa",
 	"Checking for changes.": "Đang kiểm tra thay đổi.",
 	"Checking server…": "Đang kiểm tra máy chủ…",
@@ -177,6 +179,11 @@ const vi: Dict = {
 		"Bản cập nhật Engram của {document}, có hiệu lực từ {date}.",
 	"Engram: This vault has been deleted on the server.":
 		"Engram: kho lưu trữ này đã bị xóa trên máy chủ.",
+	"Engram: account paused": "Engram: tài khoản tạm dừng",
+	"Engram: checked a moment ago. Try again in a few seconds.":
+		"Engram: đã kiểm tra cách đây vài giây. Thử lại sau vài giây.",
+	"Engram: could not reach the server. We will keep checking automatically.":
+		"Engram: không thể kết nối đến máy chủ. Chúng tôi sẽ tự động kiểm tra lại.",
 	"Engram: disconnected. Open Engram settings to reconnect.":
 		"Engram: đã ngắt kết nối. Mở cài đặt Engram để kết nối lại.",
 	"Engram: error": "Engram: lỗi",
@@ -198,6 +205,8 @@ const vi: Dict = {
 		"Engram: tab cài đặt không hiển thị ({error})",
 	"Engram: sign-in failed ({error})": "Engram: đăng nhập thất bại ({error})",
 	"Engram: signed out": "Engram: Đã đăng xuất",
+	"Engram: still refused by the server. We will keep checking automatically.":
+		"Engram: vẫn bị từ chối bởi máy chủ. Chúng tôi sẽ tự động kiểm tra lại.",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram: xung đột đồng bộ trên {path} — chỉnh sửa cục bộ của bạn đã được lưu dưới dạng {copy}",
 	"Engram: sync failed. Open the sync log for details.":
@@ -209,10 +218,16 @@ const vi: Dict = {
 	"Engram: sync paused": "Engram: Đã tạm dừng đồng bộ hóa",
 	"Engram: syncing": "Engram: đang đồng bộ hóa",
 	"Engram: syncing ({count})": "Engram: đang đồng bộ hóa ({count})",
+	"Engram: the server accepts this device again. Sync is resuming.":
+		"Engram: máy chủ chấp nhận thiết bị này. Quá trình đồng bộ hóa đang được tiếp tục.",
+	"Engram: this account is paused, so syncing is off. Your changes stay on this device. Contact {email} to get it restored.":
+		"Engram: tài khoản này đang bị tạm dừng, do đó đồng bộ hóa đã bị tắt. Các thay đổi của bạn sẽ chỉ lưu trên thiết bị này. Liên hệ {email} để khôi phục lại.",
 	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
 		"Engram: plugin này quá cũ để đồng bộ hóa (cần {version} trở lên). Cập nhật để tiếp tục.",
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram: plugin này quá cũ để đồng bộ hóa. Cập nhật để tiếp tục.",
+	"Engram: this plugin is too old to sync. {versions}":
+		"Engram: phiên bản plugin này quá cũ để đồng bộ hóa. {versions}",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: kho lưu trữ này không còn tồn tại trên máy chủ. Chọn hoặc tạo một kho lưu trữ để tiếp tục.",
 	"Engram: update required": "Engram: cần cập nhật",
@@ -315,6 +330,8 @@ const vi: Dict = {
 	"Not signed in. Click to open settings and reconnect.":
 		"Chưa đăng nhập. Nhấp để mở cài đặt và kết nối lại.",
 	"Not synced on your plan ({count})": "Chưa được đồng bộ hóa trong gói của bạn ({count})",
+	"Not syncing: this account is paused. Contact {email}.":
+		"Không đồng bộ hóa: tài khoản này đang bị tạm dừng. Liên hệ {email}.",
 	"Not syncing: this plugin version is too old (needs {version} or newer). Click to update.":
 		"Không đồng bộ hóa: phiên bản plugin này quá cũ (cần {version} trở lên). Nhấp để cập nhật.",
 	"Not syncing: this plugin version is too old. Click to update.":
@@ -478,6 +495,8 @@ const vi: Dict = {
 		"Máy chủ Engram không còn hỗ trợ phiên bản plugin này (cần phiên bản {version} trở lên), vì vậy ghi chú không được gửi hoặc nhận. Các thay đổi bạn thực hiện trên thiết bị này sẽ vẫn ở đây cho đến khi bạn cập nhật.",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Máy chủ Engram không còn hỗ trợ phiên bản plugin này, vì vậy ghi chú không được gửi hoặc nhận. Các thay đổi bạn thực hiện trên thiết bị này sẽ vẫn ở đây cho đến khi bạn cập nhật.",
+	"The Engram server no longer accepts this plugin version. {versions} Changes made on this device stay here until you update.":
+		"Máy chủ Engram không còn hỗ trợ phiên bản plugin này. {versions} Các thay đổi thực hiện trên thiết bị này sẽ vẫn ở đây cho đến khi bạn cập nhật.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"Tệp vượt quá giới hạn kích thước của máy chủ. Nén hoặc chia nhỏ nó, sau đó nó sẽ được đồng bộ hóa.",
 	"The file is too large for the server.": "Tệp quá lớn đối với máy chủ.",
@@ -492,6 +511,8 @@ const vi: Dict = {
 	"The server took too long to respond. Try again.": "Máy chủ phản hồi quá chậm. Thử lại.",
 	"These files are fine. Each card below says why they did not sync.":
 		"Các tệp này không có vấn đề gì. Mỗi mục bên dưới giải thích lý do tại sao chúng không được đồng bộ hóa.",
+	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":
+		"Tài khoản này đang bị tạm dừng, vì vậy ghi chú không được gửi hoặc nhận. Các thay đổi bạn thực hiện trên thiết bị này sẽ chỉ lưu ở đây. Liên hệ {email} để khôi phục lại. Đồng bộ hóa sẽ tự động tiếp tục khi tài khoản được kích hoạt.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Tài khoản này đã bị xóa. Liên hệ hỗ trợ nếu điều này là sai.",
 	"This cannot be undone.": "Không thể hoàn tác.",
@@ -563,6 +584,8 @@ const vi: Dict = {
 		"Bạn đang trỏ đến một kho lưu trữ đám mây khác",
 	"You can close this and the sync keeps running in the background.":
 		"Bạn có thể đóng cửa và quá trình đồng bộ hóa vẫn tiếp tục chạy trong nền.",
+	"You have {current}. Update to {target} or newer to keep syncing.":
+		"Bạn có {current}. Cập nhật lên {target} hoặc phiên bản mới hơn để tiếp tục đồng bộ hóa.",
 	"You've used all the attachment storage on your plan. Upgrade for more.":
 		"Bạn đã sử dụng hết dung lượng lưu trữ tệp đính kèm trong gói của bạn. Nâng cấp để có thêm dung lượng.",
 	"Your code:": "Mã của bạn:",

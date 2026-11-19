@@ -69,3 +69,11 @@ export const DEFAULT_UPGRADE_URL = `${ENGRAM_APP_URL}/settings/billing`;
 /** Hosted sign-up. Registration is open, so the plugin sends new users
  *  straight to the app rather than to a marketing page or a waitlist. */
 export const ENGRAM_SIGN_UP_URL = `${ENGRAM_APP_URL}/sign-up`;
+
+/** Where a user whose account is paused is told to write. One place for the
+ *  copy in the Notice, status bar and Sync Center banner; never taken from the
+ *  server (same reason `update_url` is ignored in upgrade-required.ts). */
+export const SUPPORT_EMAIL = "support@engram.page";
+
+/** Opens this plugin's page in Obsidian, where Update lives. */
+export const PLUGIN_UPDATE_URL = "obsidian://show-plugin?id=engram-vault-sync";

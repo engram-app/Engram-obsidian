@@ -35,9 +35,12 @@ import type {
 	VersionConflictResponse,
 } from "./types";
 import {
+	applyServerMinimum,
 	clearUpgradeRefusal,
 	isUpgradeRequired,
 	notifyUpgradeRequired,
+	parseRefusal,
+	type RefusalProbe,
 	upgradeRequiredError,
 } from "./upgrade-required";
 import { wasmCore } from "./wasm-core";
@@ -299,13 +302,26 @@ export class EngramApi {
 		path: string,
 	): boolean {
 		if (status !== 426) return false;
-		const body = errorBody(e);
-		notifyUpgradeRequired(
-			typeof body.min_version === "string" ? body.min_version : null,
-			{ method, route: beaconRoute(path) },
-			body.error === "plugin_upgrade_required",
-		);
+		const r = parseRefusal(errorBody(e));
+		notifyUpgradeRequired(r.minVersion, { method, route: beaconRoute(path) }, r.confirmed, {
+			kind: r.kind,
+			retryAfterS: r.retryAfterS,
+			updateTo: r.updateTo,
+		});
 		return true;
+	}
+
+	/** The refusal self-recheck's probe (upgrade-required.ts): the cheapest
+	 *  authed GET, sent past the local refusal guard. Only a 2xx is `clear`; a
+	 *  426 is still `refused`; anything else (5xx, timeout, 401, offline) teaches
+	 *  nothing, so it is `unknown` and can never clear or enter a refusal. */
+	async probeRefusal(): Promise<RefusalProbe> {
+		try {
+			await this.request("GET", "/vaults", undefined, undefined, true);
+			return "clear";
+		} catch (e) {
+			return statusOf(e) === 426 ? "refused" : "unknown";
+		}
 	}
 
 	/** Send free-form feedback from the plugin's Feedback tab. */
@@ -326,13 +342,14 @@ export class EngramApi {
 		path: string,
 		body?: unknown,
 		extraHeaders?: Record<string, string>,
+		bypassRefusal = false,
 	): Promise<RequestUrlResponse> {
 		// A 426 is permanent until the plugin is updated, which means a reload.
 		// Once refused (here or on a socket join), every later call would 426
 		// too: refuse locally instead of sending. Without this the remote logger
 		// re-buffered each refused batch and retried it forever (1,330 POST
 		// /api/logs in 12h from one install, 2026-10-18).
-		if (isUpgradeRequired()) throw upgradeRequiredError();
+		if (!bypassRefusal && isUpgradeRequired()) throw upgradeRequiredError();
 		try {
 			return await this.sendRequest(method, path, body, extraHeaders);
 		} catch (e) {
@@ -625,6 +642,14 @@ export class EngramApi {
 		// A shape mismatch (proxy error page, wrong server) must be a legible
 		// error, not an opaque TypeError on a nested dereference.
 		if (!user) throw new Error("Malformed /me response: missing user");
+		// Self-protection (upgrade-required.ts): the effective minimum rides on
+		// the start-up payload. Absent = unknown, never a block.
+		const top = (resp.json ?? {}) as Record<string, unknown>;
+		const u = user as unknown as Record<string, unknown>;
+		applyServerMinimum(
+			top.min_plugin_version ?? u.min_plugin_version,
+			top.recommended_plugin_version ?? u.recommended_plugin_version,
+		);
 		return user;
 	}
 
