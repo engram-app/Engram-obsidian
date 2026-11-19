@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.40.0](https://github.com/engram-app/Engram-obsidian/compare/1.39.3...1.40.0) (2026-11-19)
+
+
+### Features
+
+* **sync:** one folder_op per folder rename (Engram[#2523](https://github.com/engram-app/Engram-obsidian/issues/2523) S4) ([e0b460c](https://github.com/engram-app/Engram-obsidian/commit/e0b460c8a3152f4d025629041dfa380bb14d0a2d))
+
+
+### Bug Fixes
+
+* **queue:** stop vault-less replay POST loop ([#712](https://github.com/engram-app/Engram-obsidian/issues/712)) ([494483c](https://github.com/engram-app/Engram-obsidian/commit/494483cb64d23014755558d85f013c341f8f7065))
+* **sync:** keep moved-away mark on engine folder create ([#708](https://github.com/engram-app/Engram-obsidian/issues/708)) ([ba04c12](https://github.com/engram-app/Engram-obsidian/commit/ba04c126fb362fd3198e17c49fd42325797bf965))
+* **sync:** no false keep-both on identity move ([#711](https://github.com/engram-app/Engram-obsidian/issues/711)) ([ab83d3c](https://github.com/engram-app/Engram-obsidian/commit/ab83d3c728a34c212ec138e8dd74876c45c6ac12))
+
 ## [1.39.3](https://github.com/engram-app/Engram-obsidian/compare/1.39.2...1.39.3) (2026-11-14)
 
 
