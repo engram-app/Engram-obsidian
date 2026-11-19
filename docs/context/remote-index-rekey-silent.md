@@ -42,6 +42,13 @@ feed, nothing ever corrected it.
   projects from, so it undid the server's move on every device (test_107
   offline edit, feed off: the sibling note was repathed back to the old folder).
   The bookkeeping stays at the new paths and each file follows on its own.
+- A file that still cannot follow is a STUCK MOVE (`stuckMoves`, persisted
+  with the folder index): its id is at the new path and its old file has no
+  id and no sync row, so nothing else would ever find it, and a push sweep
+  would upload it as a second note. It is retried on reconnect, after
+  folder_changed and before every push sweep, and `pushFile` refuses it
+  until then. Another note at the new name means a conflict copy, never a
+  claim; a different note already at a new name is never re-keyed onto.
 
 ## Gotchas
 - `noteRef` labels (`n1`, `n2`) are numbered PER DEVICE. Comparing labels across
