@@ -1111,7 +1111,7 @@ export class SyncEngine {
 		map?.setCommitHold?.((p) => this.folderOps.touches(p));
 		// Follow identity with the bytes. The store reports a claim MOVING; this
 		// engine owns the vault, so it performs the corresponding file move.
-		map?.setRelocateHandler?.((from, to) => {
+		map?.setRelocateHandler?.((from, to, _id, remote) => {
 			// RECORD FIRST, move second. The move can lose: a concurrent flush or
 			// the discovery create may reach the new path first, and then this
 			// rename finds the target occupied and gives up -- which is exactly how
@@ -1119,7 +1119,14 @@ export class SyncEngine {
 			// lets whoever DOES materialize the path turn its create into a move,
 			// so the outcome no longer depends on who wins.
 			this.rememberRelocation(normalizePath(from), normalizePath(to));
-			void this.renameFollowingIdentity(from, to);
+			// A REMOTE claim only records. The server re-keys every note of a
+			// folder it moved BEFORE `folder_changed`, so moving each file here
+			// turned one folder rename into N file moves, left files with no id
+			// (attachments) behind, and made the folder's own move find its
+			// target taken (e2e test_107 one-folder-op case). The folder move
+			// reads the record (`fileOfNote`); a single note's move is followed
+			// when its row materializes, as before.
+			if (!remote) void this.renameFollowingIdentity(from, to);
 		});
 	}
 
@@ -6658,7 +6665,7 @@ export class SyncEngine {
 		if (!this.noteIdMap) return out;
 		for (const n of manifest.notes ?? []) {
 			if (!n.id) continue;
-			const mine = this.noteIdMap.pathForId(n.id);
+			const mine = this.fileOfNote(n.id, n.path);
 			if (mine === null || mine === n.path) continue;
 			const a = mine.split("/");
 			const b = n.path.split("/");
@@ -6675,6 +6682,17 @@ export class SyncEngine {
 			if (!out.has(s)) out.set(s, a.slice(0, i + 1).join("/"));
 		}
 		return out;
+	}
+
+	/** Where note `id`'s FILE is on this device, for the folder resolver. The
+	 *  map can already answer `listed` (the server's re-key of a moved folder's
+	 *  notes reaches the index before `folder_changed`) while the file is still
+	 *  at the old path; the relocation record says where, if a file is there. */
+	private fileOfNote(id: string, listed: string): string | null {
+		const mine = this.noteIdMap?.pathForId(id) ?? null;
+		if (mine !== listed || this.app.vault.getAbstractFileByPath(listed)) return mine;
+		const from = this.relocatedFrom.get(listed)?.from;
+		return from && this.app.vault.getAbstractFileByPath(from) ? from : mine;
 	}
 
 	/** Teach the index the server rows above `row` that it lacks, so a move of

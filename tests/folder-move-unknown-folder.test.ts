@@ -169,11 +169,22 @@ test("an id claim moving to the moved folder moves the file with it (production 
 
 // e2e run 44533055015: the REST folder move re-keys the server's index, and
 // that claim reaches this device as a REMOTE index update before
-// `folder_changed`. The map then reports the note at the new path, so the
-// unknown-folder resolver cannot place the folder, and the file stayed at the
-// old path. A remote claim moving an id must move the file like a local one.
-test("a remote index re-key of the moved note moves the file", async () => {
-	const { engine, tree } = await setup(async () => null, "prod");
+// `folder_changed`. The map then answers the new path while the file is still
+// at the old one, so the resolver (reading only the map) could not place the
+// folder and nothing moved. The folder must follow as ONE rename, carrying the
+// attachment, and the re-key alone must not move files one by one (e2e
+// test_107: a per-file move made the folder's own move find its target taken).
+test("a remote re-key before folder_changed still moves the folder as one rename", async () => {
+	const { engine, renames, tree } = await setup(
+		async () => ({
+			notes: [{ id: "n1", path: `${ROOT}/dst/n.md`, content_hash: "h" }],
+			attachments: [{ path: `${ROOT}/dst/img.png`, content_hash: "a" }],
+			total_notes: 1,
+			total_attachments: 1,
+			folders: FOLDERS,
+		}),
+		"prod",
+	);
 	const ids = (engine as any).noteIdMap as NoteIdMap;
 	ids.flushNow();
 	const doc = ids.store.doc!;
@@ -186,7 +197,11 @@ test("a remote index re-key of the moved note moves the file", async () => {
 	});
 	Y.applyUpdate(doc, Y.encodeStateAsUpdate(server, Y.encodeStateVector(doc)), "remote");
 	for (let i = 0; i < 20; i++) await Promise.resolve();
+	expect(renames).toEqual([]);
+	await engine.onFolderChanged({ id: "fD", parent_id: "fR", name: "dst", seq: 9 });
+	expect(renames).toEqual([[`${ROOT}/src`, `${ROOT}/dst`]]);
 	expect(tree.has(`${ROOT}/dst/n.md`)).toBe(true);
+	expect(tree.has(`${ROOT}/dst/img.png`)).toBe(true);
 	expect(tree.has(`${ROOT}/src/n.md`)).toBe(false);
 });
 

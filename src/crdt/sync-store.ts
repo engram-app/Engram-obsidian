@@ -119,7 +119,7 @@ export class SyncStore {
 	 *  identity, not the filesystem, so it reports the move and lets the engine
 	 *  decide what to do about the bytes on disk. Optional so the store stays
 	 *  usable headless (tests, the index room before the engine exists). */
-	onRelocate?: (from: string, to: string, note_id: string) => void;
+	onRelocate?: (from: string, to: string, note_id: string, remote?: boolean) => void;
 
 	/** Paths whose staged state `commit()` must keep LOCAL for now: the paths a
 	 *  still-pending folder op touches. This doc is authoritative for paths
@@ -181,7 +181,9 @@ export class SyncStore {
 	/** Report through `onRelocate` every id a REMOTE update moved off a path.
 	 *  A remote claim moves an id as surely as a local `set` does (the server
 	 *  re-keys every note of a moved folder: Identity.claim, folder-op C5), and
-	 *  only `set` used to report it, so the map moved and the file stayed.
+	 *  only `set` used to report it, so nothing recorded where the note's file
+	 *  still is. Reported with `remote` set: the engine records the move but
+	 *  does not move the file itself (a folder move follows as ONE rename).
 	 *
 	 *  Keyed on the DELETE of the old key, the one moment both paths are known
 	 *  without a scan: the old path from the event, the new one from the map.
@@ -198,7 +200,7 @@ export class SyncStore {
 			if (!id) continue;
 			const to = this.pathForId(id);
 			if (to && to !== from && this.map.get(to)?.note_id === id) {
-				this.onRelocate(from, to, id);
+				this.onRelocate(from, to, id, true);
 			}
 		}
 	}
