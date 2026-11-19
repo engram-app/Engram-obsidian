@@ -1631,7 +1631,8 @@ export default class EngramSyncPlugin extends Plugin {
 		setUpgradeAction(null);
 		setUpgradeStateListener(null);
 		stopRefusalRecheck();
-		this.refusalTime.destroy();
+		// `?.`: onunload must never throw, even before field init (early unload).
+		this.refusalTime?.destroy();
 		this.promiseTracker?.destroy();
 		this.promiseTracker = null;
 		destroyDevLog();
