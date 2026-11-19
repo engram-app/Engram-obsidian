@@ -15173,7 +15173,7 @@ export class SyncEngine {
 			// A pass that "flushed" entries but removed none of them is not progress
 			// (a replay whose dequeue missed looped forever, 10 POST/s, 2026-11-18).
 			// Stop; scheduleQueueRetry owns the backoff for entries that carry one.
-			if (flushed > 0 && before.every((e) => this.queue.get(e.path, e.vaultId) === e)) break;
+			if (flushed > 0 && before.every((e) => this.queue.has(e))) break;
 			// Stop on no progress (queue empty or all remaining entries failing)
 			// or once a push tripped maybeGoOffline — don't hammer the server.
 			if (flushed === 0 || this.offline) break;

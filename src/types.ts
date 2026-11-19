@@ -296,6 +296,9 @@ export interface NoteStreamEvent {
 /** A queued change waiting to be pushed when connectivity returns. */
 export interface QueueEntry {
 	path: string;
+	/** Generation id assigned by OfflineQueue; copies of the same queued change
+	 *  (backoff re-enqueue) keep it, a new edit gets a fresh one. */
+	qid?: number;
 	action: "upsert" | "delete";
 	/** Note content (only for text upserts). */
 	content?: string;

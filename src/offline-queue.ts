@@ -94,6 +94,11 @@ export class OfflineQueue {
 	 *  with this one when it has none (saved by an old plugin), so the stored key
 	 *  and the key a caller resolves from settings can never disagree. */
 	private activeVault: () => string | undefined = () => undefined;
+	/** True while an entry may be stored without a vault (loaded or enqueued
+	 *  while unlinked). `adoptActive` re-keys those once a vault is active. */
+	private maybeBare = false;
+	/** Monotonic generation id; see QueueEntry.qid. */
+	private qidSeq = 0;
 
 	constructor(persistDelayMs = 1000) {
 		this.persistDelayMs = persistDelayMs;
@@ -103,13 +108,44 @@ export class OfflineQueue {
 		this.activeVault = fn;
 	}
 
+	/** Stamp the active vault (if any) and a generation id. */
 	private stamp(entry: QueueEntry): QueueEntry {
 		const vaultId = entry.vaultId ?? this.activeVault();
-		return vaultId && !entry.vaultId ? { ...entry, vaultId } : entry;
+		const qid = entry.qid ?? ++this.qidSeq;
+		this.qidSeq = Math.max(this.qidSeq, qid);
+		const out = vaultId && !entry.vaultId ? { ...entry, vaultId, qid } : { ...entry, qid };
+		if (!out.vaultId) this.maybeBare = true;
+		return out;
+	}
+
+	/** Re-key vault-less entries under the vault that has become active (linking
+	 *  after the queue loaded unlinked, or a first vault pick). The stored key is
+	 *  always derived from the entry's own vaultId, so this is the only place a
+	 *  bare key changes. A stamped entry already at the target key is newer or
+	 *  equal work and wins. Idempotent and O(1) when nothing is bare. */
+	private adoptActive(): void {
+		const active = this.activeVault();
+		if (!this.maybeBare || !active) return;
+		this.maybeBare = false;
+		for (const [k, e] of [...this.entries]) {
+			if (e.vaultId) continue;
+			this.entries.delete(k);
+			const stamped = { ...e, vaultId: active };
+			const nk = dedupKey(stamped);
+			const there = this.entries.get(nk);
+			if (!there || there.timestamp <= stamped.timestamp) this.entries.set(nk, stamped);
+		}
+		this.schedulePersist();
 	}
 
 	private key(path: string, vaultId?: string): string {
+		this.adoptActive();
 		return dedupKey(path, vaultId ?? this.activeVault());
+	}
+
+	/** True when this exact queued generation is still stored. */
+	has(entry: QueueEntry): boolean {
+		return this.entries.get(this.key(entry.path, entry.vaultId))?.qid === entry.qid;
 	}
 
 	/** Register a callback to persist queue state. */
@@ -145,6 +181,7 @@ export class OfflineQueue {
 
 	/** Add or replace a queued change for a path. Persistence is debounced. */
 	async enqueue(entry: QueueEntry): Promise<void> {
+		this.adoptActive();
 		const stamped = this.stamp(entry);
 		this.entries.set(dedupKey(stamped), stamped);
 		this.schedulePersist();
@@ -161,12 +198,7 @@ export class OfflineQueue {
 		if (typeof pathOrEntry === "object") {
 			const k = this.key(pathOrEntry.path, pathOrEntry.vaultId);
 			const cur = this.entries.get(k);
-			if (
-				cur &&
-				(cur.timestamp !== pathOrEntry.timestamp || cur.action !== pathOrEntry.action)
-			) {
-				return;
-			}
+			if (cur && pathOrEntry.qid !== undefined && cur.qid !== pathOrEntry.qid) return;
 			this.entries.delete(k);
 		} else {
 			this.entries.delete(this.key(pathOrEntry, vaultId));
@@ -209,6 +241,7 @@ export class OfflineQueue {
 	 *  a priority. An entry with no `priority` (persisted before the field
 	 *  existed) counts as Normal, so an upgrade never demotes pending work. */
 	all(): QueueEntry[] {
+		this.adoptActive();
 		return Array.from(this.entries.values()).sort(
 			(a, b) =>
 				(a.priority ?? QueuePriority.Normal) - (b.priority ?? QueuePriority.Normal) ||

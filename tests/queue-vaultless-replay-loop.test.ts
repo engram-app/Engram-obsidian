@@ -232,3 +232,55 @@ test("legacy vault-less data.json round trip keeps one entry per path and drains
 	expect(engine.queue.size).toBe(0);
 	expect((api.pushNote as any).mock.calls.length).toBe(1);
 });
+
+// ---- delta check: link AFTER load, same-ms edit ----
+test("queue loaded while unlinked, then linked: exactly one POST per note, queue empties", async () => {
+	const paths = Array.from({ length: 5 }, (_, i) => `n${i}.md`);
+	let posts = 0;
+	const { engine } = build(paths, async (p: string) => {
+		if (++posts > 50) throw new Error("loop guard");
+		return ok(p)();
+	});
+	(engine as any).settings.vaultId = null; // unlinked at load
+	engine.queue.load(paths.map((p, i) => ({ ...entry(p), timestamp: i + 1 })));
+	(engine as any).settings.vaultId = "v1"; // user links
+	await engine.flushQueue();
+	expect(posts).toBe(paths.length);
+	expect(engine.queue.size).toBe(0);
+});
+
+test("bare entries are re-keyed when a vault becomes active; a stamped newer one wins", () => {
+	let active: string | undefined;
+	const q = new OfflineQueue();
+	q.setActiveVault(() => active);
+	q.load([
+		{ path: "a.md", action: "upsert", mtime: 1, timestamp: 1 },
+		{ path: "b.md", action: "upsert", mtime: 1, timestamp: 1 },
+		{ path: "b.md", action: "delete", mtime: 1, timestamp: 9, vaultId: "v1" },
+	]);
+	expect(q.get("a.md")).toBeDefined(); // unlinked: bare key
+	active = "v1";
+	expect(q.get("a.md", "v1")?.vaultId).toBe("v1");
+	expect(q.get("b.md", "v1")?.action).toBe("delete");
+	expect(q.size).toBe(2);
+});
+
+test("a same-timestamp, same-action newer edit survives the old replay's dequeue", async () => {
+	const q = new OfflineQueue();
+	q.setActiveVault(() => "v1");
+	await q.enqueue({ path: "a.md", action: "upsert", mtime: 1, timestamp: 7 });
+	const replayed = q.all()[0];
+	await q.enqueue({ path: "a.md", action: "upsert", mtime: 1, timestamp: 7 });
+	await q.dequeue(replayed);
+	expect(q.size).toBe(1);
+});
+
+test("a backoff re-enqueue keeps its generation, so the replay's dequeue still removes it", async () => {
+	const q = new OfflineQueue();
+	q.setActiveVault(() => "v1");
+	await q.enqueue({ path: "a.md", action: "upsert", mtime: 1, timestamp: 7 });
+	const replayed = q.all()[0];
+	await q.enqueue({ ...replayed, nextAttemptAt: 99 });
+	await q.dequeue(replayed);
+	expect(q.size).toBe(0);
+});
