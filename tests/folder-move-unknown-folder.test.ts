@@ -43,11 +43,12 @@ async function setup(getManifest: () => Promise<unknown>) {
 			},
 			getName: () => "Vault",
 			rename: async (f: TFolder, to: string) => {
-				renames.push([f.path, to]);
+				const from = f.path;
+				renames.push([from, to]);
 				for (const [p, node] of [...tree]) {
-					if (p === f.path || p.startsWith(`${f.path}/`)) {
+					if (p === from || p.startsWith(`${from}/`)) {
 						tree.delete(p);
-						const np = to + p.slice(f.path.length);
+						const np = to + p.slice(from.length);
 						(node as { path: string }).path = np;
 						tree.set(np, node);
 					}

@@ -68,6 +68,12 @@ import {
 	RateLimitPause,
 } from "./crdt-op-queue";
 
+/** The folder holding `path` ("" at the vault root). */
+export function parentFolder(path: string): string {
+	const cut = path.lastIndexOf("/");
+	return cut < 0 ? "" : path.slice(0, cut);
+}
+
 /** One `folders` row as the server sends it. `parent_id: null` = root. */
 export type FolderRow = { id: string; parent_id: string | null; name: string };
 

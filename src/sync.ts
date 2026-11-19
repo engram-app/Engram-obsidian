@@ -45,6 +45,7 @@ import {
 	type FolderRow,
 	HOLD_MAX_MS,
 	isFolderRow,
+	parentFolder,
 } from "./folder-ops";
 import { t } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
@@ -471,6 +472,9 @@ type CrdtCatchupSinceFn = (
 const DOC_STATE_FRAME = "crdt_doc_state";
 
 /** Room-free full Yjs state for one note — see `CrdtChannel.crdtDocState`. */
+/** A server folder move as paths on this device; null for an end it cannot place. */
+type FolderMovePaths = { from: string | null; to: string | null };
+
 type CrdtDocStateFn = (docId: string) => Promise<{ b64: string; head: string }>;
 
 /** Byte size at or below which a `Yjs.encodeStateAsUpdate` result carries no
@@ -1266,7 +1270,7 @@ export class SyncEngine {
 		if (!file) return;
 		if (this.app.vault.getAbstractFileByPath?.(dest)) return;
 		try {
-			const folder = dest.includes("/") ? dest.slice(0, dest.lastIndexOf("/")) : "";
+			const folder = parentFolder(dest);
 			if (folder) await this.ensureFolder(folder);
 			// Obsidian fires a vault `rename` for this move exactly as it would for
 			// a user drag; without the marker the echo is pushed back as a fresh
@@ -6616,6 +6620,7 @@ export class SyncEngine {
 				.map((r) => ({ row: r, at: server.pathFor(r.id) }))
 				.filter((m): m is { row: FolderRow; at: string } => m.at !== null)
 				.sort((a, b) => a.at.split("/").length - b.at.split("/").length);
+			let local: Map<string, string> | null = null;
 			for (const { row, at } of moves) {
 				const here = this.folderOps.index.pathFor(row.id);
 				// A folder with OUR op pending: the manifest is the server's state
@@ -6624,10 +6629,84 @@ export class SyncEngine {
 				if (this.folderOps.hasPending(row.id)) continue;
 				// Before the manifest delete pass, which would otherwise trash every
 				// file of the moved folder.
-				if (here !== null && here !== at) await this.followFolderMoveOnDisk(row);
+				if (here !== null) {
+					if (here !== at) await this.followFolderMoveOnDisk(row);
+					continue;
+				}
+				// Never learned here (made over REST, MCP or the web app): where its
+				// notes live on this device says where the folder is.
+				local ??= this.localFolderPaths(manifest);
+				const was = local.get(at);
+				if (was === undefined) continue;
+				this.learnAncestors(row, server);
+				await this.followFolderMoveOnDisk(row, { from: was, to: at });
 			}
 		}
 		this.learnFolders(rows);
+	}
+
+	/** Server folder path -> this device's path for it, from the manifest notes:
+	 *  a note id this device holds at `X/rest` that the server lists at `S/rest`
+	 *  puts server folder `S` at `X` here. Keyed at the deepest differing
+	 *  folder only (a moved parent carries the rest). O(notes x depth), once
+	 *  per manifest. */
+	private localFolderPaths(manifest: ManifestResponse): Map<string, string> {
+		const out = new Map<string, string>();
+		if (!this.noteIdMap) return out;
+		for (const n of manifest.notes ?? []) {
+			if (!n.id) continue;
+			const mine = this.noteIdMap.pathForId(n.id);
+			if (mine === null || mine === n.path) continue;
+			const a = mine.split("/");
+			const b = n.path.split("/");
+			let i = a.length - 1;
+			let j = b.length - 1;
+			while (i > 0 && j > 0 && a[i] === b[j]) {
+				i--;
+				j--;
+			}
+			// Only the file name differs (a note rename, not a folder move), or
+			// the paths share no tail at all.
+			if (i === a.length - 1) continue;
+			const s = b.slice(0, j + 1).join("/");
+			if (!out.has(s)) out.set(s, a.slice(0, i + 1).join("/"));
+		}
+		return out;
+	}
+
+	/** Teach the index the server rows above `row` that it lacks, so a move of
+	 *  a folder this device never learned lands under a known parent. */
+	private learnAncestors(row: FolderRow, server: FolderIndex): void {
+		const rows = new Map(server.all().map((r) => [r.id, r]));
+		for (let p = row.parent_id; p !== null; ) {
+			const r = rows.get(p);
+			if (!r) return;
+			if (this.folderOps.index.pathFor(r.id) === null) this.folderOps.index.set(r);
+			p = r.parent_id;
+		}
+	}
+
+	/** True while a manifest fetch resolves an unknown folder: the moves it
+	 *  runs must not fetch again. */
+	private resolvingFolders = false;
+
+	/** A folder change naming a folder (or parent) this device never learned:
+	 *  one manifest fetch teaches it, and moves the folder on disk when its
+	 *  notes show where it is (`syncManifestFolders`). False when the manifest
+	 *  could not be read; the caller then only learns the row. */
+	private async followUnknownFolder(): Promise<boolean> {
+		this.resolvingFolders = true;
+		try {
+			const manifest = await this.api.getManifest();
+			if (!manifest?.folders) return false;
+			await this.syncManifestFolders(manifest);
+			return true;
+		} catch (e) {
+			rlog().warn("pull", `Unknown folder: manifest fetch failed: ${errMsg(e)}`);
+			return false;
+		} finally {
+			this.resolvingFolders = false;
+		}
 	}
 
 	/** The INDEX half of a server folder change, and the fallback when the
@@ -6635,7 +6714,7 @@ export class SyncEngine {
 	 *  move, the files converge per note, and the old path is recorded as
 	 *  moved away (`movedAwayFolders`) so the per-note moves that empty it can
 	 *  remove it (`removeEmptyFolders`). */
-	private async applyFolderChange(change: FolderChange): Promise<void> {
+	private async applyFolderChange(change: FolderChange, at?: FolderMovePaths): Promise<void> {
 		const index = this.folderOps.index;
 		if (change.deleted) {
 			// Folder delete stays per note until the deletes overhaul (parked).
@@ -6643,12 +6722,10 @@ export class SyncEngine {
 			this.persistGateJournalSoon();
 			return;
 		}
-		const from = index.pathFor(change.id);
-		const parent = index.pathFor(change.parent_id);
+		const { from, to } = at ?? this.folderMovePaths(change);
 		index.set(change);
 		this.persistGateJournalSoon();
-		if (from === null || parent === null) return;
-		const to = parent ? `${parent}/${change.name}` : change.name;
+		if (from === null || to === null) return;
 		if (from !== to) {
 			this.movedAwayFolders.add(from);
 			this.recordFolderMove(from, change.seq);
@@ -6679,11 +6756,18 @@ export class SyncEngine {
 	 *  every file of a folder moved elsewhere. Target already on disk, or a
 	 *  rename that throws: the index learns the move, the folder's files
 	 *  converge per note, and the emptied old folder is removed as moved away. */
-	private async followFolderMoveOnDisk(change: FolderChange): Promise<void> {
+	private async followFolderMoveOnDisk(
+		change: FolderChange,
+		at?: FolderMovePaths,
+	): Promise<void> {
 		const index = this.folderOps.index;
-		const from = index.pathFor(change.id);
-		const parent = index.pathFor(change.parent_id);
-		const to = parent === null ? null : parent ? `${parent}/${change.name}` : change.name;
+		if (!at && !change.deleted && !this.resolvingFolders) {
+			const known = this.folderMovePaths(change);
+			if ((known.from === null || known.to === null) && (await this.followUnknownFolder()))
+				return;
+		}
+		const { from, to } = at ?? this.folderMovePaths(change);
+		const parent = to === null ? null : parentFolder(to);
 		const folder = from === null ? null : this.app.vault.getAbstractFileByPath(from);
 		if (
 			from === null ||
@@ -6727,8 +6811,19 @@ export class SyncEngine {
 				"pull",
 				`Folder move could not follow on disk (${noteRef(from)} -> ${noteRef(to)}): ${errMsg(e, to)}`,
 			);
-			await this.applyFolderChange(change);
+			await this.applyFolderChange(change, at);
 		}
+	}
+
+	/** Where folder `change.id` is in the index now, and where the change puts
+	 *  it; null for either end the index cannot place. */
+	private folderMovePaths(change: FolderChange): FolderMovePaths {
+		const index = this.folderOps.index;
+		const parent = index.pathFor(change.parent_id);
+		return {
+			from: index.pathFor(change.id),
+			to: parent === null ? null : parent ? `${parent}/${change.name}` : change.name,
+		};
 	}
 
 	/** Old paths of folders the server moved (folder_changed or the manifest
