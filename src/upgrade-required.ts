@@ -189,22 +189,6 @@ export function versionBelow(min: unknown, current: unknown): boolean {
 	return isNewerVersion(min.trim().replace(/^v/, ""), current.trim().replace(/^v/, ""));
 }
 
-/** Self-protection: the server's effective minimum, read from the start-up
- *  `/me` payload. Absent or unparseable fields are unknown, never a block.
- *  Latches BEFORE any write or queue replay, so a blocked plugin sends none. */
-export function applyServerMinimum(
-	min: unknown,
-	recommended: unknown,
-	current: string = pluginVersion(),
-): boolean {
-	if (!versionBelow(min, current)) return false;
-	notifyUpgradeRequired(min as string, undefined, true, {
-		updateTo:
-			typeof recommended === "string" && VERSION_RE.test(recommended) ? recommended : null,
-	});
-	return true;
-}
-
 /** The version to tell the user to update to. */
 export function refusalTargetVersion(): string | null {
 	return refused ? (refusedUpdateTo ?? refusedMinVersion) : null;
@@ -225,10 +209,12 @@ export function versionsCopy(): string | null {
 /** What a refusal body (REST 426 JSON, or a channel join `response`) says.
  *  The ONE parser both transports use, structured fields only: a generic
  *  error, timeout or 5xx has no recognised `error`/`reason`, so it is never
- *  `confirmed` and never latches. Backend contract: `error` is
- *  `plugin_upgrade_required` (kept so older plugins still understand it) and
- *  `reason` is `update_required` | `account_paused`; a join reply carries the
- *  code in `reason` alone. */
+ *  `confirmed` and never latches. Backend contract (Engram#2672): the floor is
+ *  HTTP 426 `{error: "plugin_upgrade_required", min_version, update_to,
+ *  your_version}`; a paused account is HTTP 403 `{error: "account_paused"}`;
+ *  both carry a `retry-after: 3600` header. A join refusal carries the same
+ *  code in `reason`. Status gating (403 only counts as `account_paused`) lives
+ *  in `EngramApi.noteIfUpgradeRequired`. */
 export function parseRefusal(body: Record<string, unknown> | undefined): {
 	confirmed: boolean;
 	kind: RefusalKind;

@@ -1304,10 +1304,6 @@ export default class EngramSyncPlugin extends Plugin {
 			let registered = false;
 			let gateOpen = false;
 			if (this.hasAuthConfigured()) {
-				// Self-protection: learn the server's minimum BEFORE registerVault
-				// or the queue replay can send a write. getMe() latches the
-				// refusal itself (EngramApi.getMe); failures here are not news.
-				if (!isUpgradeRequired()) await this.api.getMe().catch(() => undefined);
 				try {
 					registered = await this.registerVault();
 					if (registered) {

@@ -12,7 +12,6 @@ import { NoteChannel } from "../src/channel";
 import { setPluginVersion } from "../src/plugin-version";
 import { ManualTimeProvider } from "../src/time-provider";
 import {
-	applyServerMinimum,
 	isUpgradeRequired,
 	notifyUpgradeRequired,
 	parseRefusal,
@@ -155,10 +154,33 @@ describe("account_paused kind", () => {
 		await expect(api.getManifest()).rejects.toBeDefined();
 		mockRequestUrl.mockRejectedValueOnce(new Error("timeout"));
 		await expect(api.getManifest()).rejects.toBeDefined();
-		// a 403 or 200-with-body must not latch either
-		mockRequestUrl.mockRejectedValueOnce({ status: 403, json: { reason: "account_paused" } });
+		// 5xx carrying a pause body, and any other 403, must not latch either
+		mockRequestUrl.mockRejectedValueOnce({ status: 500, json: { error: "account_paused" } });
 		await expect(api.getManifest()).rejects.toBeDefined();
+		mockRequestUrl.mockRejectedValueOnce({ status: 403, json: { error: "forbidden" } });
+		await expect(api.getManifest()).rejects.toMatchObject({ status: 403 });
+		mockRequestUrl.mockRejectedValueOnce({ status: 403, text: "<html>denied" });
+		await expect(api.getManifest()).rejects.toMatchObject({ status: 403 });
 		expect(isUpgradeRequired()).toBe(false);
+	});
+
+	test("the backend's 403 {error: account_paused} enters the paused state, as a held (426-shaped) error", async () => {
+		mockRequestUrl.mockRejectedValueOnce({ status: 403, json: { error: "account_paused" } });
+		const api = new EngramApi("https://api.example.com", "key");
+		await expect(api.getManifest()).rejects.toMatchObject({ status: 426 });
+		expect(refusalKind()).toBe("account_paused");
+	});
+
+	test("probe answered with a pause or a floor refusal keeps the refusal", async () => {
+		const api = new EngramApi("https://api.example.com", "key");
+		notifyUpgradeRequired(null, undefined, true, { kind: "account_paused" });
+		mockRequestUrl.mockRejectedValueOnce({ status: 403, json: { error: "account_paused" } });
+		expect(await api.probeRefusal()).toBe("refused");
+		expect(refusalKind()).toBe("account_paused");
+		// and it goes through the gated vault-scoped route, not GET /vaults
+		mockRequestUrl.mockRejectedValueOnce({ status: 403, json: { error: "account_paused" } });
+		await api.probeRefusal();
+		expect((mockRequestUrl.mock.calls.at(-1) as any)[0].url).toMatch(/\/folders$/);
 	});
 
 	test("probeRefusal: ok clears, 426 stays refused, 5xx/timeout unknown, and it bypasses the local latch", async () => {
@@ -297,7 +319,7 @@ describe("restart and version change", () => {
 	});
 });
 
-describe("versions in the copy, self-protection, version compare", () => {
+describe("versions in the copy and version compare", () => {
 	test("the notice names both versions and the target", () => {
 		setPluginVersion("1.39.3");
 		notifyUpgradeRequired("1.36.0", undefined, true, { updateTo: "1.40.0" });
@@ -305,28 +327,6 @@ describe("versions in the copy, self-protection, version compare", () => {
 		expect(msg).toContain("You have 1.39.3");
 		expect(msg).toContain("Update to 1.40.0 or newer");
 		expect(versionsCopy()).toContain("1.40.0");
-		setPluginVersion("");
-	});
-
-	test("start-up /me below the minimum self-pauses and no write request is made", async () => {
-		setPluginVersion("1.39.3");
-		mockRequestUrl.mockResolvedValueOnce({
-			status: 200,
-			json: {
-				user: { id: "u", email: "e" },
-				min_plugin_version: "1.40.0",
-				recommended_plugin_version: "1.40.0",
-			},
-		});
-		const api = new EngramApi("https://api.example.com", "key");
-		await api.getMe();
-		expect(isUpgradeRequired()).toBe(true);
-		const before = mockRequestUrl.mock.calls.length;
-
-		await expect(api.pushNote({ path: "a.md", content: "x" } as never)).rejects.toMatchObject({
-			status: 426,
-		});
-		expect(mockRequestUrl.mock.calls.length).toBe(before);
 		setPluginVersion("");
 	});
 
@@ -342,7 +342,6 @@ describe("versions in the copy, self-protection, version compare", () => {
 			["1.39.3", "1.39.3"],
 			["1.38.0", "1.39.3"],
 		] as const) {
-			expect(applyServerMinimum(min, undefined, cur)).toBe(false);
 			expect(versionBelow(min, cur)).toBe(false);
 		}
 		expect(isUpgradeRequired()).toBe(false);

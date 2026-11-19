@@ -35,7 +35,6 @@ import type {
 	VersionConflictResponse,
 } from "./types";
 import {
-	applyServerMinimum,
 	clearUpgradeRefusal,
 	isUpgradeRequired,
 	notifyUpgradeRequired,
@@ -301,8 +300,12 @@ export class EngramApi {
 		method: string,
 		path: string,
 	): boolean {
-		if (status !== 426) return false;
+		if (status !== 426 && status !== 403) return false;
 		const r = parseRefusal(errorBody(e));
+		// The backend refuses a paused account with HTTP 403 (`account_paused`),
+		// the version floor with 426. Any OTHER 403 (permission denied, ...)
+		// is not a refusal and must not latch.
+		if (status === 403 && !(r.confirmed && r.kind === "account_paused")) return false;
 		notifyUpgradeRequired(r.minVersion, { method, route: beaconRoute(path) }, r.confirmed, {
 			kind: r.kind,
 			retryAfterS: r.retryAfterS,
@@ -317,7 +320,9 @@ export class EngramApi {
 	 *  nothing, so it is `unknown` and can never clear or enter a refusal. */
 	async probeRefusal(): Promise<RefusalProbe> {
 		try {
-			await this.request("GET", "/vaults", undefined, undefined, true);
+			// Vault-scoped on purpose: GET /vaults sits outside `:authed_api`, so it
+			// answers 200 to a paused or too-old client and would falsely clear.
+			await this.request("GET", "/folders", undefined, undefined, true);
 			return "clear";
 		} catch (e) {
 			return statusOf(e) === 426 ? "refused" : "unknown";
@@ -363,7 +368,9 @@ export class EngramApi {
 				throw parseLimitExceededError(e);
 			}
 			if (this.noteIfUpgradeRequired(e, status, method, path)) {
-				throw e;
+				// A 403 pause becomes the local 426-shaped refusal so every
+				// caller's existing "refused: hold, don't fail" routing applies.
+				throw status === 403 ? upgradeRequiredError() : e;
 			}
 			// On 401, the cached access token may be stale (e.g. server-side TTL
 			// shorter than the expires_in we trusted). Invalidate and retry once
@@ -389,7 +396,7 @@ export class EngramApi {
 					// path, not the primary one. Missing it here made the notice
 					// unreachable in the single most likely real-world shape.
 					if (this.noteIfUpgradeRequired(e2, retryStatus, method, path)) {
-						throw e2;
+						throw retryStatus === 403 ? upgradeRequiredError() : e2;
 					}
 					rlog().warn(
 						"api",
@@ -642,14 +649,6 @@ export class EngramApi {
 		// A shape mismatch (proxy error page, wrong server) must be a legible
 		// error, not an opaque TypeError on a nested dereference.
 		if (!user) throw new Error("Malformed /me response: missing user");
-		// Self-protection (upgrade-required.ts): the effective minimum rides on
-		// the start-up payload. Absent = unknown, never a block.
-		const top = (resp.json ?? {}) as Record<string, unknown>;
-		const u = user as unknown as Record<string, unknown>;
-		applyServerMinimum(
-			top.min_plugin_version ?? u.min_plugin_version,
-			top.recommended_plugin_version ?? u.recommended_plugin_version,
-		);
 		return user;
 	}
 
