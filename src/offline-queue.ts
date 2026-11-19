@@ -132,8 +132,17 @@ export class OfflineQueue {
 	}
 
 	/** Remove a path from the queue (after successful sync). Persists immediately. */
-	async dequeue(path: string, vaultId?: string): Promise<void> {
-		this.entries.delete(dedupKey(path, vaultId));
+	async dequeue(entry: QueueEntry): Promise<void>;
+	async dequeue(path: string, vaultId?: string): Promise<void>;
+	async dequeue(pathOrEntry: string | QueueEntry, vaultId?: string): Promise<void> {
+		// Passing the entry deletes by the key it is STORED under. A vault-less
+		// legacy entry is stored under "path"; resolving the vault from settings
+		// instead built "v1:path", missed, and left the entry to replay forever.
+		this.entries.delete(
+			typeof pathOrEntry === "object"
+				? dedupKey(pathOrEntry)
+				: dedupKey(pathOrEntry, vaultId),
+		);
 		await this.persistNow();
 	}
 

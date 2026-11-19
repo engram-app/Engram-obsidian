@@ -14866,7 +14866,7 @@ export class SyncEngine {
 			this.firstFailureMessageThisBatch ??= classified.userMessage;
 			this.firstFailureCategoryThisBatch ??= classified.category;
 		}
-		await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+		await this.queue.dequeue(entry);
 	}
 
 	/** The CRDT op queue gave up on an op. Creates are counted by the drop
@@ -15166,8 +15166,13 @@ export class SyncEngine {
 			}
 		}
 		while (this.queue.size > 0) {
+			const before = this.queue.all();
 			const flushed = await this.runFlushQueue();
 			total += flushed;
+			// A pass that "flushed" entries but removed none of them is not progress
+			// (a replay whose dequeue missed looped forever, 10 POST/s, 2026-11-18).
+			// Stop; scheduleQueueRetry owns the backoff for entries that carry one.
+			if (flushed > 0 && before.every((e) => this.queue.get(e.path, e.vaultId) === e)) break;
 			// Stop on no progress (queue empty or all remaining entries failing)
 			// or once a push tripped maybeGoOffline — don't hammer the server.
 			if (flushed === 0 || this.offline) break;
@@ -15336,7 +15341,7 @@ export class SyncEngine {
 		if (!there || (there.crdt && this.isRestReplay(entry))) {
 			await this.queue.enqueue({ ...entry, path: cur, nextAttemptAt: undefined });
 		}
-		await this.queue.dequeue(entry.path, owner);
+		await this.queue.dequeue(entry);
 		rlog().info(
 			"queue",
 			`Replay re-keyed to the moved path: ${noteRef(entry.path)} -> ${noteRef(cur)}`,
@@ -15441,7 +15446,7 @@ export class SyncEngine {
 					`Dropping queued op for ${noteRef(entry.path)} — queued under a different ` +
 						`vault (${owner.slice(0, 8)}), active is ${active.slice(0, 8)}`,
 				);
-				await this.queue.dequeue(entry.path, owner);
+				await this.queue.dequeue(entry);
 				continue;
 			}
 
@@ -15494,7 +15499,7 @@ export class SyncEngine {
 					if (!content) {
 						const file = this.app.vault.getFileByPath(entry.path);
 						if (!file) {
-							await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+							await this.queue.dequeue(entry);
 							this.issues.clear(entry.path);
 							flushed++;
 							continue;
@@ -15573,7 +15578,7 @@ export class SyncEngine {
 						// fails, the fallback enroll no-ops for a removed id, and no
 						// inbound frame ever settles it. A rename keeps the id mapped.
 						if (this.noteIdMap && this.noteIdMap.pathForId(entry.noteId) === null) {
-							await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+							await this.queue.dequeue(entry);
 							continue;
 						}
 						// The socket is the ONLY delivery path for a crdt entry — the
@@ -15599,7 +15604,7 @@ export class SyncEngine {
 								(await this.deliverQueuedOpsRoomFree(entry))
 							) {
 								this.resetHealBackoff(entry.noteId);
-								await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+								await this.queue.dequeue(entry);
 								this.issues.clear(entry.path);
 								flushed++;
 								continue;
@@ -15654,7 +15659,7 @@ export class SyncEngine {
 							// non-crdt entry has nothing left to send.
 							if (entry.crdt && entry.noteId)
 								this.openRoomPooled(entry.path, entry.noteId, "undelivered");
-							await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+							await this.queue.dequeue(entry);
 							this.issues.clear(entry.path);
 							flushed++;
 							continue;
@@ -15751,7 +15756,7 @@ export class SyncEngine {
 						}
 					}
 				}
-				await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+				await this.queue.dequeue(entry);
 				this.issues.clear(entry.path);
 				this.rateLimitStreak = 0;
 				flushed++;
