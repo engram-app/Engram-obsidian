@@ -302,13 +302,20 @@ export class EngramApi {
 	): boolean {
 		if (status !== 426 && status !== 403) return false;
 		const r = parseRefusal(errorBody(e));
+		// The backend sends the wait as a `retry-after` HEADER, never in the body.
+		// Read raw: `retryAfterMs` clamps to 5 min (a 429 backoff), which would turn
+		// the backend's hour into a 10-minute probe cadence.
+		const raw = headerLookup((e as { headers?: Record<string, string> }).headers)(
+			"retry-after",
+		);
+		const retryAfterS = raw && /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : null;
 		// The backend refuses a paused account with HTTP 403 (`account_paused`),
 		// the version floor with 426. Any OTHER 403 (permission denied, ...)
 		// is not a refusal and must not latch.
 		if (status === 403 && !(r.confirmed && r.kind === "account_paused")) return false;
 		notifyUpgradeRequired(r.minVersion, { method, route: beaconRoute(path) }, r.confirmed, {
 			kind: r.kind,
-			retryAfterS: r.retryAfterS,
+			retryAfterS,
 			updateTo: r.updateTo,
 		});
 		return true;

@@ -81,7 +81,7 @@ import {
 	plannedPhases,
 	SyncProgressModal,
 } from "./sync-progress-modal";
-import { ENGRAM_CLOUD_URL, engramWebUrl, PLUGIN_UPDATE_URL, SUPPORT_EMAIL } from "./tabs/urls";
+import { ENGRAM_CLOUD_URL, engramWebUrl, SUPPORT_EMAIL } from "./tabs/urls";
 import { DefaultTimeProvider } from "./time-provider";
 import type { BackendMode, QueueEntry, SyncChoice, SyncIssue, SyncPlan } from "./types";
 import {
@@ -93,10 +93,13 @@ import {
 } from "./types";
 import { checkForPluginUpdate } from "./update-check";
 import {
+	clearUpgradeRefusal,
 	isUpgradeRequired,
+	makeRefusalListener,
 	openUpgradeUi,
 	type PersistedRefusal,
 	persistedRefusal,
+	refusalAccountGone,
 	refusalKind,
 	restoreRefusal,
 	setUpgradeAction,
@@ -552,6 +555,8 @@ export default class EngramSyncPlugin extends Plugin {
 	private readonly legalNoticeToasts = new Map<string, Notice>();
 	/** Drives the refusal self-recheck; destroyed in onunload. */
 	private readonly refusalTime = new DefaultTimeProvider();
+	/** Account the latched refusal belongs to (see refusalAccountGone). */
+	private refusalAccount: string | null = null;
 	/** Set first in onunload. A check still in flight then must not write
 	 *  data.json: it would overwrite the next instance's rotated token. */
 	private unloaded = false;
@@ -637,29 +642,28 @@ export default class EngramSyncPlugin extends Plugin {
 		// Reuses the soft nudge's destination: a hard "too old to sync" refusal
 		// and a "newer version available" nudge want the same place, and that
 		// path is already feature-detected against Obsidian internals.
-		setUpgradeAction(() => window.open(PLUGIN_UPDATE_URL));
-		setUpgradeStateListener((admitted, rejoin) => {
-			if (!this.syncEngine) return;
-			this.updateStatusBar(this.syncEngine.getStatus());
-			// Persist the latch so a restart neither forgets a refusal nor
-			// needs a server round trip to drop one (restoreRefusal).
-			void this.savePluginData(this.syncEngine.getLastSync()).catch(() => {});
-			// Recheck-lifted: the refused socket never rejoins by itself and
-			// its stream may count as "ever connected", so force a rebuild.
-			// That also re-runs the crdt: join kick (live-bound editors, catch-up).
-			if (admitted && rejoin) {
-				this.everConnected = false;
-				this.setupNoteStream();
-			}
-			// Admitted by the server: the queue held every change while refused
-			// (sync.ts runFlushQueue), and a socket join does not re-drive it.
-			// Only on admission: see UpgradeStateListener in upgrade-required.ts.
-			if (admitted) {
-				void this.syncEngine.flushQueue().catch((e: unknown) => {
-					rlog().warn("queue", `post-refusal flush failed: ${errMsg(e)}`);
-				});
-			}
-		});
+		setUpgradeAction(() => this.openCommunityPluginsUpdate());
+		setUpgradeStateListener(
+			makeRefusalListener({
+				repaint: () => {
+					if (this.syncEngine) this.updateStatusBar(this.syncEngine.getStatus());
+				},
+				// Persist the latch so a restart neither forgets a refusal nor
+				// needs a server round trip to drop one (restoreRefusal).
+				persist: async () => {
+					this.refusalAccount = this.settings.userEmail ?? null;
+					if (this.syncEngine) await this.savePluginData(this.syncEngine.getLastSync());
+				},
+				rebuildSocket: () => {
+					this.everConnected = false;
+					this.setupNoteStream();
+				},
+				flushQueue: async () => {
+					if (this.syncEngine) await this.syncEngine.flushQueue();
+				},
+				warn: (m) => rlog().warn("queue", m),
+			}),
+		);
 		// Self-recheck of a refusal (upgrade-required.ts). Unlinked: nothing to
 		// ask the server with, so learn nothing and keep backing off.
 		startRefusalRecheck({
@@ -967,7 +971,8 @@ export default class EngramSyncPlugin extends Plugin {
 			this.crdtOpQueue?.load(saved.crdtOpQueue);
 		}
 		if (saved?.folderOps?.length) this.syncEngine.folderOps.load(saved.folderOps);
-		restoreRefusal(saved?.refusal, this.manifest.version);
+		this.refusalAccount = saved?.refusal?.account ?? null;
+		restoreRefusal(saved?.refusal, this.manifest.version, this.settings.userEmail ?? null);
 		this.syncEngine.restoreFolderIndex(saved?.folderIndex);
 		if (saved?.syncStateVaultId !== undefined) {
 			this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId);
@@ -1789,6 +1794,16 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	async saveSettings(): Promise<void> {
+		// Sign-out / account switch: a pause belongs to the account that earned it.
+		if (
+			isUpgradeRequired() &&
+			refusalAccountGone(
+				this.refusalAccount,
+				this.settings.userEmail ?? null,
+				this.hasAuthConfigured(),
+			)
+		)
+			clearUpgradeRefusal();
 		this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey);
 		this.api.setVaultId(this.settings.vaultId);
 		this.api.setTracingEnabled(this.settings.diagnosticsEnabled);
@@ -2063,7 +2078,7 @@ export default class EngramSyncPlugin extends Plugin {
 			crdtOpQueue: this.crdtOpQueue?.all() ?? [],
 			// Re-listed for the wholesale-save reason: unanswered folder ops.
 			folderOps: this.syncEngine.exportFolderOps(),
-			refusal: persistedRefusal(),
+			refusal: persistedRefusal(this.settings.userEmail ?? null),
 			folderIndex: this.syncEngine.exportFolderIndex(),
 			syncState: this.syncEngine.exportSyncState(),
 			syncStateVaultId: this.syncEngine.getSyncStateVaultId(),

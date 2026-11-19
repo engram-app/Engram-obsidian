@@ -1448,11 +1448,10 @@ export class NoteChannel {
 				// the real one.
 				// `account_paused` rides the same refusal: not retryable (see
 				// isRetryableJoinReason), so no reconnect loop, same latch.
-				const refusal = parseRefusal(joinResponse as Record<string, unknown> | undefined);
+				const refusal = parseRefusal(joinResponse);
 				if (refusal.confirmed) {
 					notifyUpgradeRequired(refusal.minVersion, undefined, true, {
 						kind: refusal.kind,
-						retryAfterS: refusal.retryAfterS,
 						updateTo: refusal.updateTo,
 					});
 				}

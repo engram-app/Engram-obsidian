@@ -13,11 +13,13 @@ import { setPluginVersion } from "../src/plugin-version";
 import { ManualTimeProvider } from "../src/time-provider";
 import {
 	isUpgradeRequired,
+	makeRefusalListener,
 	notifyUpgradeRequired,
 	parseRefusal,
 	persistedRefusal,
 	type RefusalProbe,
 	recheckNow,
+	refusalAccountGone,
 	refusalKind,
 	resetUpgradeRequired,
 	restoreRefusal,
@@ -108,21 +110,20 @@ describe("hourly recheck", () => {
 
 describe("account_paused kind", () => {
 	test("parseRefusal reads the structured body only", () => {
+		expect(parseRefusal({ error: "account_paused" })).toMatchObject({
+			confirmed: true,
+			kind: "account_paused",
+		});
+		expect(parseRefusal({ reason: "account_paused" }).kind).toBe("account_paused");
 		expect(
 			parseRefusal({
 				error: "plugin_upgrade_required",
-				reason: "account_paused",
-				retry_after: 600,
-			}),
-		).toMatchObject({ confirmed: true, kind: "account_paused", retryAfterS: 600 });
-		expect(
-			parseRefusal({
-				error: "plugin_upgrade_required",
-				reason: "update_required",
 				min_version: "1.41.0",
 			}),
 		).toMatchObject({ confirmed: true, kind: "update_required", minVersion: "1.41.0" });
 		expect(parseRefusal({ error: "rate_limited" }).confirmed).toBe(false);
+		// a code the backend never sends is not a refusal
+		expect(parseRefusal({ reason: "update_required" }).confirmed).toBe(false);
 		expect(parseRefusal({}).confirmed).toBe(false);
 	});
 
@@ -140,7 +141,7 @@ describe("account_paused kind", () => {
 	test("REST 426 with reason account_paused enters the paused state and stays in the queue-holding latch", async () => {
 		mockRequestUrl.mockRejectedValueOnce({
 			status: 426,
-			json: { error: "plugin_upgrade_required", reason: "account_paused", retry_after: 3600 },
+			json: { error: "account_paused" },
 		});
 		const api = new EngramApi("https://api.example.com", "key");
 		await expect(api.getManifest()).rejects.toMatchObject({ status: 426 });
@@ -291,13 +292,12 @@ describe("restart and version change", () => {
 		expect(probe).not.toHaveBeenCalled();
 	});
 
-	test("still below the floor: re-latches quietly, rechecks within seconds, clears", async () => {
+	test("still below the floor: re-latches, rechecks within seconds, clears", async () => {
 		const { time, probe } = armed(["clear"]);
 		const saved = { kind: "update_required" as const, minVersion: "1.41.0", retryAfterS: null };
 
 		expect(restoreRefusal(saved, "1.40.0")).toBe(true);
 		expect(isUpgradeRequired()).toBe(true);
-		expect(__noticeCapture.notices).toHaveLength(0);
 
 		time.advance(16_000);
 		await Promise.resolve();
@@ -309,7 +309,7 @@ describe("restart and version change", () => {
 
 	test("a paused account survives a restart and round-trips through persistence", () => {
 		armed([]);
-		notifyUpgradeRequired(null, undefined, true, { kind: "account_paused", retryAfterS: 600 });
+		notifyUpgradeRequired(null, undefined, true, { kind: "account_paused" });
 		const saved = persistedRefusal();
 		resetUpgradeRequired();
 		armed([]);
@@ -359,5 +359,105 @@ describe("versions in the copy and version compare", () => {
 		expect(
 			restoreRefusal({ ...base, minVersion: "1.41.0", updateTo: "1.42.0" }, "1.40.0"),
 		).toBe(true);
+	});
+});
+
+describe("account scope of a persisted pause", () => {
+	const saved = {
+		kind: "account_paused" as const,
+		minVersion: null,
+		retryAfterS: null,
+		account: "a@example.com",
+	};
+
+	test("a different account on the same backend does not inherit the pause", () => {
+		armed([]);
+		expect(restoreRefusal(saved, "1.40.0", "b@example.com")).toBe(false);
+		expect(isUpgradeRequired()).toBe(false);
+		expect(restoreRefusal(saved, "1.40.0", "a@example.com")).toBe(true);
+	});
+
+	test("restore tells the user (Notice) after a restart", () => {
+		armed([]);
+		restoreRefusal(saved, "1.40.0", "a@example.com");
+		expect(__noticeCapture.notices).toHaveLength(1);
+		expect(__noticeCapture.notices[0].message).toMatch(/paused/i);
+	});
+
+	test("sign-out and account switch drop the latch, same account does not", () => {
+		expect(refusalAccountGone("a@x", "a@x", true)).toBe(false);
+		expect(refusalAccountGone("a@x", "b@x", true)).toBe(true);
+		expect(refusalAccountGone("a@x", "a@x", false)).toBe(true);
+		expect(refusalAccountGone(null, "b@x", true)).toBe(false);
+	});
+
+	test("persistedRefusal records the account", () => {
+		notifyUpgradeRequired(null, undefined, true, { kind: "account_paused" });
+		expect(persistedRefusal("a@x")?.account).toBe("a@x");
+	});
+});
+
+describe("retry-after comes from the header", () => {
+	test("a 403 pause with a retry-after header is latched with that wait", async () => {
+		mockRequestUrl.mockRejectedValueOnce({
+			status: 403,
+			json: { error: "account_paused" },
+			headers: { "retry-after": "1200" },
+		});
+		const api = new EngramApi("https://api.example.com", "key");
+		await expect(api.getManifest()).rejects.toMatchObject({ status: 426 });
+		expect(persistedRefusal()?.retryAfterS).toBe(1200);
+	});
+});
+
+describe("resume wiring (the listener main.ts installs)", () => {
+	const deps = () => {
+		const calls = { repaint: 0, persist: 0, rebuild: 0, flush: 0, warn: [] as string[] };
+		const listener = makeRefusalListener({
+			repaint: () => void calls.repaint++,
+			persist: async () => void calls.persist++,
+			rebuildSocket: () => void calls.rebuild++,
+			flushQueue: async () => void calls.flush++,
+			warn: (m) => calls.warn.push(m),
+		});
+		return { calls, listener };
+	};
+
+	test("recheck-lifted refusal rebuilds the socket exactly once and drains the queue", async () => {
+		const { calls, listener } = deps();
+		setUpgradeStateListener(listener);
+		armed(["clear"]);
+		notifyUpgradeRequired("1.36.0");
+		expect(calls.rebuild).toBe(0);
+
+		expect(await recheckNow()).toBe("clear");
+
+		expect(calls.rebuild).toBe(1);
+		expect(calls.flush).toBe(1);
+		expect(calls.persist).toBe(2); // latched, then cleared
+	});
+
+	test("a socket-join admission drains the queue but does not tear the live socket down", () => {
+		const { calls, listener } = deps();
+		listener(true, false);
+		expect(calls.rebuild).toBe(0);
+		expect(calls.flush).toBe(1);
+	});
+
+	test("a failed save is logged, not swallowed", async () => {
+		const warns: string[] = [];
+		const l = makeRefusalListener({
+			repaint: () => {},
+			persist: async () => {
+				throw new Error("disk full");
+			},
+			rebuildSocket: () => {},
+			flushQueue: async () => {},
+			warn: (m) => warns.push(m),
+		});
+		l(false, false);
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(warns.join()).toContain("disk full");
 	});
 });

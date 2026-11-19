@@ -60,6 +60,7 @@
  * with `connected === false` rather than retry-storming.
  */
 import { Notice } from "obsidian";
+import { errMsg } from "./error-util";
 import { t } from "./i18n";
 import { pluginVersion } from "./plugin-version";
 import { rlog } from "./remote-log";
@@ -220,20 +221,16 @@ export function parseRefusal(body: Record<string, unknown> | undefined): {
 	kind: RefusalKind;
 	minVersion: string | null;
 	updateTo: string | null;
-	retryAfterS: number | null;
 } {
 	const b = body ?? {};
 	const codes = [b.error, b.reason];
 	const paused = codes.includes("account_paused");
-	const confirmed =
-		paused || codes.includes("plugin_upgrade_required") || codes.includes("update_required");
-	const ra = b.retry_after;
+	const confirmed = paused || codes.includes("plugin_upgrade_required");
 	return {
 		confirmed,
 		kind: paused ? "account_paused" : "update_required",
 		minVersion: typeof b.min_version === "string" ? b.min_version : null,
 		updateTo: typeof b.update_to === "string" ? b.update_to : null,
-		retryAfterS: typeof ra === "number" && Number.isFinite(ra) && ra > 0 ? ra : null,
 	};
 }
 
@@ -454,45 +451,86 @@ export interface PersistedRefusal {
 	minVersion: string | null;
 	updateTo?: string | null;
 	retryAfterS: number | null;
+	/** Account (email) that earned it; null when unknown. */
+	account?: string | null;
 }
 
-export function persistedRefusal(): PersistedRefusal | null {
+export function persistedRefusal(account: string | null = null): PersistedRefusal | null {
 	return refused
 		? {
 				kind: refusedKind,
 				minVersion: refusedMinVersion,
 				updateTo: refusedUpdateTo,
 				retryAfterS: refusedRetryAfterS,
+				account,
 			}
 		: null;
 }
 
-/** Clearing event: version change. Re-latch a refusal saved by the last
- *  session, unless this build is already at or above the version the server
- *  said it needed (the user updated: no server round trip to learn that).
- *  Quiet: no Notice and no listener call; the persistent status bar / banner
- *  carry it, and the first recheck runs after `RECHECK_RESTORE_MS`.
- *  Returns whether it re-latched. */
+/** Clearing events handled here: version change (this build already meets
+ *  what the server asked for: no round trip) and account change (a pause
+ *  belongs to the account that earned it). Otherwise re-latch a refusal saved
+ *  by the last session, with a Notice so a restart does not hide it, and
+ *  recheck after `RECHECK_RESTORE_MS`. Returns whether it re-latched. */
 export function restoreRefusal(
 	saved: PersistedRefusal | null | undefined,
 	currentVersion: string,
+	account: string | null = null,
 ): boolean {
 	if (!saved || (saved.kind !== "update_required" && saved.kind !== "account_paused"))
 		return false;
-	if (
-		saved.kind === "update_required" &&
-		saved.minVersion &&
-		!isNewerVersion(saved.minVersion, currentVersion)
-	)
-		return false;
+	if (saved.account && account && saved.account !== account) return false;
+	if (saved.kind === "update_required") {
+		// Unknown/garbage versions never clear here; the recheck decides.
+		const met = (v: unknown) =>
+			typeof v === "string" &&
+			VERSION_RE.test(v.trim()) &&
+			VERSION_RE.test(currentVersion.trim()) &&
+			!versionBelow(v, currentVersion);
+		if (met(saved.minVersion) || met(saved.updateTo)) return false;
+	}
 	refused = true;
 	refusedKind = saved.kind;
 	refusedMinVersion = saved.minVersion;
 	refusedRetryAfterS = saved.retryAfterS;
 	refusedUpdateTo = saved.updateTo ?? null;
-	notifiedKind = saved.kind;
+	notifiedKind = null;
 	scheduleRecheck(RECHECK_RESTORE_MS);
+	notifyUpgradeRequired(saved.minVersion, undefined, false, { kind: saved.kind });
 	return true;
+}
+
+/** Clearing event: sign-out or account switch. The latch is per account, so
+ *  a different (or no) account must not inherit it. */
+export function refusalAccountGone(
+	latchedAccount: string | null,
+	account: string | null,
+	authed: boolean,
+): boolean {
+	return !authed || (latchedAccount !== null && account !== null && latchedAccount !== account);
+}
+
+/** The state-change listener, with its side effects injected so the resume
+ *  contract is testable: persist always; on a recheck-lifted refusal rebuild
+ *  the socket (a refused join never retries, and the stream may count as
+ *  "ever connected") and drain the held queue. */
+export function makeRefusalListener(deps: {
+	repaint: () => void;
+	persist: () => Promise<void>;
+	rebuildSocket: () => void;
+	flushQueue: () => Promise<void>;
+	warn: (msg: string) => void;
+}): UpgradeStateListener {
+	return (admitted, rejoin) => {
+		deps.repaint();
+		deps.persist().catch((e: unknown) => deps.warn(`refusal state not saved: ${errMsg(e)}`));
+		if (admitted && rejoin) deps.rebuildSocket();
+		if (admitted) {
+			deps.flushQueue().catch((e: unknown) =>
+				deps.warn(`post-refusal flush failed: ${errMsg(e)}`),
+			);
+		}
+	};
 }
 
 /** What `EngramApi` throws in place of a request once refused. Carries
