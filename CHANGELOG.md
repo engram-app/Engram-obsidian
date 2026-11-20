@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.41.0](https://github.com/engram-app/Engram-obsidian/compare/1.40.0...1.41.0) (2026-11-20)
+
+
+### Features
+
+* **sync:** recheck refusals, account_paused kind, start-up self-pause ([#714](https://github.com/engram-app/Engram-obsidian/issues/714)) ([7362b0f](https://github.com/engram-app/Engram-obsidian/commit/7362b0fde9e1d1485b2fbe080700e9b0565e7e53))
+
+
+### Bug Fixes
+
+* **sync:** follow a move of a folder never learned ([#715](https://github.com/engram-app/Engram-obsidian/issues/715)) ([74d3efa](https://github.com/engram-app/Engram-obsidian/commit/74d3efa072f55fde3e1e4b02651faa9825139df4))
+
 ## [1.40.0](https://github.com/engram-app/Engram-obsidian/compare/1.39.3...1.40.0) (2026-11-19)
 
 
