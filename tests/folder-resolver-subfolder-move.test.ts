@@ -427,3 +427,31 @@ test("case folding never accepts more: distinct Notes and notes", async () => {
 	expect(tree.has(`${R}/Notes/a.md`)).toBe(true);
 	expect(tree.has(`${R}/notes/b.md`)).toBe(true);
 });
+
+// Review @ 694e761b: a macOS disk spells the folder in NFD, the server in
+// NFC. The refusal must still see the server's folder as the local one.
+test("review: a local NFD name still refuses against the server's NFC folder", async () => {
+	const nfd = "Café";
+	const nfc = "café";
+	const { engine, renames } = await setup({
+		[`${R}/${nfd}/n1.md`]: "n1",
+		[`${R}/${nfd}/sub/n2.md`]: "n2",
+	});
+	engine.learnFolders(FOLDERS_BASE);
+	await (engine as any).syncManifestFolders({
+		notes: [
+			{ id: "n1", path: `${R}/other/n1.md`, content_hash: "h1" },
+			{ id: "n2", path: `${R}/${nfc}/sub/n2.md`, content_hash: "h2" },
+		],
+		attachments: [],
+		total_notes: 2,
+		total_attachments: 0,
+		folders: [
+			...FOLDERS_BASE,
+			{ id: "fN", parent_id: "fR", name: nfc },
+			{ id: "fS", parent_id: "fN", name: "sub" },
+			{ id: "fO", parent_id: "fR", name: "other" },
+		],
+	});
+	expect(renames).toEqual([]);
+});
