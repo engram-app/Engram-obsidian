@@ -9903,7 +9903,9 @@ export class SyncEngine {
 			// Learn + persist the id->path mapping (discovery source, like catchup).
 			// Skip when the id is already mapped to a path that exists on disk: the
 			// announce is then a stale pre-move path, and repointing the map at it
-			// re-creates the note there (duplicate / second minted note).
+			// re-creates the note there (duplicate / second minted note). A real
+			// rename is not lost: it arrives through the seq-ordered replay below
+			// (`moveIfIdRelocated`), never through the announce.
 			const mapped = this.noteIdMap?.pathForId(noteId);
 			const mappedOnDisk =
 				!!mapped && this.app.vault.getAbstractFileByPath(mapped) instanceof TFile;
