@@ -4098,6 +4098,27 @@ export class SyncEngine {
 		}, 1000);
 	}
 
+	/** Restore unanswered folder ops from plugin data, with the id-map claims
+	 *  each one had staged. Before the restart those claims sat in the map's
+	 *  overlay, held local until the op is answered (SyncStore.holdsCommit); a
+	 *  restart keeps only data.json's cache of them, which the server's
+	 *  committed claims (still the OLD paths until the op lands) outrank. Every
+	 *  note under the folder then resolved to its old path, and a flush between
+	 *  the op's ack and the server's re-key recreated it there (e2e test_107
+	 *  restart case, run 44655471041). Re-staged here, held like before. */
+	restoreFolderOps(ops: FolderOp[]): void {
+		this.folderOps.load(ops);
+		const ids = this.noteIdMap;
+		const pending = this.folderOps.all();
+		if (!ids || pending.length === 0) return;
+		const known = Object.entries(ids.toJSON());
+		ids.batch(() => {
+			for (const op of pending) {
+				for (const [path, id] of known) if (path.startsWith(`${op.to}/`)) ids.set(path, id);
+			}
+		});
+	}
+
 	/** Unanswered folder ops, for the wholesale plugin-data save. */
 	exportFolderOps(): FolderOp[] {
 		return this.folderOps.all();
