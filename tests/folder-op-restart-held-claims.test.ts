@@ -120,3 +120,59 @@ test("no reload: the claims staged by a pending op survive its ack", async () =>
 	(engine.folderOps as any).queue.clear(); // answered; the server re-key not here yet
 	expect(ids.pathForId("na")).toBe(`${NEW}/a.md`);
 });
+
+// Question 2 (no reload): between the op's ack and the server's re-key reaching
+// this device, does any lookup a CRDT flush makes still answer the OLD path?
+// The ack runs onFolderOpLeft, which commits the held claims (NEW set, OLD
+// removed) into the local index doc before anything else runs, so the window
+// closes at the ack itself. A server frame still naming OLD that crosses the
+// re-key (sent before the server saw our commit) must not reopen it either.
+test("no reload: after the ack, a stale server frame naming OLD does not move the note back", async () => {
+	const app = {
+		vault: {
+			configDir: ".obsidian",
+			getAbstractFileByPath: () => null,
+			getFileByPath: () => null,
+			getName: () => "Vault",
+		},
+		workspace: { getActiveViewOfType: () => null },
+	} as any;
+	const engine = new SyncEngine(
+		app,
+		{} as EngramApi,
+		{ ...DEFAULT_SETTINGS, vaultId: "v1" },
+		mock().mockResolvedValue(undefined),
+	);
+	engines.push(engine);
+	const ids = new NoteIdMap();
+	engine.setCrdtPorts({ noteIdMap: ids });
+	const server = new Y.Doc();
+	server.getMap<any>("filemeta_v0").set(`${OLD}/a.md`, { note_id: "na" });
+	Y.applyUpdate(ids.store.doc!, Y.encodeStateAsUpdate(server), "remote");
+	engine.folderOps.load([
+		{
+			op: "move",
+			op_id: "op1",
+			folder_id: "fD",
+			parent_id: "fE",
+			name: "Rst107-done",
+			from: OLD,
+			to: NEW,
+			vaultId: "v1",
+		},
+	]);
+	ids.rename(`${OLD}/a.md`, `${NEW}/a.md`); // the op's own re-key, held
+	ids.flushNow();
+	expect(ids.store.doc!.getMap<any>("filemeta_v0").has(`${OLD}/a.md`)).toBe(true);
+	// The ack: the op leaves the queue and onFolderOpLeft runs.
+	(engine.folderOps as any).queue.clear();
+	(engine as any).onFolderOpLeft(NEW, true);
+	const local = ids.store.doc!.getMap<any>("filemeta_v0");
+	expect(local.has(`${OLD}/a.md`)).toBe(false);
+	expect(local.get(`${NEW}/a.md`)).toEqual({ note_id: "na" });
+	expect(ids.pathForId("na")).toBe(`${NEW}/a.md`);
+	// A server frame concurrent with our commit, re-asserting OLD.
+	server.getMap<any>("filemeta_v0").set(`${OLD}/a.md`, { note_id: "na", hash: "h2" });
+	Y.applyUpdate(ids.store.doc!, Y.encodeStateAsUpdate(server), "remote");
+	expect(ids.pathForId("na")).toBe(`${NEW}/a.md`);
+});
