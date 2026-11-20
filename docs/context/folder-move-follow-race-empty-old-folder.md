@@ -51,8 +51,10 @@ must end in `leaveMovedFolder`. Why the bookkeeping is not restored is in
   folder. Engine creates now carry the `engineCreated` marker
   (`ECHO_COOLDOWN_MS`, 5 s) and skip the server create.
 - **Moved-file redirect.** The redirect for moved files matched on path only, so
-  it could overwrite a different note with the same name. It is now gated on
-  note id.
+  it could overwrite a different note with the same name. A later commit in the
+  same PR removed the redirect. A row older than the folder move is now dropped
+  by the folder-seq fence (`predatesFolderMove`, fed by `recordFolderMove`), so
+  it can never move the note back into a re-made old folder.
 
 ## Failed approaches and false leads
 - `CREATING n53` lines looked like a recreate of the old folder. They were
