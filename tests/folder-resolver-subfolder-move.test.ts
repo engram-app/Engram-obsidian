@@ -189,8 +189,9 @@ test("direct children in two local folders learn nothing", async () => {
 	expect(tree.has(`${R}/d/p2.md`)).toBe(true);
 });
 
-// Notes moved one by one out of c into a new folder `other`: every direct
-// child of other sits in c, but c keeps n3, so c is not other.
+// Notes moved one by one out of c (since deleted on the server) into a new
+// folder `other`: every direct child of other sits in c, but c also holds n3,
+// which the server lists elsewhere, so c is not other.
 test("notes moved one by one into a new folder never rename their old folder", async () => {
 	const { engine, tree, renames } = await setup({
 		[`${R}/c/n1.md`]: "n1",
@@ -206,7 +207,7 @@ test("notes moved one by one into a new folder never rename their old folder", a
 		notes: [
 			{ id: "n1", path: `${R}/other/n1.md`, content_hash: "h1" },
 			{ id: "n2", path: `${R}/other/n2.md`, content_hash: "h2" },
-			{ id: "n3", path: `${R}/c/n3.md`, content_hash: "h3" },
+			{ id: "n3", path: `${R}/z/n3.md`, content_hash: "h3" },
 		],
 		attachments: [],
 		total_notes: 3,
@@ -214,10 +215,163 @@ test("notes moved one by one into a new folder never rename their old folder", a
 		folders: [
 			{ id: "fE", parent_id: null, name: "E2E" },
 			{ id: "fR", parent_id: "fE", name: "Chain108" },
+			{ id: "fO", parent_id: "fR", name: "other" },
+			{ id: "fZ", parent_id: "fR", name: "z" },
+		],
+	});
+	expect(renames).toEqual([]);
+	expect(tree.has(`${R}/c/n3.md`)).toBe(true);
+});
+
+const FOLDERS_BASE = [
+	{ id: "fE", parent_id: null, name: "E2E" },
+	{ id: "fR", parent_id: "fE", name: "Chain108" },
+];
+// c holds ONE direct synced note plus a subfolder; the note alone was moved
+// into a new folder `other` (web app). c still exists server-side (fC).
+test("review: one note moved out of c must not move c", async () => {
+	const { engine, tree, renames } = await setup({
+		[`${R}/c/n1.md`]: "n1",
+		[`${R}/c/sub/n2.md`]: "n2",
+	});
+	engine.learnFolders([
+		...FOLDERS_BASE,
+		{ id: "fC", parent_id: "fR", name: "c" },
+		{ id: "fS", parent_id: "fC", name: "sub" },
+	]);
+	await (engine as any).syncManifestFolders({
+		notes: [
+			{ id: "n1", path: `${R}/other/n1.md`, content_hash: "h1" },
+			{ id: "n2", path: `${R}/c/sub/n2.md`, content_hash: "h2" },
+		],
+		attachments: [],
+		total_notes: 2,
+		total_attachments: 0,
+		folders: [
+			...FOLDERS_BASE,
+			{ id: "fC", parent_id: "fR", name: "c" },
+			{ id: "fS", parent_id: "fC", name: "sub" },
+			{ id: "fO", parent_id: "fR", name: "other" },
+		],
+	});
+	expect(tree.has(`${R}/c/sub/n2.md`)).toBe(true);
+	expect(renames).toEqual([]);
+});
+// c holds one synced note plus a local-only draft not in the manifest.
+test("review: one synced note moved out of c must not carry the draft", async () => {
+	const { engine, tree, renames } = await setup({
+		[`${R}/c/n1.md`]: "n1",
+		[`${R}/c/draft.md`]: "dr",
+	});
+	engine.learnFolders([...FOLDERS_BASE, { id: "fC", parent_id: "fR", name: "c" }]);
+	await (engine as any).syncManifestFolders({
+		notes: [{ id: "n1", path: `${R}/other/n1.md`, content_hash: "h1" }],
+		attachments: [],
+		total_notes: 1,
+		total_attachments: 0,
+		folders: [
+			...FOLDERS_BASE,
+			{ id: "fC", parent_id: "fR", name: "c" },
+			{ id: "fO", parent_id: "fR", name: "other" },
+		],
+	});
+	expect(tree.has(`${R}/c/draft.md`)).toBe(true);
+	expect(renames).toEqual([]);
+});
+// Two notes moved one by one, c keeps nothing else synced: indistinguishable
+// per the PR's stated residual, but c is a KNOWN folder still present server-side.
+test("review: c still exists server-side under its own id", async () => {
+	const { engine, renames } = await setup({
+		[`${R}/c/n1.md`]: "n1",
+		[`${R}/c/n2.md`]: "n2",
+	});
+	engine.learnFolders([...FOLDERS_BASE, { id: "fC", parent_id: "fR", name: "c" }]);
+	await (engine as any).syncManifestFolders({
+		notes: [
+			{ id: "n1", path: `${R}/other/n1.md`, content_hash: "h1" },
+			{ id: "n2", path: `${R}/other/n2.md`, content_hash: "h2" },
+		],
+		attachments: [],
+		total_notes: 2,
+		total_attachments: 0,
+		folders: [
+			...FOLDERS_BASE,
 			{ id: "fC", parent_id: "fR", name: "c" },
 			{ id: "fO", parent_id: "fR", name: "other" },
 		],
 	});
 	expect(renames).toEqual([]);
-	expect(tree.has(`${R}/c/n3.md`)).toBe(true);
+});
+// Root: the only root-level note moved into a new folder.
+test("review: the vault root is never a moved folder", async () => {
+	const { engine, tree, renames } = await setup({
+		["top.md"]: "t1",
+		[`${R}/c/n1.md`]: "n1",
+	});
+	engine.learnFolders([...FOLDERS_BASE, { id: "fC", parent_id: "fR", name: "c" }]);
+	const spy = (engine as any).localPathForFolder.bind(engine);
+	let answer: unknown = "unset";
+	(engine as any).localPathForFolder = (...a: unknown[]) => (answer = spy(...a));
+	await (engine as any).syncManifestFolders({
+		notes: [
+			{ id: "t1", path: `Inbox/top.md`, content_hash: "h1" },
+			{ id: "n1", path: `${R}/c/n1.md`, content_hash: "h2" },
+		],
+		attachments: [],
+		total_notes: 2,
+		total_attachments: 0,
+		folders: [
+			...FOLDERS_BASE,
+			{ id: "fC", parent_id: "fR", name: "c" },
+			{ id: "fI", parent_id: null, name: "Inbox" },
+		],
+	});
+	expect(answer).toBeNull();
+});
+
+// A note renamed as well as moved: the name must match, or nothing is learned.
+test("a direct child under another file name places nothing", async () => {
+	const { engine, renames } = await setup({ [`${R}/c/old-name.md`]: "n1" });
+	engine.learnFolders(FOLDERS_BASE);
+	await (engine as any).syncManifestFolders({
+		notes: [{ id: "n1", path: `${R}/other/n1.md`, content_hash: "h1" }],
+		attachments: [],
+		total_notes: 1,
+		total_attachments: 0,
+		folders: [...FOLDERS_BASE, { id: "fO", parent_id: "fR", name: "other" }],
+	});
+	expect(renames).toEqual([]);
+});
+
+// A folder moved whole (c gone from the server, every note agrees) is still
+// followed: the rule is exact, not off.
+test("a whole folder move is still followed", async () => {
+	const { engine, tree } = await setup({ [`${R}/c/n1.md`]: "n1", [`${R}/c/n2.md`]: "n2" });
+	engine.learnFolders(FOLDERS_BASE);
+	await (engine as any).syncManifestFolders({
+		notes: [
+			{ id: "n1", path: `${R}/other/n1.md`, content_hash: "h1" },
+			{ id: "n2", path: `${R}/other/n2.md`, content_hash: "h2" },
+		],
+		attachments: [],
+		total_notes: 2,
+		total_attachments: 0,
+		folders: [...FOLDERS_BASE, { id: "fO", parent_id: "fR", name: "other" }],
+	});
+	expect(tree.has(`${R}/other/n1.md`)).toBe(true);
+	expect(tree.has(`${R}/c`)).toBe(false);
+});
+
+// The explicit root rule on its own: FolderIndex.idFor("") is null, so the
+// server-folder guard also refuses the root today. This pins the rule
+// against an index that ever answers the root as unknown.
+test("the vault root is refused even by an index that does not know it", async () => {
+	const { engine } = await setup({ ["top.md"]: "t1" });
+	const answer = (engine as any).localPathForFolder(
+		"Inbox",
+		[{ id: "t1", name: "top.md", path: "Inbox/top.md" }],
+		new Map([["", new Set(["Inbox"])]]),
+		{ idFor: () => undefined },
+	);
+	expect(answer).toBeNull();
 });
