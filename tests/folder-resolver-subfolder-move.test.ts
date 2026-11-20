@@ -362,16 +362,68 @@ test("a whole folder move is still followed", async () => {
 	expect(tree.has(`${R}/c`)).toBe(false);
 });
 
-// The explicit root rule on its own: FolderIndex.idFor("") is null, so the
-// server-folder guard also refuses the root today. This pins the rule
-// against an index that ever answers the root as unknown.
-test("the vault root is refused even by an index that does not know it", async () => {
+// The explicit root rule on its own, with no server folders to refuse it.
+test("the vault root is refused even with no server folder at it", async () => {
 	const { engine } = await setup({ ["top.md"]: "t1" });
 	const answer = (engine as any).localPathForFolder(
 		"Inbox",
 		[{ id: "t1", name: "top.md", path: "Inbox/top.md" }],
 		new Map([["", new Set(["Inbox"])]]),
-		{ idFor: () => undefined },
+		new Set<string>(),
 	);
 	expect(answer).toBeNull();
+});
+
+// Review @ 549d3bf5: the server still has `notes`; local `Notes` must not be
+// read as moved to `other` (a case-insensitive disk holds one folder).
+test("review: a server folder differing only in case still refuses", async () => {
+	const { engine, renames } = await setup({
+		[`${R}/Notes/n1.md`]: "n1",
+		[`${R}/Notes/sub/n2.md`]: "n2",
+	});
+	engine.learnFolders(FOLDERS_BASE);
+	await (engine as any).syncManifestFolders({
+		notes: [
+			{ id: "n1", path: `${R}/other/n1.md`, content_hash: "h1" },
+			{ id: "n2", path: `${R}/notes/sub/n2.md`, content_hash: "h2" },
+		],
+		attachments: [],
+		total_notes: 2,
+		total_attachments: 0,
+		folders: [
+			...FOLDERS_BASE,
+			{ id: "fN", parent_id: "fR", name: "notes" },
+			{ id: "fS", parent_id: "fN", name: "sub" },
+			{ id: "fO", parent_id: "fR", name: "other" },
+		],
+	});
+	expect(renames).toEqual([]);
+});
+
+// Control: the fold only refuses. A server with BOTH `Notes` and `notes`
+// still places `notes` at a gone folder whose notes all agree, and leaves
+// the local `Notes` where it is.
+test("case folding never accepts more: distinct Notes and notes", async () => {
+	const { engine, tree, renames } = await setup({
+		[`${R}/Notes/a.md`]: "na",
+		[`${R}/Old/b.md`]: "nb",
+	});
+	engine.learnFolders([...FOLDERS_BASE, { id: "fU", parent_id: "fR", name: "Notes" }]);
+	await (engine as any).syncManifestFolders({
+		notes: [
+			{ id: "na", path: `${R}/Notes/a.md`, content_hash: "h1" },
+			{ id: "nb", path: `${R}/notes/b.md`, content_hash: "h2" },
+		],
+		attachments: [],
+		total_notes: 2,
+		total_attachments: 0,
+		folders: [
+			...FOLDERS_BASE,
+			{ id: "fU", parent_id: "fR", name: "Notes" },
+			{ id: "fL", parent_id: "fR", name: "notes" },
+		],
+	});
+	expect(renames).toEqual([[`${R}/Old`, `${R}/notes`]]);
+	expect(tree.has(`${R}/Notes/a.md`)).toBe(true);
+	expect(tree.has(`${R}/notes/b.md`)).toBe(true);
 });
