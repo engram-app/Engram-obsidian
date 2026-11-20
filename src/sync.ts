@@ -6663,7 +6663,7 @@ export class SyncEngine {
 				.map((r) => ({ row: r, at: server.pathFor(r.id) }))
 				.filter((m): m is { row: FolderRow; at: string } => m.at !== null)
 				.sort((a, b) => a.at.split("/").length - b.at.split("/").length);
-			let local: Map<string, string> | null = null;
+			let direct: Map<string, { id: string; name: string; path: string }[]> | null = null;
 			for (const { row, at } of moves) {
 				const here = this.folderOps.index.pathFor(row.id);
 				// A folder with OUR op pending: the manifest is the server's state
@@ -6676,11 +6676,19 @@ export class SyncEngine {
 					if (here !== at) await this.followFolderMoveOnDisk(row);
 					continue;
 				}
+				// Never learned here, but already at the server's path: in place,
+				// learn it so its children's moves can resolve (the rule
+				// followFolderMoveOnDisk applies to a live change).
+				if (this.app.vault.getAbstractFileByPath(at) instanceof TFolder) {
+					this.learnAncestors(row, server);
+					this.folderOps.index.set(row);
+					continue;
+				}
 				// Never learned here (made over REST, MCP or the web app): where its
 				// notes live on this device says where the folder is.
-				local ??= this.localFolderPaths(manifest);
-				const was = local.get(at);
-				if (was === undefined) continue;
+				direct ??= notesByFolder(manifest);
+				const was = this.localPathForFolder(direct.get(at) ?? []);
+				if (was === null || was === at) continue;
 				this.learnAncestors(row, server);
 				// The move's seq fences stale rows naming the old path: the live
 				// event's own, else the manifest's (the move is at or before it).
@@ -6691,33 +6699,32 @@ export class SyncEngine {
 		this.learnFolders(rows);
 	}
 
-	/** Server folder path -> this device's path for it, from the manifest notes:
-	 *  a note id this device holds at `X/rest` that the server lists at `S/rest`
-	 *  puts server folder `S` at `X` here. Keyed at the deepest differing
-	 *  folder only (a moved parent carries the rest). O(notes x depth), once
-	 *  per manifest. */
-	private localFolderPaths(manifest: ManifestResponse): Map<string, string> {
-		const out = new Map<string, string>();
-		if (!this.noteIdMap) return out;
-		for (const n of manifest.notes ?? []) {
-			if (!n.id) continue;
+	/** Where a server folder this device never learned is here, from the
+	 *  notes the server lists DIRECTLY in it: X when EVERY one of them this
+	 *  device holds sits at `X/<its name>`, the same X for all, and at least
+	 *  one is held. Otherwise null, and the folder is not learned.
+	 *
+	 *  Exact on purpose: what this answers is followed on disk and its re-keys
+	 *  are published (rekeyMoved -> the id map -> the shared index the server
+	 *  projects rows from), so a wrong answer is a folder merge on every
+	 *  device. A path-tail match was that bug (e2e test_108 rename chain:
+	 *  `c/sub/n2.md` vs `other/sub/n2.md` read as c = other, and c merged into
+	 *  other). A nested match never counts: only direct children say where the
+	 *  folder itself is. */
+	private localPathForFolder(notes: { id: string; name: string; path: string }[]): string | null {
+		let x: string | null = null;
+		let held = 0;
+		for (const n of notes) {
 			const mine = this.fileOfNote(n.id, n.path);
-			if (mine === null || mine === n.path) continue;
-			const a = mine.split("/");
-			const b = n.path.split("/");
-			let i = a.length - 1;
-			let j = b.length - 1;
-			while (i > 0 && j > 0 && a[i] === b[j]) {
-				i--;
-				j--;
-			}
-			// Only the file name differs (a note rename, not a folder move), or
-			// the paths share no tail at all.
-			if (i === a.length - 1) continue;
-			const s = b.slice(0, j + 1).join("/");
-			if (!out.has(s)) out.set(s, a.slice(0, i + 1).join("/"));
+			if (mine === null || !this.app.vault.getFileByPath?.(mine)) continue;
+			const cut = mine.lastIndexOf("/");
+			if (mine.slice(cut + 1) !== n.name) return null;
+			const parent = cut < 0 ? "" : mine.slice(0, cut);
+			if (x !== null && parent !== x) return null;
+			x = parent;
+			held++;
 		}
-		return out;
+		return held > 0 ? x : null;
 	}
 
 	/** Where note `id`'s FILE is on this device, for the folder resolver. The
@@ -16248,4 +16255,21 @@ function conflictCopyPath(normalized: string): string {
 	const ext = canvasPath(normalized) ? "canvas" : "md";
 	const base = normalized.replace(/\.(md|canvas)$/, "");
 	return `${base} (conflict ${stamp}).${ext}`;
+}
+
+/** The manifest's notes grouped by their direct parent folder (server
+ *  paths), for `localPathForFolder`. O(notes), once per manifest. */
+function notesByFolder(
+	manifest: ManifestResponse,
+): Map<string, { id: string; name: string; path: string }[]> {
+	const out = new Map<string, { id: string; name: string; path: string }[]>();
+	for (const n of manifest.notes ?? []) {
+		if (!n.id) continue;
+		const cut = n.path.lastIndexOf("/");
+		const folder = cut < 0 ? "" : n.path.slice(0, cut);
+		const list = out.get(folder) ?? [];
+		list.push({ id: n.id, name: n.path.slice(cut + 1), path: n.path });
+		out.set(folder, list);
+	}
+	return out;
 }
