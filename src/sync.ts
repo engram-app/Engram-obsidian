@@ -6689,7 +6689,7 @@ export class SyncEngine {
 				// notes live on this device says where the folder is.
 				direct ??= notesByFolder(manifest);
 				heldIn ??= this.serverFoldersByLocalFolder(manifest);
-				const was = this.localPathForFolder(at, direct.get(at) ?? [], heldIn);
+				const was = this.localPathForFolder(at, direct.get(at) ?? [], heldIn, server);
 				if (was === null || was === at) continue;
 				this.learnAncestors(row, server);
 				// The move's seq fences stale rows naming the old path: the live
@@ -6714,6 +6714,9 @@ export class SyncEngine {
 	 *  other). A nested match never counts: only direct children say where the
 	 *  folder itself is.
 	 *
+	 *  X must be gone from the server (a folder still listed at X did not
+	 *  move to S) and is never the vault root.
+	 *
 	 *  Both ways: every held note directly in X must also be listed directly
 	 *  in S. Notes moved one by one out of X into a new folder S would
 	 *  otherwise read as X = S, and the follow would carry X's other notes. */
@@ -6721,6 +6724,7 @@ export class SyncEngine {
 		at: string,
 		notes: { id: string; name: string; path: string }[],
 		heldIn: Map<string, Set<string>>,
+		server: FolderIndex,
 	): string | null {
 		let x: string | null = null;
 		let held = 0;
@@ -6734,7 +6738,12 @@ export class SyncEngine {
 			x = parent;
 			held++;
 		}
-		if (held === 0 || x === null) return null;
+		// The vault root is never a folder that moved.
+		if (held === 0 || x === null || x === "") return null;
+		// X still a folder on the server: S cannot be X moved. A note moved out
+		// of a live folder would otherwise carry the whole folder (subfolders,
+		// local-only drafts) with it.
+		if (server.idFor(x) !== undefined) return null;
 		const theirs = heldIn.get(x);
 		return theirs?.size === 1 && theirs.has(at) ? x : null;
 	}
