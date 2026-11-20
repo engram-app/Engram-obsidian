@@ -1,8 +1,9 @@
 /**
  * upgrade-required.ts — the client half of the backend's refusal of a client:
  * the minimum-plugin-version floor (`update_required`) and a paused account
- * (`account_paused`). Both arrive as the same 426 / join-refusal shape, share
- * ONE latch, and differ only in copy (an update fixes the first, support the
+ * (`account_paused`). The floor arrives as HTTP 426 and the pause as HTTP 403
+ * on REST; both arrive as the same join-refusal shape on a channel. They share
+ * ONE latch and differ only in copy (an update fixes the first, support the
  * second).
  *
  * The server refuses a plugin older than its floor: HTTP `426` on REST, and a
@@ -54,10 +55,11 @@
  * timer, so a per-request 426 turned into an endless POST /api/logs loop.
  *
  * The socket is left alone: Phoenix does not close a socket on a join error,
- * so a refused client keeps ONE open socket. `sync:` and `crdt:` are refused,
- * `user:` still joins (no version gate on `check_not_deleted/1`), and the 30s
- * heartbeat keeps it alive, so `onclose` never fires and the client idles
- * with `connected === false` rather than retry-storming.
+ * so a refused client keeps ONE open socket. On a version-floor refusal
+ * `sync:` and `crdt:` are refused but `user:` still joins (no version gate on
+ * `check_not_deleted/1`); a paused account is refused on `user:` too. Either
+ * way the 30s heartbeat keeps the socket alive, so `onclose` never fires and
+ * the client idles with `connected === false` rather than retry-storming.
  */
 import { Notice } from "obsidian";
 import { errMsg } from "./error-util";

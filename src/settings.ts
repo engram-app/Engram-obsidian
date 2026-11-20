@@ -19,7 +19,7 @@ import { renderSyncCenterTab } from "./tabs/sync-center-tab";
 import type { TabContext } from "./tabs/types";
 import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
 import type { SyncProgress } from "./types";
-import { isUpgradeRequired } from "./upgrade-required";
+import { isUpgradeRequired, refusalKind } from "./upgrade-required";
 
 /** Build the settings pane's progress-bar render callback. Extracted
  *  DOM-agnostic (like renderCompletionSummary) so the teardown-without-hide
@@ -331,7 +331,11 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		let dotState: "is-error" | "is-connected" | "is-polling" | "is-idle" | "is-waiting";
 		let label: string;
 
-		if (isUpgradeRequired()) {
+		if (refusalKind() === "account_paused") {
+			// Same copy as the Sync Center banner title: updating cannot fix a pause.
+			dotState = "is-error";
+			label = t("Account paused: Engram is not syncing");
+		} else if (isUpgradeRequired()) {
 			dotState = "is-error";
 			label = t("Update required, not syncing");
 		} else if (status.state === "offline") {
