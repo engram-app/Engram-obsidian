@@ -6665,6 +6665,7 @@ export class SyncEngine {
 				.sort((a, b) => a.at.split("/").length - b.at.split("/").length);
 			let direct: Map<string, { id: string; name: string; path: string }[]> | null = null;
 			let heldIn: Map<string, Set<string>> | null = null;
+			let serverPaths: Set<string> | null = null;
 			for (const { row, at } of moves) {
 				const here = this.folderOps.index.pathFor(row.id);
 				// A folder with OUR op pending: the manifest is the server's state
@@ -6689,7 +6690,8 @@ export class SyncEngine {
 				// notes live on this device says where the folder is.
 				direct ??= notesByFolder(manifest);
 				heldIn ??= this.serverFoldersByLocalFolder(manifest);
-				const was = this.localPathForFolder(at, direct.get(at) ?? [], heldIn, server);
+				serverPaths ??= new Set(moves.map((m) => foldPath(m.at)));
+				const was = this.localPathForFolder(at, direct.get(at) ?? [], heldIn, serverPaths);
 				if (was === null || was === at) continue;
 				this.learnAncestors(row, server);
 				// The move's seq fences stale rows naming the old path: the live
@@ -6724,7 +6726,7 @@ export class SyncEngine {
 		at: string,
 		notes: { id: string; name: string; path: string }[],
 		heldIn: Map<string, Set<string>>,
-		server: FolderIndex,
+		serverPaths: Set<string>,
 	): string | null {
 		let x: string | null = null;
 		let held = 0;
@@ -6742,8 +6744,9 @@ export class SyncEngine {
 		if (held === 0 || x === null || x === "") return null;
 		// X still a folder on the server: S cannot be X moved. A note moved out
 		// of a live folder would otherwise carry the whole folder (subfolders,
-		// local-only drafts) with it.
-		if (server.idFor(x) !== undefined) return null;
+		// local-only drafts) with it. Compared case- and NFC-folded, so a
+		// server `notes` also refuses a local `Notes`: this only refuses more.
+		if (serverPaths.has(foldPath(x))) return null;
 		const theirs = heldIn.get(x);
 		return theirs?.size === 1 && theirs.has(at) ? x : null;
 	}
@@ -16293,6 +16296,11 @@ function conflictCopyPath(normalized: string): string {
 	const ext = canvasPath(normalized) ? "canvas" : "md";
 	const base = normalized.replace(/\.(md|canvas)$/, "");
 	return `${base} (conflict ${stamp}).${ext}`;
+}
+
+/** A path compared without case or Unicode-normalization differences. */
+function foldPath(path: string): string {
+	return path.normalize("NFC").toLowerCase();
 }
 
 /** The manifest's notes grouped by their direct parent folder (server
