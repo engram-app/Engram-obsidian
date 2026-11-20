@@ -3,9 +3,9 @@
 // and BOTH devices ended with c's own note at `other/n1.md`. The manifest
 // pass resolved the folder `other` (a folder this device never learned) from
 // a note sharing a path tail: local `c/sub/n2.md` vs server `other/sub/n2.md`
-// put `other` at `c`, and the follow then merged c (with n1) into other. The
-// shared tail says `sub` moved, not that `c` is `other`: a note this device
-// holds under `c` that the server lists OUTSIDE `other` disproves it.
+// put `other` at `c`, and the follow then merged c (with n1) into other. Only
+// the notes the server lists DIRECTLY in a folder may place it, and only when
+// every one held here agrees on the same local folder.
 import { afterEach, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { TFile, TFolder } from "obsidian";
@@ -126,8 +126,8 @@ test("a moved subfolder's shared path tail does not rename its old parent", asyn
 	expect(tree.has(`${R}/other/sub/n2.md`)).toBe(true);
 });
 
-// The same inference with `other` not on this device at all: the shared tail
-// alone must not rename c to other.
+// `other` is not on this device and holds no direct note this device has:
+// the nested match alone learns nothing.
 test("a nested match (c/sub vs other/sub) never learns c as other", async () => {
 	const { engine, tree } = await setup({
 		[`${R}/c/n1.md`]: "n1",
