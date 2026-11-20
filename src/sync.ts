@@ -6664,6 +6664,7 @@ export class SyncEngine {
 				.filter((m): m is { row: FolderRow; at: string } => m.at !== null)
 				.sort((a, b) => a.at.split("/").length - b.at.split("/").length);
 			let direct: Map<string, { id: string; name: string; path: string }[]> | null = null;
+			let heldIn: Map<string, Set<string>> | null = null;
 			for (const { row, at } of moves) {
 				const here = this.folderOps.index.pathFor(row.id);
 				// A folder with OUR op pending: the manifest is the server's state
@@ -6687,7 +6688,8 @@ export class SyncEngine {
 				// Never learned here (made over REST, MCP or the web app): where its
 				// notes live on this device says where the folder is.
 				direct ??= notesByFolder(manifest);
-				const was = this.localPathForFolder(direct.get(at) ?? []);
+				heldIn ??= this.serverFoldersByLocalFolder(manifest);
+				const was = this.localPathForFolder(at, direct.get(at) ?? [], heldIn);
 				if (was === null || was === at) continue;
 				this.learnAncestors(row, server);
 				// The move's seq fences stale rows naming the old path: the live
@@ -6710,8 +6712,16 @@ export class SyncEngine {
 	 *  device. A path-tail match was that bug (e2e test_108 rename chain:
 	 *  `c/sub/n2.md` vs `other/sub/n2.md` read as c = other, and c merged into
 	 *  other). A nested match never counts: only direct children say where the
-	 *  folder itself is. */
-	private localPathForFolder(notes: { id: string; name: string; path: string }[]): string | null {
+	 *  folder itself is.
+	 *
+	 *  Both ways: every held note directly in X must also be listed directly
+	 *  in S. Notes moved one by one out of X into a new folder S would
+	 *  otherwise read as X = S, and the follow would carry X's other notes. */
+	private localPathForFolder(
+		at: string,
+		notes: { id: string; name: string; path: string }[],
+		heldIn: Map<string, Set<string>>,
+	): string | null {
 		let x: string | null = null;
 		let held = 0;
 		for (const n of notes) {
@@ -6724,7 +6734,26 @@ export class SyncEngine {
 			x = parent;
 			held++;
 		}
-		return held > 0 ? x : null;
+		if (held === 0 || x === null) return null;
+		const theirs = heldIn.get(x);
+		return theirs?.size === 1 && theirs.has(at) ? x : null;
+	}
+
+	/** Local folder -> the server folders its held notes are listed in
+	 *  directly, for `localPathForFolder`. O(notes), once per manifest. */
+	private serverFoldersByLocalFolder(manifest: ManifestResponse): Map<string, Set<string>> {
+		const out = new Map<string, Set<string>>();
+		for (const n of manifest.notes ?? []) {
+			if (!n.id) continue;
+			const mine = this.fileOfNote(n.id, n.path);
+			if (mine === null || !this.app.vault.getFileByPath?.(mine)) continue;
+			const local = mine.includes("/") ? mine.slice(0, mine.lastIndexOf("/")) : "";
+			const server = n.path.includes("/") ? n.path.slice(0, n.path.lastIndexOf("/")) : "";
+			const set = out.get(local) ?? new Set<string>();
+			set.add(server);
+			out.set(local, set);
+		}
+		return out;
 	}
 
 	/** Where note `id`'s FILE is on this device, for the folder resolver. The

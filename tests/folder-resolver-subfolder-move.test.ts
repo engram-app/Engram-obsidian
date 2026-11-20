@@ -188,3 +188,36 @@ test("direct children in two local folders learn nothing", async () => {
 	expect(tree.has(`${R}/c/p1.md`)).toBe(true);
 	expect(tree.has(`${R}/d/p2.md`)).toBe(true);
 });
+
+// Notes moved one by one out of c into a new folder `other`: every direct
+// child of other sits in c, but c keeps n3, so c is not other.
+test("notes moved one by one into a new folder never rename their old folder", async () => {
+	const { engine, tree, renames } = await setup({
+		[`${R}/c/n1.md`]: "n1",
+		[`${R}/c/n2.md`]: "n2",
+		[`${R}/c/n3.md`]: "n3",
+	});
+	engine.learnFolders([
+		{ id: "fE", parent_id: null, name: "E2E" },
+		{ id: "fR", parent_id: "fE", name: "Chain108" },
+		{ id: "fC", parent_id: "fR", name: "c" },
+	]);
+	await (engine as any).syncManifestFolders({
+		notes: [
+			{ id: "n1", path: `${R}/other/n1.md`, content_hash: "h1" },
+			{ id: "n2", path: `${R}/other/n2.md`, content_hash: "h2" },
+			{ id: "n3", path: `${R}/c/n3.md`, content_hash: "h3" },
+		],
+		attachments: [],
+		total_notes: 3,
+		total_attachments: 0,
+		folders: [
+			{ id: "fE", parent_id: null, name: "E2E" },
+			{ id: "fR", parent_id: "fE", name: "Chain108" },
+			{ id: "fC", parent_id: "fR", name: "c" },
+			{ id: "fO", parent_id: "fR", name: "other" },
+		],
+	});
+	expect(renames).toEqual([]);
+	expect(tree.has(`${R}/c/n3.md`)).toBe(true);
+});
