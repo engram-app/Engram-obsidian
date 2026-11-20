@@ -1,9 +1,10 @@
 # Context Doc: Folder move follow race leaves an empty old folder
 
-_Last verified: 2026-11-17_
+_Last verified: 2026-11-19_
 
 ## Status
-Fixed in PR #708 (root cause plus two secondary bugs).
+Fixed in PR #708 (root cause plus two secondary bugs). The catch path was
+reshaped by #715; the current shape is under Fix.
 
 ## Symptom
 Device A renames a folder offline and reconnects. Device B sometimes keeps the
@@ -32,13 +33,23 @@ Log signature on B:
 ```
 
 ## Fix
-The catch path calls `applyFolderChange`, the same as the "target already
-exists" early return. Both ways of losing the race now converge on one path.
+#708 made the catch path call `applyFolderChange`, the same as the "target
+already exists" branch, so both ways of losing the race marked the old folder
+moved away.
+
+Since #715 the catch path keeps the bookkeeping at the server's paths (putting
+it back undid the move on every device), follows each file on its own
+(`renameFollowingIdentity`, else a stuck move), then calls `leaveMovedFolder`,
+which adds the old folder to `movedAwayFolders` and removes what is empty. The
+invariant this doc protects is unchanged: every way the folder rename can fail
+must end in `leaveMovedFolder`. Why the bookkeeping is not restored is in
+`remote-index-rekey-silent.md`.
 
 ## Secondary bugs fixed in the same PR
 - **Engine-created folders.** A folder the engine created (to hold a moved
   note) cleared the moved-away mark and was saved server-side as an explicit
-  folder. Engine creates now carry a 5 s marker and skip the server create.
+  folder. Engine creates now carry the `engineCreated` marker
+  (`ECHO_COOLDOWN_MS`, 5 s) and skip the server create.
 - **Moved-file redirect.** The redirect for moved files matched on path only, so
   it could overwrite a different note with the same name. It is now gated on
   note id.
@@ -46,11 +57,14 @@ exists" early return. Both ways of losing the race now converge on one path.
 ## Failed approaches and false leads
 - `CREATING n53` lines looked like a recreate of the old folder. They were
   setup delivery.
-- Paths in client logs are redacted to per-device n-numbers, so logs alone
-  cannot tell you which folder is which. Use an e2e dump step that always
-  prints B's id map and disk listing, with as few calls into B as possible.
+- Paths in client logs are redacted to per-device n-numbers (see
+  `remote-index-rekey-silent.md`, Gotchas), so logs alone cannot tell you
+  which folder is which. Use an e2e dump step that always prints B's id map
+  and disk listing, with as few calls into B as possible.
 - Rerun-to-green was banned. A 1-in-4 flake is a real race.
 
 ## Related
+- `folder-ops.md` (receiver section: the one-rename follow and its fallback)
+- `remote-index-rekey-silent.md` (#715: why a failed follow keeps the new paths)
 - `crdt-sync-store-hiding-layers.md`: every hiding set (including
   `movedAwayFolders`) needs a clearing event.
