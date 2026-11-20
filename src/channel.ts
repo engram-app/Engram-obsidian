@@ -6,7 +6,7 @@ import type { FolderChange, FolderOp, FolderOpResult } from "./folder-ops";
 import { noteRef } from "./note-ref";
 import { pluginVersion } from "./plugin-version";
 import { rlog } from "./remote-log";
-import { markAdmitted, notifyUpgradeRequired } from "./upgrade-required";
+import { markAdmitted, notifyUpgradeRequired, parseRefusal } from "./upgrade-required";
 
 /** How long to wait before reconnecting when no auth token is available
  *  (e.g. plugin loaded before OAuth refresh hydrated, or user signed out).
@@ -1446,12 +1446,14 @@ export class NoteChannel {
 				// per-message reply, this needs the same ref screen — otherwise
 				// one stray frame latches the notice and permanently suppresses
 				// the real one.
-				if (joinReason === "plugin_upgrade_required") {
-					notifyUpgradeRequired(
-						typeof joinResponse?.min_version === "string"
-							? joinResponse.min_version
-							: null,
-					);
+				// `account_paused` rides the same refusal: not retryable (see
+				// isRetryableJoinReason), so no reconnect loop, same latch.
+				const refusal = parseRefusal(joinResponse);
+				if (refusal.confirmed) {
+					notifyUpgradeRequired(refusal.minVersion, undefined, true, {
+						kind: refusal.kind,
+						updateTo: refusal.updateTo,
+					});
 				}
 				if (topic === this.crdtTopic) {
 					const response = joinResponse;

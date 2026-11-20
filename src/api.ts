@@ -38,6 +38,8 @@ import {
 	clearUpgradeRefusal,
 	isUpgradeRequired,
 	notifyUpgradeRequired,
+	parseRefusal,
+	type RefusalProbe,
 	upgradeRequiredError,
 } from "./upgrade-required";
 import { wasmCore } from "./wasm-core";
@@ -298,14 +300,40 @@ export class EngramApi {
 		method: string,
 		path: string,
 	): boolean {
-		if (status !== 426) return false;
-		const body = errorBody(e);
-		notifyUpgradeRequired(
-			typeof body.min_version === "string" ? body.min_version : null,
-			{ method, route: beaconRoute(path) },
-			body.error === "plugin_upgrade_required",
+		if (status !== 426 && status !== 403) return false;
+		const r = parseRefusal(errorBody(e));
+		// The backend sends the wait as a `retry-after` HEADER, never in the body.
+		// Read raw: `retryAfterMs` clamps to 5 min (a 429 backoff), which would turn
+		// the backend's hour into a 10-minute probe cadence.
+		const raw = headerLookup((e as { headers?: Record<string, string> }).headers)(
+			"retry-after",
 		);
+		const retryAfterS = raw && /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : null;
+		// The backend refuses a paused account with HTTP 403 (`account_paused`),
+		// the version floor with 426. Any OTHER 403 (permission denied, ...)
+		// is not a refusal and must not latch.
+		if (status === 403 && !(r.confirmed && r.kind === "account_paused")) return false;
+		notifyUpgradeRequired(r.minVersion, { method, route: beaconRoute(path) }, r.confirmed, {
+			kind: r.kind,
+			retryAfterS,
+			updateTo: r.updateTo,
+		});
 		return true;
+	}
+
+	/** The refusal self-recheck's probe (upgrade-required.ts): the cheapest
+	 *  authed GET, sent past the local refusal guard. Only a 2xx is `clear`; a
+	 *  426 is still `refused`; anything else (5xx, timeout, 401, offline) teaches
+	 *  nothing, so it is `unknown` and can never clear or enter a refusal. */
+	async probeRefusal(): Promise<RefusalProbe> {
+		try {
+			// Vault-scoped on purpose: GET /vaults sits outside `:authed_api`, so it
+			// answers 200 to a paused or too-old client and would falsely clear.
+			await this.request("GET", "/folders", undefined, undefined, true);
+			return "clear";
+		} catch (e) {
+			return statusOf(e) === 426 ? "refused" : "unknown";
+		}
 	}
 
 	/** Send free-form feedback from the plugin's Feedback tab. */
@@ -326,13 +354,14 @@ export class EngramApi {
 		path: string,
 		body?: unknown,
 		extraHeaders?: Record<string, string>,
+		bypassRefusal = false,
 	): Promise<RequestUrlResponse> {
 		// A 426 is permanent until the plugin is updated, which means a reload.
 		// Once refused (here or on a socket join), every later call would 426
 		// too: refuse locally instead of sending. Without this the remote logger
 		// re-buffered each refused batch and retried it forever (1,330 POST
 		// /api/logs in 12h from one install, 2026-10-18).
-		if (isUpgradeRequired()) throw upgradeRequiredError();
+		if (!bypassRefusal && isUpgradeRequired()) throw upgradeRequiredError();
 		try {
 			return await this.sendRequest(method, path, body, extraHeaders);
 		} catch (e) {
@@ -346,7 +375,9 @@ export class EngramApi {
 				throw parseLimitExceededError(e);
 			}
 			if (this.noteIfUpgradeRequired(e, status, method, path)) {
-				throw e;
+				// A 403 pause becomes the local 426-shaped refusal so every
+				// caller's existing "refused: hold, don't fail" routing applies.
+				throw status === 403 ? upgradeRequiredError() : e;
 			}
 			// On 401, the cached access token may be stale (e.g. server-side TTL
 			// shorter than the expires_in we trusted). Invalidate and retry once
@@ -372,7 +403,7 @@ export class EngramApi {
 					// path, not the primary one. Missing it here made the notice
 					// unreachable in the single most likely real-world shape.
 					if (this.noteIfUpgradeRequired(e2, retryStatus, method, path)) {
-						throw e2;
+						throw retryStatus === 403 ? upgradeRequiredError() : e2;
 					}
 					rlog().warn(
 						"api",

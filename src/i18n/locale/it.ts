@@ -31,6 +31,7 @@ const it: Dict = {
 	About: "Informazioni",
 	"Accept it to keep syncing.": "Accettalo per continuare la sincronizzazione.",
 	"Access token": "Token di accesso",
+	"Account paused: Engram is not syncing": "Accounto in pausa: Engram non sta sincronizzando",
 	"Account setup incomplete.": "Configurazione dell'account incompleta.",
 	"Account suspended. Contact support.": "Account sospeso. Contatta l'assistenza.",
 	"Activity ({count})": "Attività ({count})",
@@ -66,6 +67,7 @@ const it: Dict = {
 	"Cargo cache": "Cache di Cargo",
 	Change: "Cambia",
 	"Change vault": "Cambia Vault",
+	"Check again": "Controlla di nuovo",
 	"Check sync status": "Controlla lo stato della sincronizzazione",
 	"Checking for changes.": "Controllo delle modifiche.",
 	"Checking server…": "Controllo del server…",
@@ -220,6 +222,11 @@ const it: Dict = {
 		"Aggiornamento di Engram per {document}, valido dal {date}.",
 	"Engram: This vault has been deleted on the server.":
 		"Engram: questo Vault è stato eliminato dal server.",
+	"Engram: account paused": "Engram: accounto in pausa",
+	"Engram: checked a moment ago. Try again in a few seconds.":
+		"Engram: controllato un momento fa. Riprova tra qualche secondo.",
+	"Engram: could not reach the server. We will keep checking automatically.":
+		"Engram: impossibile raggiungere il server. Continueremo a controllare automaticamente.",
 	"Engram: disconnected. Open Engram settings to reconnect.":
 		"Engram: disconnesso. Apri le impostazioni di Engram per riconnetterti.",
 	"Engram: error": "Engram: errore",
@@ -248,6 +255,8 @@ const it: Dict = {
 		"Engram: impossibile visualizzare la scheda delle impostazioni ({error})",
 	"Engram: sign-in failed ({error})": "Engram: impossibile accedere ({error})",
 	"Engram: signed out": "Engram: disconnesso",
+	"Engram: still refused by the server. We will keep checking automatically.":
+		"Engram: ancora rifiutato dal server. Continueremo a controllare automaticamente.",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram: conflitto di sincronizzazione su {path} — la tua modifica locale è stata salvata come {copy}",
 	"Engram: sync failed. Open the sync log for details.":
@@ -259,10 +268,16 @@ const it: Dict = {
 	"Engram: sync paused": "Engram: sincronizzazione in pausa",
 	"Engram: syncing": "Engram: sincronizzando",
 	"Engram: syncing ({count})": "Engram: sincronizzando ({count})",
+	"Engram: the server accepts this device again. Sync is resuming.":
+		"Engram: il server accetta di nuovo questo dispositivo. La sincronizzazione è in ripresa.",
+	"Engram: this account is paused, so syncing is off. Your changes stay on this device. Contact {email} to get it restored.":
+		"Engram: questo accounto è in pausa, quindi la sincronizzazione è disattivata. Le tue modifiche rimangono su questo dispositivo. Contatta {email} per riattivarlo.",
 	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
 		"Engram: questo plugin è troppo vecchio per sincronizzare (richiede {version} o versione successiva). Aggiornalo per continuare.",
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram: questo plugin è troppo vecchio per sincronizzare. Aggiornalo per continuare.",
+	"Engram: this plugin is too old to sync. {versions}":
+		"Engram: questo plugin è troppo vecchio per la sincronizzazione. {versions}",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: questo Vault non esiste più sul server. Seleziona o crea un Vault per continuare.",
 	"Engram: update required": "Engram: aggiornamento necessario",
@@ -378,6 +393,8 @@ const it: Dict = {
 	"Not signed in. Click to open settings and reconnect.":
 		"Non ancora connesso. Clicca per aprire le impostazioni e riconnetterti.",
 	"Not synced on your plan ({count})": "Non sincronizzato nel tuo piano ({count})",
+	"Not syncing: this account is paused. Contact {email}.":
+		"Non sincronizzando: questo accounto è in pausa. Contatta {email}.",
 	"Not syncing: this plugin version is too old (needs {version} or newer). Click to update.":
 		"Non in sincronizzazione: questa versione del plugin è troppo vecchia (richiede {version} o superiore). Clicca per aggiornare.",
 	"Not syncing: this plugin version is too old. Click to update.":
@@ -546,6 +563,8 @@ const it: Dict = {
 		"Il server Engram non accetta più questa versione del plugin (è necessaria la versione {version} o successiva), quindi le note non vengono inviate o ricevute. Le modifiche apportate su questo dispositivo rimangono qui finché non aggiorni.",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Il server Engram non accetta più questa versione del plugin, quindi le note non vengono inviate o ricevute. Le modifiche apportate su questo dispositivo rimangono qui finché non aggiorni.",
+	"The Engram server no longer accepts this plugin version. {versions} Changes made on this device stay here until you update.":
+		"Il server Engram non accetta più questa versione del plugin. {versions} Le modifiche apportate su questo dispositivo rimangono qui finché non aggiorni.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"Il file supera il limite di dimensione del server. Comprimilo o dividilo, poi verrà sincronizzato.",
 	"The file is too large for the server.": "Il file è troppo grande per il server.",
@@ -561,6 +580,8 @@ const it: Dict = {
 		"Il server ha impiegato troppo tempo per rispondere. Riprova.",
 	"These files are fine. Each card below says why they did not sync.":
 		"Questi file sono corretti. Ogni scheda qui sotto spiega perché non sono stati sincronizzati.",
+	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":
+		"Questo accounto è in pausa, quindi le note non vengono inviate o ricevute. Le modifiche effettuate su questo dispositivo rimangono qui. Contatta {email} per riattivarlo. La sincronizzazione riprenderà automaticamente quando sarà attivo.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Questo account è stato eliminato. Contatta l'assistenza se non è corretto.",
 	"This cannot be undone.": "Questa operazione non è annullabile.",
@@ -649,6 +670,8 @@ const it: Dict = {
 		"Attualmente stai puntando a un Vault cloud diverso",
 	"You can close this and the sync keeps running in the background.":
 		"Puoi chiudere questa finestra e la sincronizzazione continuerà in background.",
+	"You have {current}. Update to {target} or newer to keep syncing.":
+		"Hai la versione {current}. Aggiorna alla versione {target} o successiva per continuare la sincronizzazione.",
 	"You've used all the attachment storage on your plan. Upgrade for more.":
 		"Hai esaurito lo spazio di archiviazione degli allegati del tuo piano. Aggiorna per averne di più.",
 	"Your code:": "Il tuo codice:",

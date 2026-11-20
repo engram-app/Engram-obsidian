@@ -27,6 +27,7 @@ const ja: Dict = {
 	About: "概要",
 	"Accept it to keep syncing.": "同期を続ける場合は、同意してください。",
 	"Access token": "アクセストークン",
+	"Account paused: Engram is not syncing": "アカウント一時停止: Engram は同期されていません",
 	"Account setup incomplete.": "アカウントの設定が完了していません。",
 	"Account suspended. Contact support.":
 		"アカウントが停止されています。サポートにお問い合わせください。",
@@ -63,6 +64,7 @@ const ja: Dict = {
 	"Cargo cache": "Cargoキャッシュ",
 	Change: "変更",
 	"Change vault": "保管庫を変更",
+	"Check again": "再度確認",
 	"Check sync status": "同期状況を確認",
 	"Checking for changes.": "変更をチェックしています。",
 	"Checking server…": "サーバーの確認中…",
@@ -180,6 +182,11 @@ const ja: Dict = {
 		"Engramの{document}アップデート、適用日{date}.",
 	"Engram: This vault has been deleted on the server.":
 		"Engram: この保管庫はサーバーから削除されました。",
+	"Engram: account paused": "Engram: アカウント一時停止",
+	"Engram: checked a moment ago. Try again in a few seconds.":
+		"Engram: 直前に確認しました。数秒後に再度お試しください。",
+	"Engram: could not reach the server. We will keep checking automatically.":
+		"Engram: サーバーに接続できませんでした。自動的に再試行します。",
 	"Engram: disconnected. Open Engram settings to reconnect.":
 		"Engram: 接続解除。再接続するには、Engram の設定を開いてください。",
 	"Engram: error": "Engram: エラー",
@@ -201,6 +208,8 @@ const ja: Dict = {
 		"Engram: 設定タブの表示に失敗しました ({error})",
 	"Engram: sign-in failed ({error})": "Engram: ログインに失敗しました ({error})",
 	"Engram: signed out": "Engram: ログアウトされています",
+	"Engram: still refused by the server. We will keep checking automatically.":
+		"Engram: サーバーからの拒否が続いています。自動的に再試行します。",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram：{path} での同期競合が発生しました。ローカルの編集内容は {copy} として保存されました",
 	"Engram: sync failed. Open the sync log for details.":
@@ -212,10 +221,16 @@ const ja: Dict = {
 	"Engram: sync paused": "Engram: 同期を一時停止",
 	"Engram: syncing": "Engram: 同期中",
 	"Engram: syncing ({count})": "Engram: 同期中 ({count})",
+	"Engram: the server accepts this device again. Sync is resuming.":
+		"Engram: サーバーがこのデバイスを再度許可しました。同期を再開します。",
+	"Engram: this account is paused, so syncing is off. Your changes stay on this device. Contact {email} to get it restored.":
+		"Engram: このアカウントは一時停止されており、同期はオフになっています。変更内容は、このデバイスに保存されます。復旧のためは {email} までご連絡ください。",
 	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
 		"Engram：このプラグインは古く、同期できません（{version} 以降が必要です）。続行するには更新してください。",
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram：このプラグインは古く、同期できません。続行するには更新してください。",
+	"Engram: this plugin is too old to sync. {versions}":
+		"Engram: このプラグインは古く、同期できません。{versions}",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: この保管庫はサーバー上に存在しません。利用可能な保管庫を選択するか、新規作成して続行してください。",
 	"Engram: update required": "Engram: 更新が必要です",
@@ -318,6 +333,8 @@ const ja: Dict = {
 	"Not signed in. Click to open settings and reconnect.":
 		"まだログインされていません。設定を開いて、再接続してください。",
 	"Not synced on your plan ({count})": "プランでは同期できません ({count})",
+	"Not syncing: this account is paused. Contact {email}.":
+		"同期していません: このアカウントは一時停止中です。{email} までご連絡ください。",
 	"Not syncing: this plugin version is too old (needs {version} or newer). Click to update.":
 		"同期していません: このプラグインのバージョンが古すぎます (バージョン {version} 以上が必要です)。更新するにはクリックしてください。",
 	"Not syncing: this plugin version is too old. Click to update.":
@@ -478,6 +495,8 @@ const ja: Dict = {
 		"Engramサーバーは、このプラグインのバージョンに対応していません（{version}以上が必要です）。そのため、ノートの送受信ができません。このデバイスで行った変更は、アップデートするまでここで保存されます。",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Engramサーバーは、このプラグインのバージョンに対応していません。そのため、ノートの送受信ができません。このデバイスで行った変更は、アップデートするまでここで保存されます。",
+	"The Engram server no longer accepts this plugin version. {versions} Changes made on this device stay here until you update.":
+		"Engram サーバーは、このプラグインのバージョンをサポートしていません。{versions} このデバイスで行った変更は、アップデートするまでここで保持されます。",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"ファイルがサーバーのサイズ制限を超えています。圧縮するか分割し、再度同期してください。",
 	"The file is too large for the server.": "ファイルがサーバーの許容量を超えています。",
@@ -493,6 +512,8 @@ const ja: Dict = {
 		"サーバーの応答が遅すぎます。もう一度お試しください。",
 	"These files are fine. Each card below says why they did not sync.":
 		"これらのファイルは問題ありません。各カードには、同期されなかった理由が記載されています。",
+	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":
+		"このアカウントは一時停止されているため、ノートの送受信が行われません。このデバイス上で行った変更は、ここで保持されます。復旧のためは {email} までご連絡ください。自動的に同期が再開されます。",
 	"This account was deleted. Contact support if that is wrong.":
 		"このアカウントは削除されました。もし誤りがあれば、サポートまでご連絡ください。",
 	"This cannot be undone.": "この操作は取り消せません。",
@@ -562,6 +583,8 @@ const ja: Dict = {
 	"You are now pointing at a different cloud vault": "現在、別のクラウド保管庫を参照しています",
 	"You can close this and the sync keeps running in the background.":
 		"このウィンドウを閉じても、同期はバックグラウンドで続行されます。",
+	"You have {current}. Update to {target} or newer to keep syncing.":
+		"{current} 個あります。同期を継続するには、{target} 以降のバージョンにアップデートしてください。",
 	"You've used all the attachment storage on your plan. Upgrade for more.":
 		"プランの添付ファイル保存容量上限に達しました。より多くの容量が必要な場合は、アップグレードしてください。",
 	"Your code:": "コード：",

@@ -11,8 +11,9 @@
  * Object.create(prototype) pattern (see settings-gate-rerender.test.ts) so the
  * real renderStatus runs against a bare fake plugin, no Obsidian DOM.
  */
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { EngramSyncSettingTab } from "../src/settings";
+import { notifyUpgradeRequired, resetUpgradeRequired } from "../src/upgrade-required";
 
 interface FakeEl {
 	cls: string;
@@ -95,5 +96,23 @@ describe("settings status strip — Upgrade CTA", () => {
 		// at all, so the CTA would open a page that 404s.
 		expect(hasUpgrade(renderWith("free", "selfhost"))).toBe(false);
 		expect(hasUpgrade(renderWith("free", null))).toBe(false);
+	});
+});
+
+describe("settings status strip — refusal label", () => {
+	afterEach(() => resetUpgradeRequired());
+
+	const texts = (el: FakeEl): string[] => el.children.map((c) => c.text);
+
+	test("a paused account says paused, not update required", () => {
+		notifyUpgradeRequired(null, undefined, true, { kind: "account_paused" });
+		const shown = texts(renderWith("free"));
+		expect(shown).toContain("Account paused: Engram is not syncing");
+		expect(shown).not.toContain("Update required, not syncing");
+	});
+
+	test("a version-floor refusal still says update required", () => {
+		notifyUpgradeRequired("9.9.9");
+		expect(texts(renderWith("free"))).toContain("Update required, not syncing");
 	});
 });

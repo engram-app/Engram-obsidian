@@ -81,7 +81,8 @@ import {
 	plannedPhases,
 	SyncProgressModal,
 } from "./sync-progress-modal";
-import { ENGRAM_CLOUD_URL, engramWebUrl } from "./tabs/urls";
+import { ENGRAM_CLOUD_URL, engramWebUrl, SUPPORT_EMAIL } from "./tabs/urls";
+import { DefaultTimeProvider } from "./time-provider";
 import type { BackendMode, QueueEntry, SyncChoice, SyncIssue, SyncPlan } from "./types";
 import {
 	DEFAULT_SETTINGS,
@@ -92,10 +93,19 @@ import {
 } from "./types";
 import { checkForPluginUpdate } from "./update-check";
 import {
+	clearUpgradeRefusal,
 	isUpgradeRequired,
+	makeRefusalListener,
 	openUpgradeUi,
+	type PersistedRefusal,
+	persistedRefusal,
+	refusalAccountGone,
+	refusalKind,
+	restoreRefusal,
 	setUpgradeAction,
 	setUpgradeStateListener,
+	startRefusalRecheck,
+	stopRefusalRecheck,
 	upgradeRequiredMinVersion,
 } from "./upgrade-required";
 import { loadWasmCore } from "./wasm-core";
@@ -161,6 +171,8 @@ interface PluginData {
 	/** Folder ops the server has not answered (Engram#2523 S4). Each carries
 	 *  its vault; another vault's op is dropped unsent. */
 	folderOps?: FolderOp[];
+	/** A latched server refusal (upgrade-required.ts), re-latched on load. */
+	refusal?: PersistedRefusal | null;
 	/** The folder id <-> path index as last applied to disk, and its vault, so
 	 *  a restart can follow a remote folder move before its first manifest. */
 	folderIndex?: FolderIndexSnapshot;
@@ -541,6 +553,10 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  effort: email and the web app also carry these, so a failed fetch only
 	 *  waits for the next check. */
 	private readonly legalNoticeToasts = new Map<string, Notice>();
+	/** Drives the refusal self-recheck; destroyed in onunload. */
+	private readonly refusalTime = new DefaultTimeProvider();
+	/** Account the latched refusal belongs to (see refusalAccountGone). */
+	private refusalAccount: string | null = null;
 	/** Set first in onunload. A check still in flight then must not write
 	 *  data.json: it would overwrite the next instance's rotated token. */
 	private unloaded = false;
@@ -627,17 +643,32 @@ export default class EngramSyncPlugin extends Plugin {
 		// and a "newer version available" nudge want the same place, and that
 		// path is already feature-detected against Obsidian internals.
 		setUpgradeAction(() => this.openCommunityPluginsUpdate());
-		setUpgradeStateListener((admitted) => {
-			if (!this.syncEngine) return;
-			this.updateStatusBar(this.syncEngine.getStatus());
-			// Admitted by the server: the queue held every change while refused
-			// (sync.ts runFlushQueue), and a socket join does not re-drive it.
-			// Only on admission: see UpgradeStateListener in upgrade-required.ts.
-			if (admitted) {
-				void this.syncEngine.flushQueue().catch((e: unknown) => {
-					rlog().warn("queue", `post-refusal flush failed: ${errMsg(e)}`);
-				});
-			}
+		setUpgradeStateListener(
+			makeRefusalListener({
+				repaint: () => {
+					if (this.syncEngine) this.updateStatusBar(this.syncEngine.getStatus());
+				},
+				// Persist the latch so a restart neither forgets a refusal nor
+				// needs a server round trip to drop one (restoreRefusal).
+				persist: async () => {
+					this.refusalAccount = this.settings.userEmail ?? null;
+					if (this.syncEngine) await this.savePluginData(this.syncEngine.getLastSync());
+				},
+				rebuildSocket: () => {
+					this.everConnected = false;
+					this.setupNoteStream();
+				},
+				flushQueue: async () => {
+					if (this.syncEngine) await this.syncEngine.flushQueue();
+				},
+				warn: (m) => rlog().warn("queue", m),
+			}),
+		);
+		// Self-recheck of a refusal (upgrade-required.ts). Unlinked: nothing to
+		// ask the server with, so learn nothing and keep backing off.
+		startRefusalRecheck({
+			time: this.refusalTime,
+			probe: async () => (this.hasAuthConfigured() ? this.api.probeRefusal() : "unknown"),
 		});
 		rlog().info("lifecycle", `onload start — v${this.manifest.version}`);
 		activeDocument.body.classList.add("engram-vault-sync-active");
@@ -940,6 +971,8 @@ export default class EngramSyncPlugin extends Plugin {
 			this.crdtOpQueue?.load(saved.crdtOpQueue);
 		}
 		if (saved?.folderOps?.length) this.syncEngine.folderOps.load(saved.folderOps);
+		this.refusalAccount = saved?.refusal?.account ?? null;
+		restoreRefusal(saved?.refusal, this.manifest.version, this.settings.userEmail ?? null);
 		this.syncEngine.restoreFolderIndex(saved?.folderIndex);
 		if (saved?.syncStateVaultId !== undefined) {
 			this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId);
@@ -1198,7 +1231,7 @@ export default class EngramSyncPlugin extends Plugin {
 		this.registerDomEvent(this.statusBarEl, "click", () => {
 			// Refused by the server's version floor: syncing cannot work, so the
 			// click goes where the fix is. Falls through if no action is wired.
-			if (isUpgradeRequired() && openUpgradeUi()) return;
+			if (refusalKind() === "update_required" && openUpgradeUi()) return;
 			if (!this.hasAuthConfigured()) {
 				// Signed out: a silent dead click here was the incident's limbo —
 				// route to settings where the re-link lives.
@@ -1597,6 +1630,9 @@ export default class EngramSyncPlugin extends Plugin {
 		// would call into a dead `this.app`.
 		setUpgradeAction(null);
 		setUpgradeStateListener(null);
+		stopRefusalRecheck();
+		// `?.`: onunload must never throw, even before field init (early unload).
+		this.refusalTime?.destroy();
 		this.promiseTracker?.destroy();
 		this.promiseTracker = null;
 		destroyDevLog();
@@ -1759,6 +1795,16 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	async saveSettings(): Promise<void> {
+		// Sign-out / account switch: a pause belongs to the account that earned it.
+		if (
+			isUpgradeRequired() &&
+			refusalAccountGone(
+				this.refusalAccount,
+				this.settings.userEmail ?? null,
+				this.hasAuthConfigured(),
+			)
+		)
+			clearUpgradeRefusal();
 		this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey);
 		this.api.setVaultId(this.settings.vaultId);
 		this.api.setTracingEnabled(this.settings.diagnosticsEnabled);
@@ -2033,6 +2079,7 @@ export default class EngramSyncPlugin extends Plugin {
 			crdtOpQueue: this.crdtOpQueue?.all() ?? [],
 			// Re-listed for the wholesale-save reason: unanswered folder ops.
 			folderOps: this.syncEngine.exportFolderOps(),
+			refusal: persistedRefusal(this.settings.userEmail ?? null),
 			folderIndex: this.syncEngine.exportFolderIndex(),
 			syncState: this.syncEngine.exportSyncState(),
 			syncStateVaultId: this.syncEngine.getSyncStateVaultId(),
@@ -3752,7 +3799,12 @@ export default class EngramSyncPlugin extends Plugin {
 		const neverSynced = !status.lastSync;
 		const updateRequired = isUpgradeRequired();
 
-		if (updateRequired) {
+		if (refusalKind() === "account_paused") {
+			text = t("Engram: account paused");
+			tooltip = t("Not syncing: this account is paused. Contact {email}.", {
+				email: SUPPORT_EMAIL,
+			});
+		} else if (updateRequired) {
 			// First: the server's version floor refuses every sync path, so any
 			// other state here ("live", "ready") would be a lie. Persistent until
 			// a clearing event in upgrade-required.ts; the Notice fades.

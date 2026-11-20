@@ -31,6 +31,7 @@ const fr: Dict = {
 	About: "À propos",
 	"Accept it to keep syncing.": "Accepte-la pour continuer la synchronisation.",
 	"Access token": "Jeton d'accès",
+	"Account paused: Engram is not syncing": "Compte suspendu: Engram n'est pas synchronisé",
 	"Account setup incomplete.": "Configuration du compte incomplète.",
 	"Account suspended. Contact support.": "Compte suspendu. Contacte le support.",
 	"Activity ({count})": "Activité ({count})",
@@ -65,6 +66,7 @@ const fr: Dict = {
 	"Cargo cache": "Cache Cargo",
 	Change: "Modifier",
 	"Change vault": "Changer de coffre",
+	"Check again": "Vérifier à nouveau",
 	"Check sync status": "Vérifier le statut de la synchronisation",
 	"Checking for changes.": "Vérification des modifications.",
 	"Checking server…": "Vérification du serveur…",
@@ -218,6 +220,11 @@ const fr: Dict = {
 		"Mise à jour de Engram pour {document}, entrée en vigueur le {date}.",
 	"Engram: This vault has been deleted on the server.":
 		"Engram : ce coffre a été supprimé sur le serveur.",
+	"Engram: account paused": "Engram: compte suspendu",
+	"Engram: checked a moment ago. Try again in a few seconds.":
+		"Engram: vérifié il y a un instant. Réessaie dans quelques secondes.",
+	"Engram: could not reach the server. We will keep checking automatically.":
+		"Engram: impossible de contacter le serveur. Nous continuerons à vérifier automatiquement.",
 	"Engram: disconnected. Open Engram settings to reconnect.":
 		"Engram : déconnecté. Ouvre les paramètres Engram pour te reconnecter.",
 	"Engram: error": "Engram : erreur",
@@ -246,6 +253,8 @@ const fr: Dict = {
 		"Engram : l'onglet des paramètres n'a pas pu être affiché ({error})",
 	"Engram: sign-in failed ({error})": "Engram : échec de la connexion ({error})",
 	"Engram: signed out": "Engram : déconnecté",
+	"Engram: still refused by the server. We will keep checking automatically.":
+		"Engram: toujours refusé par le serveur. Nous continuerons à vérifier automatiquement.",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram : conflit de synchronisation sur {path} — ta modification locale a été enregistrée sous le nom {copy}",
 	"Engram: sync failed. Open the sync log for details.":
@@ -257,10 +266,16 @@ const fr: Dict = {
 	"Engram: sync paused": "Engram : synchronisation interrompue",
 	"Engram: syncing": "Engram : synchronisation",
 	"Engram: syncing ({count})": "Engram : synchronisation ({count})",
+	"Engram: the server accepts this device again. Sync is resuming.":
+		"Engram: le serveur accepte à nouveau cet appareil. La synchronisation reprend.",
+	"Engram: this account is paused, so syncing is off. Your changes stay on this device. Contact {email} to get it restored.":
+		"Engram: ce compte est suspendu, donc la synchronisation est désactivée. Tes modifications restent sur cet appareil. Contacte {email} pour le réactiver.",
 	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
 		"Engram : ce plugin est trop ancien pour synchroniser (nécessite {version} ou une version ultérieure). Mets-le à jour pour continuer.",
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram : ce plugin est trop ancien pour synchroniser. Mets-le à jour pour continuer.",
+	"Engram: this plugin is too old to sync. {versions}":
+		"Engram: ce plugin est trop ancien pour la synchronisation. {versions}",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram : ce coffre n'existe plus sur le serveur. Choisis ou crée un coffre pour continuer.",
 	"Engram: update required": "Engram: mise à jour requise",
@@ -376,6 +391,8 @@ const fr: Dict = {
 	"Not signed in. Click to open settings and reconnect.":
 		"Pas connecté. Clique pour ouvrir les paramètres et te reconnecter.",
 	"Not synced on your plan ({count})": "Non synchronisé dans ton abonnement ({count})",
+	"Not syncing: this account is paused. Contact {email}.":
+		"Synchronisation inactive: ce compte est suspendu. Contacte {email}.",
 	"Not syncing: this plugin version is too old (needs {version} or newer). Click to update.":
 		"Ne se synchronise pas : cette version du plugin est trop ancienne (nécessite {version} ou une version ultérieure). Clique pour mettre à jour.",
 	"Not syncing: this plugin version is too old. Click to update.":
@@ -544,6 +561,8 @@ const fr: Dict = {
 		"Le serveur Engram n'accepte plus cette version du plugin (il nécessite {version} ou une version ultérieure), donc les notes ne sont ni envoyées ni reçues. Les modifications effectuées sur cet appareil restent ici jusqu'à ce que tu mettes à jour.",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Le serveur Engram n'accepte plus cette version du plugin, donc les notes ne sont ni envoyées ni reçues. Les modifications effectuées sur cet appareil restent ici jusqu'à ce que tu mettes à jour.",
+	"The Engram server no longer accepts this plugin version. {versions} Changes made on this device stay here until you update.":
+		"Le serveur Engram n'accepte plus cette version du plugin. {versions} Les modifications effectuées sur cet appareil restent ici jusqu'à ce que tu mettes à jour.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"Le fichier dépasse la limite de taille du serveur. Compresse-le ou divise-le, puis il sera synchronisé.",
 	"The file is too large for the server.": "Le fichier est trop volumineux pour le serveur.",
@@ -559,6 +578,8 @@ const fr: Dict = {
 		"Le serveur a mis trop de temps à répondre. Réessaie.",
 	"These files are fine. Each card below says why they did not sync.":
 		"Ces fichiers sont corrects. Chaque carte ci-dessous explique pourquoi ils n'ont pas été synchronisés.",
+	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":
+		"Ce compte est suspendu, donc les notes ne sont ni envoyées ni reçues. Les modifications effectuées sur cet appareil restent ici. Contacte {email} pour le réactiver. La synchronisation reprend automatiquement une fois le compte réactivé.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Ce compte a été supprimé. Contacte le support si c'est une erreur.",
 	"This cannot be undone.": "Cela ne peut pas être annulé.",
@@ -646,6 +667,8 @@ const fr: Dict = {
 		"Tu utilises maintenant un autre coffre en ligne",
 	"You can close this and the sync keeps running in the background.":
 		"Tu peux fermer ceci et la synchronisation continue en arrière-plan.",
+	"You have {current}. Update to {target} or newer to keep syncing.":
+		"Tu as {current}. Mets à jour vers {target} ou une version plus récente pour continuer la synchronisation.",
 	"You've used all the attachment storage on your plan. Upgrade for more.":
 		"Tu as utilisé tout l'espace de stockage des pièces jointes de ton abonnement. Passe à un abonnement supérieur pour plus d'espace.",
 	"Your code:": "Ton code :",

@@ -1,6 +1,10 @@
 /**
- * upgrade-required.ts — the client half of the backend's minimum-plugin-version
- * floor.
+ * upgrade-required.ts — the client half of the backend's refusal of a client:
+ * the minimum-plugin-version floor (`update_required`) and a paused account
+ * (`account_paused`). The floor arrives as HTTP 426 and the pause as HTTP 403
+ * on REST; both arrive as the same join-refusal shape on a channel. They share
+ * ONE latch and differ only in copy (an update fixes the first, support the
+ * second).
  *
  * The server refuses a plugin older than its floor: HTTP `426` on REST, and a
  * `plugin_upgrade_required` reason on a channel join. Both are terminal —
@@ -25,9 +29,9 @@
  * drives a persistent "update required" status bar item and a Sync Center
  * banner, repainted through `setUpgradeStateListener`.
  *
- * The blocked state has exactly three clearing events:
- *  1. Plugin reload (including the reload Obsidian does after an update): the
- *     module graph is re-evaluated, so every latch here starts fresh.
+ * The blocked state has these clearing events (4-7 are the self-recheck below):
+ *  1. Plugin reload: the module graph is re-evaluated and every latch starts
+ *     fresh, then `restoreRefusal` re-latches from data.json (event 6).
  *  2. Backend change (`clearUpgradeRefusal`, from `EngramApi.updateConfig`):
  *     a different server has its own floor. Re-arms the Notice too.
  *  3. Server admits us (`markAdmitted`, from a successful `sync:` join): the
@@ -51,28 +55,39 @@
  * timer, so a per-request 426 turned into an endless POST /api/logs loop.
  *
  * The socket is left alone: Phoenix does not close a socket on a join error,
- * so a refused client keeps ONE open socket. `sync:` and `crdt:` are refused,
- * `user:` still joins (no version gate on `check_not_deleted/1`), and the 30s
- * heartbeat keeps it alive, so `onclose` never fires and the client idles
- * with `connected === false` rather than retry-storming.
+ * so a refused client keeps ONE open socket. On a version-floor refusal
+ * `sync:` and `crdt:` are refused but `user:` still joins (no version gate on
+ * `check_not_deleted/1`); a paused account is refused on `user:` too. Either
+ * way the 30s heartbeat keeps the socket alive, so `onclose` never fires and
+ * the client idles with `connected === false` rather than retry-storming.
  */
 import { Notice } from "obsidian";
+import { errMsg } from "./error-util";
 import { t } from "./i18n";
+import { pluginVersion } from "./plugin-version";
 import { rlog } from "./remote-log";
+import { SUPPORT_EMAIL } from "./tabs/urls";
+import type { TimeProvider } from "./time-provider";
+import { isNewerVersion } from "./update-check";
 
 const NOTICE_MS = 15_000;
 
-let notified = false;
-// Separate from `notified`: a bare 426 (a proxy) still warns, but only the
+/** Which refusal kind the Notice last fired for. A different kind re-notifies
+ *  (an account pause landing after an update refusal is new information). */
+let notifiedKind: RefusalKind | null = null;
+// Separate from `notifiedKind`: a bare 426 (a proxy) still warns, but only the
 // server's own floor refusal stops requests. Updating cannot fix a proxy.
 let refused = false;
 let openUpdateUi: (() => void) | null = null;
 let refusedMinVersion: string | null = null;
+let refusedKind: RefusalKind = "update_required";
+let refusedRetryAfterS: number | null = null;
+let refusedUpdateTo: string | null = null;
 /** `admitted` = cleared by the server accepting a `sync:` join (event 3),
  *  the only clear where draining the held queue is safe: a backend switch
  *  (event 2) lands mid-reconfigure, before the new auth exists, and drains
  *  later from the new channel's `crdt:` join kick. */
-type UpgradeStateListener = (admitted: boolean) => void;
+type UpgradeStateListener = (admitted: boolean, rejoin: boolean) => void;
 let onStateChange: UpgradeStateListener | null = null;
 
 /** Repaint hook for the persistent UI (status bar + Sync Center). Called on
@@ -82,12 +97,30 @@ export function setUpgradeStateListener(fn: UpgradeStateListener | null): void {
 	onStateChange = fn;
 }
 
-function setRefused(next: boolean, minVersion: string | null = null, admitted = false): void {
-	if (next) refusedMinVersion = minVersion ?? refusedMinVersion;
-	else refusedMinVersion = null;
-	if (refused === next) return;
+function setRefused(
+	next: boolean,
+	minVersion: string | null = null,
+	admitted = false,
+	rejoin = false,
+	{ kind = "update_required", retryAfterS = null, updateTo = null }: RefusalOpts = {},
+): void {
+	const kindChanged = next && refused && refusedKind !== kind;
+	if (next) {
+		refusedMinVersion = minVersion ?? refusedMinVersion;
+		refusedKind = kind;
+		refusedRetryAfterS = retryAfterS ?? refusedRetryAfterS;
+		refusedUpdateTo = updateTo ?? refusedUpdateTo;
+	} else {
+		refusedMinVersion = null;
+		refusedKind = "update_required";
+		refusedRetryAfterS = null;
+		refusedUpdateTo = null;
+	}
+	const changed = refused !== next || kindChanged;
 	refused = next;
-	onStateChange?.(admitted);
+	if (next) scheduleRecheck();
+	else cancelRecheck();
+	if (changed) onStateChange?.(admitted, rejoin);
 }
 
 /** Whether an update action is wired, so a caller can skip a dead button. */
@@ -125,19 +158,111 @@ export interface UpgradeRefusalSource {
 	route: string;
 }
 
-/** Tell the user their plugin is too old. First call wins; the rest are no-ops.
- *  `confirmed` = the server's own floor said so (`plugin_upgrade_required`),
- *  which is what latches the local refusal. */
+/** Whether a recheck is wired, so a caller can skip a dead button (tests,
+ *  unload). */
+export function canRecheck(): boolean {
+	return recheck !== null;
+}
+
+function addCheckAgainButton(notice: Notice): void {
+	if (!canRecheck()) return;
+	const noticeEl = (notice as unknown as { noticeEl?: HTMLElement }).noticeEl;
+	if (!noticeEl) return;
+	const btn = noticeEl.createEl("button", { text: t("Check again") });
+	btn.addEventListener("click", () => void checkAgainWithFeedback());
+}
+
+export type RefusalKind = "update_required" | "account_paused";
+interface RefusalOpts {
+	kind?: RefusalKind;
+	retryAfterS?: number | null;
+	/** The version the server says to update to (falls back to min_version). */
+	updateTo?: string | null;
+}
+
+const VERSION_RE = /^v?\d+(\.\d+){1,3}$/;
+
+/** THE version compare: true only when BOTH strings are well-formed versions
+ *  and `min` is strictly above `current`. A garbage or empty string on either
+ *  side is "unknown", never a block (isNewerVersion alone reads garbage as
+ *  0.0.0, which would block an unset local version). */
+export function versionBelow(min: unknown, current: unknown): boolean {
+	if (typeof min !== "string" || typeof current !== "string") return false;
+	if (!VERSION_RE.test(min.trim()) || !VERSION_RE.test(current.trim())) return false;
+	return isNewerVersion(min.trim().replace(/^v/, ""), current.trim().replace(/^v/, ""));
+}
+
+/** The version to tell the user to update to. */
+export function refusalTargetVersion(): string | null {
+	return refused ? (refusedUpdateTo ?? refusedMinVersion) : null;
+}
+
+/** The copy sentence naming both versions, or null when either is unknown
+ *  (callers fall back to the version-less wording). */
+export function versionsCopy(): string | null {
+	const target = refusalTargetVersion();
+	const current = pluginVersion();
+	if (!target || !VERSION_RE.test(current)) return null;
+	return t("You have {current}. Update to {target} or newer to keep syncing.", {
+		current,
+		target,
+	});
+}
+
+/** What a refusal body (REST 426 JSON, or a channel join `response`) says.
+ *  The ONE parser both transports use, structured fields only: a generic
+ *  error, timeout or 5xx has no recognised `error`/`reason`, so it is never
+ *  `confirmed` and never latches. Backend contract (Engram#2672): the floor is
+ *  HTTP 426 `{error: "plugin_upgrade_required", min_version, update_to,
+ *  your_version}`; a paused account is HTTP 403 `{error: "account_paused"}`;
+ *  both carry a `retry-after: 3600` header. A join refusal carries the same
+ *  code in `reason`. Status gating (403 only counts as `account_paused`) lives
+ *  in `EngramApi.noteIfUpgradeRequired`. */
+export function parseRefusal(body: Record<string, unknown> | undefined): {
+	confirmed: boolean;
+	kind: RefusalKind;
+	minVersion: string | null;
+	updateTo: string | null;
+} {
+	const b = body ?? {};
+	const codes = [b.error, b.reason];
+	const paused = codes.includes("account_paused");
+	const confirmed = paused || codes.includes("plugin_upgrade_required");
+	return {
+		confirmed,
+		kind: paused ? "account_paused" : "update_required",
+		minVersion: typeof b.min_version === "string" ? b.min_version : null,
+		updateTo: typeof b.update_to === "string" ? b.update_to : null,
+	};
+}
+
+/** Tell the user sync is refused. First call per kind wins; the rest are
+ *  no-ops. `confirmed` = the server's own refusal said so, which is what
+ *  latches the local refusal. */
 export function notifyUpgradeRequired(
 	minVersion: string | null,
 	source?: UpgradeRefusalSource,
 	confirmed = true,
+	{ kind = "update_required", retryAfterS = null, updateTo = null }: RefusalOpts = {},
 ): void {
-	if (confirmed) setRefused(true, minVersion);
-	if (notified) return;
-	notified = true;
+	if (confirmed) setRefused(true, minVersion, false, false, { kind, retryAfterS, updateTo });
+	if (notifiedKind === kind) return;
+	notifiedKind = kind;
 
 	const where = source ? ` on ${source.method} ${source.route}` : "";
+	if (kind === "account_paused") {
+		rlog().warn("lifecycle", `account paused by server${where} — sync refused until lifted`);
+		// Support, not Update: the user cannot fix this by updating.
+		const paused = new Notice(
+			t(
+				"Engram: this account is paused, so syncing is off. Your changes stay on this device. Contact {email} to get it restored.",
+				{ email: SUPPORT_EMAIL },
+			),
+			NOTICE_MS,
+		);
+		addCheckAgainButton(paused);
+		return;
+	}
 	rlog().warn(
 		"lifecycle",
 		`server requires plugin >= ${minVersion ?? "unknown"}${where} — sync refused until updated`,
@@ -145,16 +270,20 @@ export function notifyUpgradeRequired(
 
 	// Two whole sentences rather than one with an appended fragment: a clause
 	// spliced onto a translated sentence cannot be reordered by the translator.
-	const message = minVersion
-		? t(
-				"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.",
-				{
-					version: minVersion,
-				},
-			)
-		: t("Engram: this plugin is too old to sync. Update it to continue.");
+	const both = versionsCopy();
+	const message = both
+		? t("Engram: this plugin is too old to sync. {versions}", { versions: both })
+		: minVersion
+			? t(
+					"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.",
+					{
+						version: minVersion,
+					},
+				)
+			: t("Engram: this plugin is too old to sync. Update it to continue.");
 	const notice = new Notice(message, NOTICE_MS);
 
+	addCheckAgainButton(notice);
 	// No action wired = no button. A button that does nothing is worse than
 	// prose telling the user to go update.
 	if (!openUpdateUi) return;
@@ -167,6 +296,21 @@ export function notifyUpgradeRequired(
 		cls: "engram-limit-upgrade-btn",
 	});
 	btn.addEventListener("click", () => openUpgradeUi());
+}
+
+/** One-call "Check again" for every button: probe now and tell the user what
+ *  happened, so a click is never silent. */
+export async function checkAgainWithFeedback(): Promise<void> {
+	const r = await recheckNow();
+	const msg =
+		r === "clear"
+			? t("Engram: the server accepts this device again. Sync is resuming.")
+			: r === "refused"
+				? t("Engram: still refused by the server. We will keep checking automatically.")
+				: r === "throttled"
+					? t("Engram: checked a moment ago. Try again in a few seconds.")
+					: t("Engram: could not reach the server. We will keep checking automatically.");
+	new Notice(msg);
 }
 
 /** True once the server has refused us for being too old. */
@@ -185,13 +329,210 @@ export function upgradeRequiredMinVersion(): string | null {
  *  swallowed. */
 export function clearUpgradeRefusal(): void {
 	setRefused(false);
-	notified = false;
+	notifiedKind = null;
+}
+
+/** Which kind of refusal is latched, or null when not refused. */
+export function refusalKind(): RefusalKind | null {
+	return refused ? refusedKind : null;
+}
+
+/** Result of one recheck probe. `unknown` = 5xx, timeout, 401, offline:
+ *  nothing learned, so the refusal stays and the next probe backs off. */
+export type RefusalProbe = "clear" | "refused" | "unknown";
+
+const RECHECK_BASE_MS = 3_600_000;
+const RECHECK_MIN_MS = 600_000;
+const RECHECK_MAX_MS = 4 * 3_600_000;
+const RECHECK_RESTORE_MS = 15_000;
+/** Minimum gap between user-pressed "Check again" probes. */
+const MANUAL_COOLDOWN_MS = 30_000;
+
+interface RecheckDeps {
+	time: TimeProvider;
+	probe: () => Promise<RefusalProbe>;
+	/** Jitter source; tests pass a constant. */
+	random?: () => number;
+}
+let recheck: RecheckDeps | null = null;
+let recheckTimer: number | null = null;
+let recheckInFlight = false;
+let recheckFailures = 0;
+let lastManualAt = Number.NEGATIVE_INFINITY;
+
+/** Arm the self-recheck (main.ts onload). Until armed, nothing is scheduled. */
+export function startRefusalRecheck(deps: RecheckDeps): void {
+	stopRefusalRecheck();
+	recheck = deps;
+	if (refused) scheduleRecheck();
+}
+
+/** Clearing event: unload. Also called by every other clear via setRefused. */
+export function stopRefusalRecheck(): void {
+	cancelRecheck();
+	recheck = null;
+}
+
+function clearRecheckTimer(): void {
+	if (recheck && recheckTimer !== null) recheck.time.clearTimeout(recheckTimer);
+	recheckTimer = null;
+}
+
+function cancelRecheck(): void {
+	clearRecheckTimer();
+	recheckFailures = 0;
+}
+
+/** One timer, one probe in flight, never sooner than 10 min: a refused device
+ *  sends about one cheap GET an hour (up from zero), never a storm. The delay
+ *  is the server's `retry_after` when it gave one (clamped), +/-10% jitter so
+ *  a fleet refused by one deploy does not probe in lockstep, doubling on each
+ *  probe that learned nothing. */
+function scheduleRecheck(firstDelayMs?: number): void {
+	if (!recheck || recheckTimer !== null || recheckInFlight) return;
+	const { time, random = Math.random } = recheck;
+	const base = Math.min(
+		Math.max((refusedRetryAfterS ?? RECHECK_BASE_MS / 1000) * 1000, RECHECK_MIN_MS),
+		RECHECK_BASE_MS * 2,
+	);
+	const delay =
+		firstDelayMs ??
+		Math.min(base * 2 ** recheckFailures * (0.9 + 0.2 * random()), RECHECK_MAX_MS);
+	recheckTimer = time.setTimeout(() => {
+		recheckTimer = null;
+		void runRecheck();
+	}, delay);
+}
+
+/** "Check again now" (Notice / Sync Center button). Probes immediately, at
+ *  most once per 30 s, and shares the in-flight guard with the timer so a
+ *  button mash sends one request. `throttled` = ignored, nothing sent. */
+export async function recheckNow(): Promise<RefusalProbe | "throttled"> {
+	if (!recheck || !refused) return "unknown";
+	const now = recheck.time.now();
+	if (recheckInFlight || now - lastManualAt < MANUAL_COOLDOWN_MS) return "throttled";
+	lastManualAt = now;
+	clearRecheckTimer();
+	return runRecheck();
+}
+
+async function runRecheck(): Promise<RefusalProbe> {
+	const deps = recheck;
+	if (!deps || !refused || recheckInFlight) return "unknown";
+	recheckInFlight = true;
+	let result: RefusalProbe = "unknown";
+	try {
+		result = await deps.probe();
+	} catch {
+		// A probe must never throw out of a timer; treat as "learned nothing".
+	} finally {
+		recheckInFlight = false;
+	}
+	if (recheck !== deps || !refused) return result; // unloaded or cleared meanwhile
+	if (result === "clear") {
+		rlog().info("lifecycle", "refusal lifted by recheck — resuming sync");
+		// rejoin: a refused socket never rejoins by itself, so resume must.
+		markAdmitted(true);
+		return result;
+	}
+	recheckFailures = result === "unknown" ? recheckFailures + 1 : 0;
+	scheduleRecheck();
+	return result;
 }
 
 /** Clearing event 3: the server admitted a `sync:` join, so its floor accepts
  *  this version. The notice stays latched (see module doc). */
-export function markAdmitted(): void {
-	setRefused(false, null, true);
+export function markAdmitted(rejoin = false): void {
+	setRefused(false, null, true, rejoin);
+}
+
+/** What survives a restart so a refusal does not silently vanish (and a
+ *  paused/too-old device does not spend a session failing before it learns). */
+export interface PersistedRefusal {
+	kind: RefusalKind;
+	minVersion: string | null;
+	updateTo?: string | null;
+	retryAfterS: number | null;
+	/** Account (email) that earned it; null when unknown. */
+	account?: string | null;
+}
+
+export function persistedRefusal(account: string | null = null): PersistedRefusal | null {
+	return refused
+		? {
+				kind: refusedKind,
+				minVersion: refusedMinVersion,
+				updateTo: refusedUpdateTo,
+				retryAfterS: refusedRetryAfterS,
+				account,
+			}
+		: null;
+}
+
+/** Clearing events handled here: version change (this build already meets
+ *  what the server asked for: no round trip) and account change (a pause
+ *  belongs to the account that earned it). Otherwise re-latch a refusal saved
+ *  by the last session, with a Notice so a restart does not hide it, and
+ *  recheck after `RECHECK_RESTORE_MS`. Returns whether it re-latched. */
+export function restoreRefusal(
+	saved: PersistedRefusal | null | undefined,
+	currentVersion: string,
+	account: string | null = null,
+): boolean {
+	if (!saved || (saved.kind !== "update_required" && saved.kind !== "account_paused"))
+		return false;
+	if (saved.account && account && saved.account !== account) return false;
+	if (saved.kind === "update_required") {
+		// Unknown/garbage versions never clear here; the recheck decides.
+		const met = (v: unknown) =>
+			typeof v === "string" &&
+			VERSION_RE.test(v.trim()) &&
+			VERSION_RE.test(currentVersion.trim()) &&
+			!versionBelow(v, currentVersion);
+		if (met(saved.minVersion) || met(saved.updateTo)) return false;
+	}
+	refused = true;
+	refusedKind = saved.kind;
+	refusedMinVersion = saved.minVersion;
+	refusedRetryAfterS = saved.retryAfterS;
+	refusedUpdateTo = saved.updateTo ?? null;
+	notifiedKind = null;
+	scheduleRecheck(RECHECK_RESTORE_MS);
+	notifyUpgradeRequired(saved.minVersion, undefined, false, { kind: saved.kind });
+	return true;
+}
+
+/** Clearing event: sign-out or account switch. The latch is per account, so
+ *  a different (or no) account must not inherit it. */
+export function refusalAccountGone(
+	latchedAccount: string | null,
+	account: string | null,
+	authed: boolean,
+): boolean {
+	return !authed || (latchedAccount !== null && account !== null && latchedAccount !== account);
+}
+
+/** The state-change listener, with its side effects injected so the resume
+ *  contract is testable: persist always; on a recheck-lifted refusal rebuild
+ *  the socket (a refused join never retries, and the stream may count as
+ *  "ever connected") and drain the held queue. */
+export function makeRefusalListener(deps: {
+	repaint: () => void;
+	persist: () => Promise<void>;
+	rebuildSocket: () => void;
+	flushQueue: () => Promise<void>;
+	warn: (msg: string) => void;
+}): UpgradeStateListener {
+	return (admitted, rejoin) => {
+		deps.repaint();
+		deps.persist().catch((e: unknown) => deps.warn(`refusal state not saved: ${errMsg(e)}`));
+		if (admitted && rejoin) deps.rebuildSocket();
+		if (admitted) {
+			deps.flushQueue().catch((e: unknown) =>
+				deps.warn(`post-refusal flush failed: ${errMsg(e)}`),
+			);
+		}
+	};
 }
 
 /** What `EngramApi` throws in place of a request once refused. Carries
@@ -205,9 +546,14 @@ export function upgradeRequiredError(): Error & { status: 426 } {
 
 /** Test seam. The latch is otherwise per-process by design. */
 export function resetUpgradeRequired(): void {
-	notified = false;
+	notifiedKind = null;
 	refused = false;
 	refusedMinVersion = null;
+	refusedKind = "update_required";
+	refusedRetryAfterS = null;
+	refusedUpdateTo = null;
+	stopRefusalRecheck();
+	lastManualAt = Number.NEGATIVE_INFINITY;
 	openUpdateUi = null;
 	onStateChange = null;
 }

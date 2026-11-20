@@ -27,6 +27,7 @@ const tr: Dict = {
 	About: "Hakkında",
 	"Accept it to keep syncing.": "Senkronizasyonu devam ettirmek için kabul edin.",
 	"Access token": "Erişim belirteci",
+	"Account paused: Engram is not syncing": "Hesap askıya alındı: Engram senkronize değil",
 	"Account setup incomplete.": "Hesap kurulumu tamamlanmadı.",
 	"Account suspended. Contact support.": "Hesap askıya alındı. Destekle iletişime geçin.",
 	"Activity ({count})": "Etkinlik ({count})",
@@ -61,6 +62,7 @@ const tr: Dict = {
 	"Cargo cache": "Cargo önbelleği",
 	Change: "Değiştir",
 	"Change vault": "Kasa değiştir",
+	"Check again": "Tekrar kontrol et",
 	"Check sync status": "Senkronizasyon durumunu kontrol et",
 	"Checking for changes.": "Değişiklikler kontrol ediliyor.",
 	"Checking server…": "Sunucu kontrol ediliyor…",
@@ -201,6 +203,11 @@ const tr: Dict = {
 	"Engram's {document} update, effective {date}.":
 		"Engram'ın {document} güncellemesi, {date} tarihinden itibaren geçerli.",
 	"Engram: This vault has been deleted on the server.": "Engram: Bu kasa sunucuda silindi.",
+	"Engram: account paused": "Engram: hesap askıya alındı",
+	"Engram: checked a moment ago. Try again in a few seconds.":
+		"Engram: Birkaç saniye sonra tekrar deneyin.",
+	"Engram: could not reach the server. We will keep checking automatically.":
+		"Engram: Sunucuya ulaşılamadı. Otomatik olarak kontrol etmeye devam edeceğiz.",
 	"Engram: disconnected. Open Engram settings to reconnect.":
 		"Engram: bağlantı kesildi. Yeniden bağlanmak için Engram ayarlarını açın.",
 	"Engram: error": "Engram: hata",
@@ -227,6 +234,8 @@ const tr: Dict = {
 		"Engram: Ayarlar sekmesi yüklenemedi ({error})",
 	"Engram: sign-in failed ({error})": "Engram: Giriş başarısız ({error})",
 	"Engram: signed out": "Engram: Oturum kapatıldı",
+	"Engram: still refused by the server. We will keep checking automatically.":
+		"Engram: Sunucu tarafından hala reddedildi. Otomatik olarak kontrol etmeye devam edeceğiz.",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram: {path} üzerinde senkronizasyon çakışması — yerel düzenlemeniz {copy} olarak kaydedildi",
 	"Engram: sync failed. Open the sync log for details.":
@@ -238,10 +247,16 @@ const tr: Dict = {
 	"Engram: sync paused": "Engram: senkronizasyon durduruldu",
 	"Engram: syncing": "Engram: senkronize ediliyor",
 	"Engram: syncing ({count})": "Engram: senkronize ediliyor ({count})",
+	"Engram: the server accepts this device again. Sync is resuming.":
+		"Engram: Sunucu bu cihazı tekrar kabul etti. Senkronizasyon devam ediyor.",
+	"Engram: this account is paused, so syncing is off. Your changes stay on this device. Contact {email} to get it restored.":
+		"Engram: bu hesap askıya alındığı için senkronizasyon kapalı. Değişiklikleriniz bu cihazda kalacaktır. Hesabın yeniden etkinleştirilmesi için {email} ile iletişime geçin.",
 	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
 		"Engram: Bu eklenti senkronizasyon için çok eski (en az {version} veya daha yeni gerekiyor). Devam etmek için güncelleyin.",
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram: Bu eklenti senkronizasyon için çok eski. Devam etmek için güncelleyin.",
+	"Engram: this plugin is too old to sync. {versions}":
+		"Engram: Bu eklenti çok eski, senkronize edilemiyor. {versions}",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: bu kasa artık sunucuda bulunmuyor. Devam etmek için bir kasa seçin veya oluşturun.",
 	"Engram: update required": "Engram: güncelleme gerekiyor",
@@ -352,6 +367,8 @@ const tr: Dict = {
 	"Not signed in. Click to open settings and reconnect.":
 		"Giriş yapılmadı. Ayarları açmak ve yeniden bağlanmak için tıklayın.",
 	"Not synced on your plan ({count})": "Planınızda senkronize edilmiyor ({count})",
+	"Not syncing: this account is paused. Contact {email}.":
+		"Senkronizasyon yok: bu hesap askıya alınmış. {email} ile iletişime geçin.",
 	"Not syncing: this plugin version is too old (needs {version} or newer). Click to update.":
 		"Senkronizasyon yok: Bu eklenti sürümü çok eski (en az {version} veya daha yeni gerekiyor). Güncellemek için tıklayın.",
 	"Not syncing: this plugin version is too old. Click to update.":
@@ -517,6 +534,8 @@ const tr: Dict = {
 		"Engram sunucusu artık bu eklenti sürümünü kabul etmiyor (şu anda {version} veya daha yeni bir sürüm gerekiyor), bu nedenle notlar gönderilmiyor veya alınmıyor. Bu cihazda yapılan değişiklikler, güncelleyene kadar burada kalacak.",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Engram sunucusu artık bu eklenti sürümünü kabul etmiyor, bu nedenle notlar gönderilmiyor veya alınmıyor. Bu cihazda yapılan değişiklikler, güncelleyene kadar burada kalacak.",
+	"The Engram server no longer accepts this plugin version. {versions} Changes made on this device stay here until you update.":
+		"Engram sunucusu artık bu eklenti sürümünü kabul etmiyor. Bu cihazda yapılan değişiklikler, güncelleyene kadar burada kalır. {versions}",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"Dosya, sunucunun boyut sınırını aştı. Sıkıştırın veya bölün, sonra senkronize olur.",
 	"The file is too large for the server.": "Dosya, sunucu için çok büyük.",
@@ -532,6 +551,8 @@ const tr: Dict = {
 		"Sunucu yanıt vermekte çok yavaş. Lütfen tekrar deneyin.",
 	"These files are fine. Each card below says why they did not sync.":
 		"Bu dosyalar sorunsuz. Aşağıdaki her kart, neden senkronize olmadığını belirtir.",
+	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":
+		"Bu hesap askıya alındığı için notlar gönderilmiyor veya alınmıyor. Bu cihazdaki değişiklikler burada kalıyor. Hesabın yeniden etkinleştirilmesi için {email} ile iletişime geçin. Hesap otomatik olarak yeniden senkronize olacaktır.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Bu hesap silindi. Yanlışsa destekle iletişime geçin.",
 	"This cannot be undone.": "Bu geri alınamaz.",
@@ -610,6 +631,8 @@ const tr: Dict = {
 		"Şu anda farklı bir bulut kasasına yönlendiriliyorsunuz",
 	"You can close this and the sync keeps running in the background.":
 		"Bu pencereyi kapatabilirsiniz, senkronizasyon arka planda devam eder.",
+	"You have {current}. Update to {target} or newer to keep syncing.":
+		"{current} var. Senkronizasyonu devam ettirmek için {target} veya daha yeni bir sürüme güncelleyin.",
 	"You've used all the attachment storage on your plan. Upgrade for more.":
 		"Planınızdaki tüm ek depolama alanını kullandınız. Daha fazla için yükseltin.",
 	"Your code:": "Kodunuz:",

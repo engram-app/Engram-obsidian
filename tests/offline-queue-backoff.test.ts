@@ -20,7 +20,10 @@ import { DEFAULT_SETTINGS } from "../src/types";
 import {
 	markAdmitted,
 	notifyUpgradeRequired,
+	recheckNow,
 	resetUpgradeRequired,
+	setUpgradeStateListener,
+	startRefusalRecheck,
 	upgradeRequiredError,
 } from "../src/upgrade-required";
 
@@ -268,5 +271,63 @@ describe("version-floor refusal holds the queue", () => {
 
 		expect(h.engine.queue.all().map((e) => e.attempts ?? 0)).toEqual([0]);
 		expect(h.engine.issues.all()).toHaveLength(0);
+	});
+});
+
+// Same hold-and-drain contract for a paused account (kind account_paused).
+describe("account pause holds the queue", () => {
+	afterEach(() => resetUpgradeRequired());
+
+	test("held while paused, drains when the server admits again", async () => {
+		const paths = ["Assets/a.png"];
+		let isRefused = true;
+		const h = harness(paths, () => (isRefused ? upgradeRequiredError() : null));
+		await enqueueAll(h.engine, paths);
+		notifyUpgradeRequired(null, undefined, true, { kind: "account_paused" });
+
+		await h.engine.flushQueue();
+
+		expect(h.calls.length).toBe(0);
+		expect(h.engine.queue.size).toBe(1);
+		expect(h.engine.issues.all()).toHaveLength(0);
+
+		isRefused = false;
+		markAdmitted();
+		await h.engine.flushQueue();
+
+		expect(h.calls.map((c) => c.path)).toEqual(paths);
+		expect(h.engine.queue.size).toBe(0);
+	});
+});
+
+// Todd: the lock must come off. Refused -> server lifts -> manual retry ->
+// the persisted queue replays exactly once (main.ts flushes on `admitted`).
+describe("recheck resume replays the held queue once", () => {
+	afterEach(() => resetUpgradeRequired());
+
+	test("manual retry clears, flushes, and a second flush does not resend", async () => {
+		const paths = ["Assets/a.png", "Assets/b.png"];
+		let isRefused = true;
+		const h = harness(paths, () => (isRefused ? upgradeRequiredError() : null));
+		await enqueueAll(h.engine, paths);
+		setUpgradeStateListener((admitted) => {
+			if (admitted) void h.engine.flushQueue();
+		});
+		startRefusalRecheck({
+			time: h.time,
+			probe: async () => (isRefused ? "refused" : "clear"),
+		});
+		notifyUpgradeRequired("1.36.0");
+		await h.engine.flushQueue();
+		expect(h.calls.length).toBe(0);
+		expect(h.engine.queue.size).toBe(2);
+
+		isRefused = false;
+		expect(await recheckNow()).toBe("clear");
+		await settle();
+		await h.engine.flushQueue();
+
+		expect(h.calls.map((c) => c.path).sort()).toEqual([...paths].sort());
+		expect(h.engine.queue.size).toBe(0);
 	});
 });

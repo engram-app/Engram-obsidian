@@ -16,13 +16,17 @@ import type { QueuedReason } from "./offline-queue";
 import { formatBytes, planUsageRows } from "./plan-usage";
 import { ACTION_ICONS } from "./sync-log-modal";
 import { planLoadErrorMessage, SyncPreviewModal } from "./sync-preview-modal";
-import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
+import { DEFAULT_UPGRADE_URL, SUPPORT_EMAIL } from "./tabs/urls";
 import type { SyncIssue, SyncIssueCategory, SyncLogEntry } from "./types";
 import {
 	canOpenUpgradeUi,
+	canRecheck,
+	checkAgainWithFeedback,
 	isUpgradeRequired,
 	openUpgradeUi,
+	refusalKind,
 	upgradeRequiredMinVersion,
+	versionsCopy,
 } from "./upgrade-required";
 
 /** Build an Obsidian Setting heading inside `parent` so the section title
@@ -115,21 +119,44 @@ function queuedReasonText(): Record<QueuedReason, string> {
  *  work. Leaves on the next render after a clearing event (upgrade-required.ts). */
 function renderUpdateRequired(parent: HTMLElement): void {
 	if (!isUpgradeRequired()) return;
-	const min = upgradeRequiredMinVersion();
 	const banner = parent.createDiv({ cls: "engram-update-required-banner" });
+	const addCheckAgain = () => {
+		if (!canRecheck()) return;
+		const again = banner.createEl("button", { text: t("Check again") });
+		again.addEventListener("click", () => void checkAgainWithFeedback());
+	};
+	if (refusalKind() === "account_paused") {
+		banner.createEl("strong", { text: t("Account paused: Engram is not syncing") });
+		banner.createEl("p", {
+			text: t(
+				"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.",
+				{ email: SUPPORT_EMAIL },
+			),
+		});
+		addCheckAgain();
+		return;
+	}
+	const min = upgradeRequiredMinVersion();
+	const both = versionsCopy();
 	banner.createEl("strong", { text: t("Update required: Engram is not syncing") });
 	banner.createEl("p", {
-		text: min
+		text: both
 			? t(
-					"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.",
-					{ version: min },
+					"The Engram server no longer accepts this plugin version. {versions} Changes made on this device stay here until you update.",
+					{ versions: both },
 				)
-			: t(
-					"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.",
-				),
+			: min
+				? t(
+						"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.",
+						{ version: min },
+					)
+				: t(
+						"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.",
+					),
 	});
 	// No action wired = no button, same as the Notice. "Update", never
 	// "Upgrade": that word means paying more money next door.
+	addCheckAgain();
 	if (!canOpenUpgradeUi()) return;
 	const btn = banner.createEl("button", { text: t("Update"), cls: "mod-cta" });
 	btn.addEventListener("click", () => {
