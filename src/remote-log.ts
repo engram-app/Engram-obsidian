@@ -68,26 +68,35 @@ const LEVEL_SEVERITY: Record<RemoteLogLevel, number> = {
  *    explicit flush on app-hide and unload).
  *  - maxBuffer: ring cap between sends.
  *  - repeatWindowMs: identical lines inside it ship once, then one "x N more".
- *  - linesPerMinute/Hour/Day, bytesPerDay: FIXED windows (a window opens at
- *    its first line and lasts exactly its period; nothing carries over). A
- *    line ships only when every window has room; the rest are dropped on the
- *    device, counted, and reported in one line when budget returns. EVERY line
- *    that leaves the plugin is charged, errors, forced anomalies, breaker
- *    notices and drop summaries included; a notice with no room is dropped and
- *    counted. The hour and day windows (and the pause) are persisted through
- *    the store, written at most once per persistDebounceMs, so a restart loop
- *    does not reset them. Under sustained overload the drop summary goes out
- *    at most once per dropSummaryMinMs, plus once at unload.
- *    Worst case: no window ever holds more than its quota (60 / 600 / 2,000
- *    lines, 256 KB). A rolling period that straddles a window boundary can
- *    hold up to twice a window's quota (120 lines in 60 s, 1,200 in an hour);
- *    a rolling 24 h is bounded by the hour windows inside it.
+ *  - linesPerMinute/Hour/Day, bytesPerDay: TRUE rolling windows. A line ships
+ *    only when every window has room; the rest are dropped on the device,
+ *    counted, and reported in one line when budget returns. EVERY line that
+ *    leaves the plugin is charged, errors, forced anomalies, breaker notices
+ *    and drop summaries included; a notice with no room is dropped and
+ *    counted. How each is kept:
+ *      minute: a sliding log of the last 60 send times (in memory);
+ *      hour:   61 one-minute buckets (persisted);
+ *      day:    25 one-hour buckets, lines and bytes (persisted).
+ *    A bucket window counts the current partial bucket plus the n before it,
+ *    so it covers at least the period and at most one bucket more. Every span
+ *    of the period therefore fits inside the counted buckets, and the cap
+ *    holds for ANY such span, not just aligned ones: any 60 s <= 60 lines,
+ *    any 60 min <= 600 lines, any 24 h <= 2,000 lines and <= 256 KB. The
+ *    price is that the budget returns up to one bucket (1 min / 1 h) late.
+ *    The hour and day buckets and the pause are saved through the store (at
+ *    most once per persistDebounceMs, and at the start of every flush, before
+ *    any upload), so a restart loop does not reset them. The per-minute log
+ *    is not saved: a restart can send up to 60 lines at once, still inside
+ *    the persisted hour and day caps. Under sustained overload the drop
+ *    summary goes out at most once per dropSummaryMinMs, plus once at unload.
  *  - pause*: after a throttled reply or any failed push, the batch is dropped
  *    (never requeued) and nothing ships until retry_after_ms, else 30 s,
  *    capped at an hour.
- *  - breaker*: one message shape (digits stripped) holding more than half of
- *    a minute's lines, once it has at least breakerMinLines, is named in one
- *    line and muted for breakerMuteMs. */
+ *  - breaker*: one message shape (uuids, paths, ids and numbers collapsed)
+ *    holding more than half of a minute's lines, once it has at least
+ *    breakerMinLines, is named in one line and muted for breakerMuteMs. Muted
+ *    lines are counted, and the total goes out in one charged line when the
+ *    mute ends (or at unload). */
 export const LOG_LIMITS = {
 	flushIntervalMs: 30_000,
 	maxBuffer: 200,
@@ -111,11 +120,10 @@ export const LOG_LIMIT_STORE_KEY = "engram-remote-log-limits";
 /** The part of the budget that must survive a restart. Wall-clock based
  *  (a monotonic clock does not outlive the process). */
 export interface LogLimitState {
-	hourStart: number | null;
-	hourLines: number;
-	dayStart: number | null;
-	dayLines: number;
-	dayBytes: number;
+	/** [one-hour bucket index, lines, bytes] */
+	hours: [number, number, number][];
+	/** [one-minute bucket index, lines, bytes] */
+	minutes: [number, number, number][];
 	pausedUntil: number;
 }
 
@@ -126,25 +134,55 @@ export interface LogLimitStore {
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
-const DAY_MS = 24 * HOUR_MS;
 
-/** One fixed window: opens at its first line, closes `periodMs` later. */
-interface Win {
-	start: number | null;
-	lines: number;
-	bytes: number;
-}
-
-const newWin = (): Win => ({ start: null, lines: 0, bytes: 0 });
-
-/** Roll `w` if its period is over. A clock that moved back keeps the window
- *  (counts stay, nothing is refunded) unless it moved back by more than a
- *  period, which restarts the window instead of stalling it for days. */
-function roll(w: Win, periodMs: number, now: number): void {
-	if (w.start === null || now - w.start >= periodMs || w.start - now > periodMs) {
-		w.start = now;
-		w.lines = 0;
-		w.bytes = 0;
+/** Counters per fixed-size period, kept for the current period and the `back`
+ *  before it. Sum over those is a rolling window at least `back` periods long
+ *  (see LOG_LIMITS). */
+class Rolling {
+	private b = new Map<number, [number, number]>();
+	constructor(
+		private readonly periodMs: number,
+		private readonly back: number,
+	) {}
+	private idx(now: number): number {
+		return Math.floor(now / this.periodMs);
+	}
+	/** Drop expired buckets, and any from the far future (a clock set back by
+	 *  more than the window restarts the count; a smaller step keeps it, so
+	 *  nothing is refunded). */
+	private prune(now: number): void {
+		const cur = this.idx(now);
+		for (const k of this.b.keys())
+			if (k < cur - this.back || k > cur + this.back) this.b.delete(k);
+	}
+	sum(now: number): { lines: number; bytes: number } {
+		this.prune(now);
+		let lines = 0;
+		let bytes = 0;
+		for (const [l, by] of this.b.values()) {
+			lines += l;
+			bytes += by;
+		}
+		return { lines, bytes };
+	}
+	add(now: number, bytes: number): void {
+		const k = this.idx(now);
+		const e = this.b.get(k) ?? [0, 0];
+		e[0]++;
+		e[1] += bytes;
+		this.b.set(k, e);
+	}
+	entries(): [number, number, number][] {
+		return [...this.b].map(([k, [l, by]]) => [k, l, by]);
+	}
+	load(raw: unknown): void {
+		if (!Array.isArray(raw) || raw.length > this.back * 2 + 2) return;
+		const ok = (v: unknown): v is number =>
+			typeof v === "number" && Number.isFinite(v) && v >= 0;
+		for (const t of raw as unknown[]) {
+			if (Array.isArray(t) && t.length === 3 && t.every(ok))
+				this.b.set(t[0] as number, [t[1] as number, t[2] as number]);
+		}
 	}
 }
 
@@ -259,9 +297,10 @@ export class RemoteLogger {
 	>();
 	/** e2e only (`remoteLogBudget: 0`): no buckets, no breaker. */
 	private unlimited = false;
-	private minute = newWin();
-	private hour = newWin();
-	private day = newWin();
+	/** Send times in the last minute (<= linesPerMinute entries). */
+	private recent: number[] = [];
+	private hour = new Rolling(MINUTE_MS, 60);
+	private day = new Rolling(HOUR_MS, 24);
 	private store: LogLimitStore | null = null;
 	private saveTimer: number | null = null;
 	private budgetDropped = 0;
@@ -273,7 +312,10 @@ export class RemoteLogger {
 	 *  (this logger is rebuilt on every load, so the flag dies with it). */
 	private serverOff = false;
 	private breakerMinute = { since: 0, total: 0, shapes: new Map<string, number>() };
-	private muted = new Map<string, number>();
+	private muted = new Map<
+		string,
+		{ until: number; count: number; category: string; named: string; forced: boolean }
+	>();
 
 	configure(pushFn: PushFn, pluginVersion: string, platform: string): void {
 		this.pushFn = pushFn;
@@ -340,20 +382,14 @@ export class RemoteLogger {
 		}
 		const r = raw as Partial<Record<keyof LogLimitState, unknown>> | null;
 		if (!r || typeof r !== "object") return;
-		const num = (v: unknown): v is number =>
-			typeof v === "number" && Number.isFinite(v) && v >= 0;
-		const at = (v: unknown): number | null => (num(v) ? v : null);
-		const now = Date.now();
-		if (num(r.hourLines))
-			Object.assign(this.hour, { start: at(r.hourStart), lines: r.hourLines });
-		if (num(r.dayLines) && num(r.dayBytes))
-			Object.assign(this.day, {
-				start: at(r.dayStart),
-				lines: r.dayLines,
-				bytes: r.dayBytes,
-			});
-		if (num(r.pausedUntil))
-			this.pausedUntil = Math.min(r.pausedUntil, now + LOG_LIMITS.pauseMaxMs);
+		this.hour.load(r.minutes);
+		this.day.load(r.hours);
+		if (
+			typeof r.pausedUntil === "number" &&
+			Number.isFinite(r.pausedUntil) &&
+			r.pausedUntil >= 0
+		)
+			this.pausedUntil = Math.min(r.pausedUntil, Date.now() + LOG_LIMITS.pauseMaxMs);
 	}
 
 	private dirty(): void {
@@ -368,11 +404,8 @@ export class RemoteLogger {
 		}
 		try {
 			this.store?.save({
-				hourStart: this.hour.start,
-				hourLines: this.hour.lines,
-				dayStart: this.day.start,
-				dayLines: this.day.lines,
-				dayBytes: this.day.bytes,
+				hours: this.day.entries(),
+				minutes: this.hour.entries(),
 				pausedUntil: this.pausedUntil,
 			});
 		} catch {
@@ -394,7 +427,11 @@ export class RemoteLogger {
 	async flush(): Promise<void> {
 		const now = monoNow();
 		this.closeRepeatWindows(now, false);
+		this.endMutes(now, false);
 		this.reportDropped(false);
+		// Save BEFORE any await: a hung upload, an app kill after the app-hide
+		// flush, or a crash must not hand a restart the budget already spent.
+		if (this.saveTimer !== null) this.saveNow();
 		// Wait out an in-flight batch instead of returning: a flush that no-ops
 		// while the timer flush is still posting left destroy() to discard
 		// whatever was buffered after it (including the unload drop count).
@@ -440,6 +477,7 @@ export class RemoteLogger {
 	async destroy(): Promise<void> {
 		this.stopTimer();
 		this.closeRepeatWindows(monoNow(), true);
+		this.endMutes(monoNow(), true);
 		this.reportDropped(true);
 		await this.flush();
 		this.saveNow();
@@ -536,15 +574,16 @@ export class RemoteLogger {
 
 	/** True when every window can take one more line (and `bytes` more bytes). */
 	private room(bytes: number, now: number): boolean {
-		roll(this.minute, MINUTE_MS, now);
-		roll(this.hour, HOUR_MS, now);
-		roll(this.day, DAY_MS, now);
-		return (
-			this.minute.lines < LOG_LIMITS.linesPerMinute &&
-			this.hour.lines < LOG_LIMITS.linesPerHour &&
-			this.day.lines < LOG_LIMITS.linesPerDay &&
-			this.day.bytes + bytes <= LOG_LIMITS.bytesPerDay
-		);
+		// Sliding log: a send older than a minute no longer counts. A log from
+		// the far future (clock set back) restarts.
+		for (let t = this.recent[0]; t !== undefined && now - t >= MINUTE_MS; t = this.recent[0])
+			this.recent.shift();
+		const newest = this.recent[this.recent.length - 1];
+		if (newest !== undefined && newest - now > MINUTE_MS) this.recent.length = 0;
+		if (this.recent.length >= LOG_LIMITS.linesPerMinute) return false;
+		if (this.hour.sum(now).lines >= LOG_LIMITS.linesPerHour) return false;
+		const day = this.day.sum(now);
+		return day.lines < LOG_LIMITS.linesPerDay && day.bytes + bytes <= LOG_LIMITS.bytesPerDay;
 	}
 
 	/** Charge one built line to every window. False = no room, nothing charged.
@@ -552,8 +591,9 @@ export class RemoteLogger {
 	private spend(entry: RemoteLogEntry, now: number): boolean {
 		const bytes = utf8Bytes(JSON.stringify(entry));
 		if (!this.room(bytes, now)) return false;
-		for (const w of [this.minute, this.hour, this.day]) w.lines++;
-		this.day.bytes += bytes;
+		this.recent.push(now);
+		this.hour.add(now, bytes);
+		this.day.add(now, bytes);
 		this.dirty();
 		return true;
 	}
@@ -567,10 +607,13 @@ export class RemoteLogger {
 		now: number,
 	): boolean {
 		const shape = shapeOf(level, category, message);
-		const until = this.muted.get(shape);
-		if (until !== undefined) {
-			if (now < until) return true;
-			this.muted.delete(shape);
+		const mute = this.muted.get(shape);
+		if (mute !== undefined) {
+			if (now < mute.until) {
+				mute.count++;
+				return true;
+			}
+			this.endMutes(now, false);
 		}
 		const m = this.breakerMinute;
 		if (now - m.since >= MINUTE_MS) {
@@ -584,9 +627,16 @@ export class RemoteLogger {
 		// line count of that minute; cleared every minute.
 		m.shapes.set(shape, n);
 		if (n <= LOG_LIMITS.breakerMinLines || n <= m.total * LOG_LIMITS.breakerShare) return false;
-		this.muted.set(shape, now + LOG_LIMITS.breakerMuteMs);
 		const share = Math.round((n / m.total) * 100);
 		const named = shape.slice(shape.indexOf("|", shape.indexOf("|") + 1) + 1).slice(0, 200);
+		// The line that tripped is the first muted one.
+		this.muted.set(shape, {
+			until: now + LOG_LIMITS.breakerMuteMs,
+			count: 1,
+			category,
+			named,
+			forced,
+		});
 		// Charged like any line: with no room the notice is dropped and counted.
 		// Forced only when the line it names was (anomaly text is slug-only).
 		if (
@@ -597,6 +647,22 @@ export class RemoteLogger {
 		)
 			this.budgetDropped++;
 		return true;
+	}
+
+	/** End every mute that has run out (all of them when `all`), reporting the
+	 *  lines each one swallowed in ONE charged line. No room: counted as dropped. */
+	private endMutes(now: number, all: boolean): void {
+		for (const [shape, m] of this.muted) {
+			if (!all && now < m.until) continue;
+			this.muted.delete(shape);
+			if (
+				!this.notice(
+					`log_breaker_unmuted lines=${m.count} category=${m.category} message=${m.named}`,
+					m.forced,
+				)
+			)
+				this.budgetDropped++;
+		}
 	}
 
 	/** Ship the drop count, if any. It is a notice like any other: with no
