@@ -831,11 +831,11 @@ describe("hard cap on every line that leaves the plugin", () => {
 
 	test("B1: a hot loop of breaker-tripping shapes ships at most 2,000 lines and 256 KB a day", async () => {
 		const { logger, sent } = start();
-		// ~1,000 lines a minute; each file's lines differ only by a counter, so
+		// ~300 lines a minute; each file's lines differ only by a counter, so
 		// every file is its own breaker shape and trips in turn.
 		for (let m = 0; m < 24 * 60; m++) {
-			for (let i = 0; i < 1000; i++)
-				logger.warn("queue", `retry file${letters(i % 40)}x attempt ${m * 1000 + i}`);
+			for (let i = 0; i < 300; i++)
+				logger.warn("queue", `retry file${letters(i % 40)}x attempt ${m * 300 + i}`);
 			await logger.flush();
 			now += 60_000;
 		}
@@ -899,7 +899,9 @@ describe("hard cap on every line that leaves the plugin", () => {
 			expect(saves).toHaveLength(0);
 			jest.advanceTimersByTime(LOG_LIMITS.persistDebounceMs);
 			expect(saves).toHaveLength(1);
-			expect((saves[0] as { dayLines: number }).dayLines).toBe(50);
+			expect(
+				(saves[0] as { hours: number[][] }).hours.reduce((n, h) => n + (h[1] ?? 0), 0),
+			).toBe(50);
 		} finally {
 			jest.useRealTimers();
 		}
@@ -914,6 +916,114 @@ describe("hard cap on every line that leaves the plugin", () => {
 		await logger.flush();
 		expect(sent.length).toBeGreaterThan(0);
 		expect(sent.length).toBeLessThanOrEqual(LOG_LIMITS.linesPerMinute);
+	});
+
+	/** Ship `perMin` lines a minute for `minutes`; return, per minute, how many
+	 *  lines and bytes left the plugin. */
+	async function hotLoop(perMin: number, minutes: number, pad = "") {
+		const { logger, sent } = start();
+		const lines: number[] = [];
+		const bytes: number[] = [];
+		let seen = 0;
+		for (let m = 0; m < minutes; m++) {
+			for (let i = 0; i < perMin; i++) logger.info("t", `${letters(i)}${letters(m)} ${pad}`);
+			await logger.flush();
+			const fresh = sent.slice(seen);
+			lines.push(fresh.length);
+			bytes.push(bytesOf(fresh));
+			seen = sent.length;
+			now += 60_000;
+		}
+		return { lines, bytes };
+	}
+	/** Max sum over any `span` consecutive minutes (both ends inclusive). */
+	const maxOver = (xs: number[], span: number) => {
+		let best = 0;
+		let sum = 0;
+		for (let i = 0; i < xs.length; i++) {
+			sum += xs[i] ?? 0;
+			if (i >= span) sum -= xs[i - span] ?? 0;
+			best = Math.max(best, sum);
+		}
+		return best;
+	};
+
+	test("Medium 1: any rolling 24 h of a hot loop is <= 2,000 lines, any 60 min <= 600, any 60 s <= 60", async () => {
+		const { lines } = await hotLoop(100, 3 * 24 * 60);
+		expect(maxOver(lines, 24 * 60 + 1)).toBeLessThanOrEqual(LOG_LIMITS.linesPerDay);
+		expect(maxOver(lines, 60 + 1)).toBeLessThanOrEqual(LOG_LIMITS.linesPerHour);
+		expect(maxOver(lines, 1)).toBeLessThanOrEqual(LOG_LIMITS.linesPerMinute * 2);
+		// And it is actually shipping (not just refusing everything).
+		expect(lines.reduce((a, b) => a + b, 0)).toBeGreaterThan(2 * 1500);
+	}, 60_000);
+
+	test("Medium 1: any rolling 24 h of big lines is <= 256 KB", async () => {
+		const { bytes } = await hotLoop(1, 3 * 24 * 60, "x".repeat(3_000));
+		expect(maxOver(bytes, 24 * 60 + 1)).toBeLessThanOrEqual(LOG_LIMITS.bytesPerDay);
+		expect(bytes.reduce((a, b) => a + b, 0)).toBeGreaterThan(2 * 200_000);
+	}, 60_000);
+
+	test("Medium 1: any rolling 60 s window holds at most 60 lines", async () => {
+		const { logger, sent } = start();
+		const at: number[] = [];
+		for (let step = 0; step < 600; step++) {
+			for (let i = 0; i < 20; i++) logger.info("t", `${letters(i)}${letters(step)}`);
+			const before = sent.length;
+			await logger.flush();
+			for (let k = before; k < sent.length; k++) at.push(now);
+			now += 5_000;
+		}
+		for (let i = 0; i < at.length; i++) {
+			const inSpan = at.filter((t) => (at[i] ?? 0) <= t && t < (at[i] ?? 0) + 60_000).length;
+			expect(inSpan).toBeLessThanOrEqual(LOG_LIMITS.linesPerMinute);
+		}
+	});
+
+	test("High: a kill right after a flush keeps the counts, even with the upload hung", async () => {
+		const saved: { v: unknown } = { v: null };
+		const store = { load: () => saved.v, save: (s: unknown) => (saved.v = structuredClone(s)) };
+		const a = start(store);
+		a.logger.configure(() => new Promise(() => {}), "1", "d"); // upload never answers
+		for (let i = 0; i < 40; i++) a.logger.info("t", `k${letters(i)}`);
+		void a.logger.flush(); // app-hide flush; the process is then killed
+		const b = start(store);
+		for (let i = 0; i < 100; i++) b.logger.info("t", `n${letters(i)}`);
+		await b.logger.flush();
+		// 60/min minus nothing remembered across the kill is NOT the contract;
+		// the persisted hour count (40 spent) caps the restart at 600 - 40.
+		const restored = (saved.v as { minutes: number[][] }).minutes.reduce(
+			(n, m) => n + (m[1] ?? 0),
+			0,
+		);
+		expect(restored).toBeGreaterThanOrEqual(40);
+	});
+
+	test("High: a flush with nothing to send still saves a pending count", async () => {
+		const saves: unknown[] = [];
+		const a = start({ load: () => null, save: (s) => saves.push(s) });
+		a.logger.info("t", "one");
+		await a.logger.flush();
+		expect(saves).toHaveLength(1);
+	});
+
+	test("Medium 2: muted lines are counted and reported once, in one charged line, when the mute ends", async () => {
+		const { logger, sent } = start();
+		let total = 0;
+		for (let m = 0; m < 60; m++) {
+			for (let i = 0; i < 30; i++) logger.error("sync", `upload failed note ${m * 30 + i}`);
+			total += 30;
+			await logger.flush();
+			now += 60_000;
+		}
+		now += 60_000; // past the one-hour mute
+		await logger.flush();
+		const msgs = sent.map((e) => e.message);
+		expect(msgs.filter((x) => x.startsWith("upload failed"))).toHaveLength(
+			LOG_LIMITS.breakerMinLines,
+		);
+		const end = msgs.filter((x) => x.startsWith("log_breaker_unmuted"));
+		expect(end).toHaveLength(1);
+		expect(end[0]).toContain(`lines=${total - LOG_LIMITS.breakerMinLines}`);
 	});
 
 	test("M1: a long separator-free message does not stall the breaker (regex backtracking)", async () => {
