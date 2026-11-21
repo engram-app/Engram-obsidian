@@ -64,7 +64,7 @@ import { notifyLimitExceeded } from "./limit-toast";
 import { parsePlanState } from "./plan-state";
 import { atomicWriteJson, resilientReadJson } from "./plugin-data-io";
 import { setPluginVersion } from "./plugin-version";
-import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
+import { destroyRemoteLog, initRemoteLog, LOG_LIMIT_STORE_KEY, rlog } from "./remote-log";
 import { SearchModal } from "./search-modal";
 import { SEARCH_VIEW_TYPE, SearchView } from "./search-view";
 import { EngramSyncSettingTab } from "./settings";
@@ -706,6 +706,12 @@ export default class EngramSyncPlugin extends Plugin {
 		);
 		remoteLogger.setLevelThreshold(this.settings.remoteLogLevel);
 		remoteLogger.setUnlimited(this.settings.remoteLogBudget === 0);
+		// The hour/day windows and any pause outlive a restart, so a crash or
+		// reload loop cannot hand the logger a fresh budget each time.
+		remoteLogger.setStore({
+			load: (): unknown => this.app.loadLocalStorage(LOG_LIMIT_STORE_KEY),
+			save: (state) => this.app.saveLocalStorage(LOG_LIMIT_STORE_KEY, state),
+		});
 		remoteLogger.setEnabled(this.settings.diagnosticsEnabled);
 		// Diagnostics expires on its own (reconcileDiagnosticsWindow); a desktop
 		// session can stay open for days, so check while running, not just on load.
