@@ -1,7 +1,7 @@
 /**
  * Tests for remote-log.ts — RemoteLogger buffer, flush, threshold, ring buffer.
  */
-import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, mock, setSystemTime, test } from "bun:test";
 import {
 	destroyRemoteLog,
 	initRemoteLog,
@@ -487,5 +487,103 @@ describe("anomaly() bypasses the diagnostics gate", () => {
 		await logger.flush();
 
 		expect(sent.length).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Server back-off: `throttled: true` + `retry_after_ms` (Engram client-log budget)
+// ---------------------------------------------------------------------------
+
+describe("RemoteLogger honours a throttled response", () => {
+	const T0 = new Date("2026-11-21T00:00:00.000Z");
+	const throttled = { ok: true, count: 0, throttled: true, retry_after_ms: 60_000 };
+
+	beforeEach(() => setSystemTime(T0));
+	afterEach(() => setSystemTime());
+
+	function enabled(pushFn: ReturnType<typeof mock>): RemoteLogger {
+		const logger = new RemoteLogger();
+		logger.configure(pushFn, "1.0.0", "desktop");
+		logger.setEnabled(true);
+		return logger;
+	}
+
+	test("pauses shipping until retry_after_ms elapses, then ships the buffer", async () => {
+		const pushFn = mock()
+			.mockResolvedValueOnce(throttled)
+			.mockResolvedValue({ ok: true, count: 1 });
+		const logger = enabled(pushFn);
+
+		logger.warn("t", "refused");
+		await logger.flush();
+		expect(pushFn).toHaveBeenCalledTimes(1);
+
+		// Past the flush threshold, and an explicit flush: still paused.
+		for (let i = 0; i < 25; i++) logger.warn("t", `held ${i}`);
+		await logger.flush();
+		setSystemTime(new Date(T0.getTime() + 59_999));
+		await logger.flush();
+		expect(pushFn).toHaveBeenCalledTimes(1);
+
+		setSystemTime(new Date(T0.getTime() + 60_000));
+		await logger.flush();
+		expect(pushFn).toHaveBeenCalledTimes(2);
+		const shipped = pushFn.mock.calls[1][0] as RemoteLogEntry[];
+		// The refused batch is kept, ahead of what was buffered during the pause.
+		expect(shipped.map((e) => e.message)).toEqual([
+			"refused",
+			...Array.from({ length: 25 }, (_, i) => `held ${i}`),
+		]);
+		await logger.destroy();
+	});
+
+	test("keeps buffering while paused, bounded at 200 with the oldest dropped", async () => {
+		const pushFn = mock()
+			.mockResolvedValueOnce(throttled)
+			.mockResolvedValue({ ok: true, count: 1 });
+		const logger = enabled(pushFn);
+
+		logger.warn("t", "refused");
+		await logger.flush();
+		for (let i = 0; i < 250; i++) logger.warn("t", `held ${i}`);
+
+		setSystemTime(new Date(T0.getTime() + 60_000));
+		await logger.flush();
+		const shipped = pushFn.mock.calls[1][0] as RemoteLogEntry[];
+		expect(shipped).toHaveLength(200);
+		expect(shipped[0].message).toBe("held 50");
+		expect(shipped[199].message).toBe("held 249");
+		await logger.destroy();
+	});
+
+	test("an older server that sends no throttled field is not paused", async () => {
+		const pushFn = mock().mockResolvedValue({ ok: true, count: 0 });
+		const logger = enabled(pushFn);
+
+		logger.warn("t", "a");
+		await logger.flush();
+		logger.warn("t", "b");
+		await logger.flush();
+		expect(pushFn).toHaveBeenCalledTimes(2);
+		expect((pushFn.mock.calls[1][0] as RemoteLogEntry[])[0].message).toBe("b");
+		await logger.destroy();
+	});
+
+	test("a throttled answer without a usable retry_after_ms still pauses one flush interval", async () => {
+		const pushFn = mock()
+			.mockResolvedValueOnce({ ok: true, count: 0, throttled: true, retry_after_ms: "soon" })
+			.mockResolvedValue({ ok: true, count: 1 });
+		const logger = enabled(pushFn);
+
+		logger.warn("t", "a");
+		await logger.flush();
+		logger.warn("t", "b");
+		await logger.flush();
+		expect(pushFn).toHaveBeenCalledTimes(1);
+
+		setSystemTime(new Date(T0.getTime() + 30_000));
+		await logger.flush();
+		expect(pushFn).toHaveBeenCalledTimes(2);
+		await logger.destroy();
 	});
 });

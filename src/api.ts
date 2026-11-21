@@ -22,7 +22,7 @@ import { BeaconBuffer } from "./observability/beacon";
 import { newTraceContext } from "./observability/traceGen";
 import type { BillingUsage } from "./plan-usage";
 import { pluginVersion } from "./plugin-version";
-import { type RemoteLogEntry, rlog } from "./remote-log";
+import { type PushLogsResult, type RemoteLogEntry, rlog } from "./remote-log";
 import type {
 	AttachmentDetail,
 	AttachmentResponse,
@@ -978,8 +978,15 @@ export class EngramApi {
 	/** Push batched log entries to the server for remote debugging. Typed as
 	 *  the real wire shape — an inline copy of it here had already drifted
 	 *  (missing conn_id/device_id/vault_id/seq that ARE sent). */
-	async pushLogs(entries: RemoteLogEntry[]): Promise<void> {
-		await this.request("POST", "/logs", { logs: entries });
+	async pushLogs(entries: RemoteLogEntry[]): Promise<PushLogsResult | undefined> {
+		const resp = await this.request("POST", "/logs", { logs: entries });
+		// The batch was accepted either way; an unreadable body only means no
+		// back-off hint, never a failed push (which would re-buffer it).
+		try {
+			return resp.json as PushLogsResult | undefined;
+		} catch {
+			return undefined;
+		}
 	}
 
 	// --- Explicit folder markers (kind='folder' rows) ---

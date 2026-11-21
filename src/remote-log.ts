@@ -35,7 +35,16 @@ export interface RemoteLogEntry {
 	forced?: boolean;
 }
 
-type PushFn = (entries: RemoteLogEntry[]) => Promise<void>;
+/** What `POST /api/logs` answers. `throttled` + `retry_after_ms` come only
+ *  from a server whose per-device line budget refused the batch (still a
+ *  200, so an older plugin does not retry-storm it); older servers send
+ *  neither, and `undefined` is a push that reported nothing. */
+export interface PushLogsResult {
+	throttled?: boolean;
+	retry_after_ms?: unknown;
+}
+
+type PushFn = (entries: RemoteLogEntry[]) => Promise<PushLogsResult | undefined>;
 
 /** Shipping threshold for log entries. A call ships only if its own level's
  *  severity is at or above the configured threshold. "debug" has no emitting
@@ -52,6 +61,17 @@ const LEVEL_SEVERITY: Record<RemoteLogLevel, number> = {
 const MAX_BUFFER = 200;
 const FLUSH_INTERVAL_MS = 30_000;
 const FLUSH_THRESHOLD = 20;
+/** Ceiling on a server-requested pause, so a bad value cannot silence remote
+ *  logs for the rest of the session. The server's window is 10 minutes. */
+const MAX_THROTTLE_PAUSE_MS = 60 * 60_000;
+
+/** How long a throttled answer pauses shipping: the server's
+ *  `retry_after_ms`, or one flush interval when it sent no usable number. */
+function throttlePauseMs(retryAfterMs: unknown): number {
+	return typeof retryAfterMs === "number" && Number.isFinite(retryAfterMs) && retryAfterMs > 0
+		? Math.min(retryAfterMs, MAX_THROTTLE_PAUSE_MS)
+		: FLUSH_INTERVAL_MS;
+}
 
 /** The shape an anomaly line may take.
  *
@@ -107,6 +127,9 @@ export class RemoteLogger {
 	private vaultId: string | null = null;
 	private seq = 0;
 	private levelThreshold: RemoteLogLevel = "info";
+	/** Epoch ms before which nothing ships: the server said its log budget
+	 *  for this device is spent. Entries keep buffering (ring-capped). */
+	private pausedUntil = 0;
 
 	configure(pushFn: PushFn, pluginVersion: string, platform: string): void {
 		this.pushFn = pushFn;
@@ -160,20 +183,32 @@ export class RemoteLogger {
 
 	async flush(): Promise<void> {
 		if (this.flushing || this.buffer.length === 0 || !this.pushFn) return;
+		// Throttled: no push, no retry, until the server's window has passed.
+		// The next flush after it (threshold or the 30 s timer) resumes.
+		if (Date.now() < this.pausedUntil) return;
 
 		const batch = this.buffer.splice(0, this.buffer.length);
 		this.flushing = true;
 
 		try {
-			await this.pushFn(batch);
-		} catch {
-			// Put entries back (up to MAX_BUFFER)
-			const space = MAX_BUFFER - this.buffer.length;
-			if (space > 0) {
-				this.buffer.unshift(...batch.slice(0, space));
+			const result = await this.pushFn(batch);
+			if (result?.throttled === true) {
+				// The server dropped this batch: keep it, oldest-first, for after the pause.
+				this.pausedUntil = Date.now() + throttlePauseMs(result.retry_after_ms);
+				this.requeue(batch);
 			}
+		} catch {
+			this.requeue(batch);
 		} finally {
 			this.flushing = false;
+		}
+	}
+
+	/** Put an unshipped batch back ahead of newer entries, up to MAX_BUFFER. */
+	private requeue(batch: RemoteLogEntry[]): void {
+		const space = MAX_BUFFER - this.buffer.length;
+		if (space > 0) {
+			this.buffer.unshift(...batch.slice(0, space));
 		}
 	}
 
