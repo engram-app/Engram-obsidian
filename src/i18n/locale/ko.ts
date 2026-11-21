@@ -487,6 +487,8 @@ const ko: Dict = {
 		"Engram 서버는 더 이상 이 플러그인 버전을 지원하지 않습니다 (최소 {version} 이상 필요). 따라서 노트가 전송되거나 수신되지 않습니다. 이 장치에서 변경한 내용은 업데이트할 때까지 여기에 보관됩니다.",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Engram 서버는 더 이상 이 플러그인 버전을 지원하지 않습니다. 따라서 노트가 전송되거나 수신되지 않습니다. 이 장치에서 변경한 내용은 업데이트할 때까지 여기에 보관됩니다.",
+	"The Engram server no longer accepts this plugin version. {versions} Changes made on this device stay here until you update.":
+		"Engram 서버는 더 이상 이 플러그인 버전을 지원하지 않습니다. {versions} 이 장치에서 변경한 내용은 업데이트할 때까지 여기에서 유지됩니다.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"파일 크기가 서버 제한을 초과합니다. 압축하거나 분할한 후 동기화됩니다.",
 	"The file is too large for the server.": "파일 크기가 서버 용량을 초과합니다.",
