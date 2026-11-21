@@ -436,6 +436,9 @@ export class RemoteLogger {
 		// while the timer flush is still posting left destroy() to discard
 		// whatever was buffered after it (including the unload drop count).
 		while (this.inflight) await this.inflight;
+		// Lines spent while we waited ride in this batch: save them too, so every
+		// line that is SENT is already in the saved count.
+		if (this.saveTimer !== null) this.saveNow();
 		if (this.serverOff || this.buffer.length === 0 || !this.pushFn) return;
 		// Throttled or failed: nothing ships, nothing retries, until the pause ends.
 		const wall = Date.now();
@@ -462,13 +465,13 @@ export class RemoteLogger {
 				this.buffer = [];
 			} else if (reply?.throttled === true) {
 				this.pausedUntil = Date.now() + pauseMs(reply.retry_after_ms);
-				this.dirty();
+				this.saveNow(); // rare, and a kill must not lose the server's pause
 			}
 		} catch (e) {
 			// The batch is dropped, never requeued: a retry loop is exactly the
 			// volume this logger exists to prevent.
 			this.pausedUntil = Date.now() + pauseMs(retryAfterOf(e));
-			this.dirty();
+			this.saveNow();
 		} finally {
 			this.inflight = null;
 		}
