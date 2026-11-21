@@ -979,23 +979,153 @@ describe("hard cap on every line that leaves the plugin", () => {
 		}
 	});
 
-	test("High: a kill right after a flush keeps the counts, even with the upload hung", async () => {
+	// ---- Restart conservation: exact, not "at least". Invariant under test:
+	// every line that was SENT is already in the saved count (saved >= sent),
+	// and a line that was counted is never refunded by a restart.
+	const memStore = () => {
 		const saved: { v: unknown } = { v: null };
-		const store = { load: () => saved.v, save: (s: unknown) => (saved.v = structuredClone(s)) };
+		return {
+			saved,
+			store: { load: () => saved.v, save: (s: unknown) => (saved.v = structuredClone(s)) },
+		};
+	};
+	type Saved = { hours: number[][]; minutes: number[][]; pausedUntil: number };
+	const total = (rows: number[][] | undefined, col: number) =>
+		(rows ?? []).reduce((n, r) => n + (r[col] ?? 0), 0);
+
+	test("High: a kill right after a flush saves EXACTLY what was spent (hung upload)", async () => {
+		const { saved, store } = memStore();
 		const a = start(store);
-		a.logger.configure(() => new Promise(() => {}), "1", "d"); // upload never answers
-		for (let i = 0; i < 40; i++) a.logger.info("t", `k${letters(i)}`);
-		void a.logger.flush(); // app-hide flush; the process is then killed
-		const b = start(store);
-		for (let i = 0; i < 100; i++) b.logger.info("t", `n${letters(i)}`);
-		await b.logger.flush();
-		// 60/min minus nothing remembered across the kill is NOT the contract;
-		// the persisted hour count (40 spent) caps the restart at 600 - 40.
-		const restored = (saved.v as { minutes: number[][] }).minutes.reduce(
-			(n, m) => n + (m[1] ?? 0),
-			0,
+		let batch: RemoteLogEntry[] = [];
+		a.logger.configure(
+			(b) => {
+				batch = b;
+				return new Promise(() => {}); // upload never answers
+			},
+			"1",
+			"d",
 		);
-		expect(restored).toBeGreaterThanOrEqual(40);
+		for (let i = 0; i < 45; i++) a.logger.info("t", `k${letters(i)}`);
+		void a.logger.flush(); // app-hide flush; the process is then killed
+		const s = saved.v as Saved;
+		expect(batch).toHaveLength(45);
+		expect(total(s.hours, 1)).toBe(45);
+		expect(total(s.minutes, 1)).toBe(45);
+		expect(total(s.hours, 2)).toBe(bytesOf(batch));
+		expect(total(s.minutes, 2)).toBe(bytesOf(batch));
+		expect(s.pausedUntil).toBe(0);
+		// Restart: the same minute allows exactly 60 - 0 more only if nothing
+		// was remembered; the hour must remember 45, so 600 - 45 remain.
+		const b = start(store);
+		for (let m = 0; m < 12; m++) {
+			for (let i = 0; i < 60; i++) b.logger.info("t", `n${letters(m)}${letters(i)}`);
+			await b.logger.flush();
+			now += 60_000; // 12 minutes: inside one hour
+		}
+		expect(b.sent.length).toBe(LOG_LIMITS.linesPerHour - 45);
+	});
+
+	test("High: lines spent while a flush waits on an in-flight upload are saved before they are sent", async () => {
+		const { saved, store } = memStore();
+		const a = start(store);
+		let release: () => void = () => {};
+		let second: RemoteLogEntry[] = [];
+		let calls = 0;
+		a.logger.configure(
+			(b) => {
+				calls++;
+				if (calls === 1) return new Promise((r) => (release = () => r(undefined)));
+				second = b;
+				return new Promise(() => {});
+			},
+			"1",
+			"d",
+		);
+		a.logger.info("t", "first");
+		void a.logger.flush(); // upload #1 in flight
+		const waiting = a.logger.flush(); // waits on #1
+		for (let i = 0; i < 20; i++) a.logger.info("t", `late${letters(i)}`);
+		release();
+		await Promise.resolve();
+		await Promise.resolve();
+		void waiting;
+		await new Promise((r) => setTimeout(r, 0));
+		expect(second).toHaveLength(20);
+		expect(total((saved.v as Saved).hours, 1)).toBe(21);
+	});
+
+	test("High: a kill after a throttled reply keeps the pause (saved at once, not debounced)", async () => {
+		const { saved, store } = memStore();
+		const a = start(store);
+		a.logger.configure(async () => ({ throttled: true, retry_after_ms: 120_000 }), "1", "d");
+		a.logger.info("t", "refused");
+		await a.logger.flush();
+		expect((saved.v as Saved).pausedUntil).toBe(now + 120_000); // killed here, no destroy
+		const b = start(store);
+		b.logger.info("t", "after restart");
+		now += 119_000;
+		await b.logger.flush();
+		expect(b.sent).toHaveLength(0);
+		now += 1_000;
+		await b.logger.flush();
+		expect(b.sent).toHaveLength(1);
+	});
+
+	test("High: spend the day cap across two process lifetimes, total sent never exceeds it and equals what was saved", async () => {
+		const { saved, store } = memStore();
+		let sentTotal = 0;
+		const minutesPerLife = [150, 600]; // life 1 ends mid-day, kill; life 2 runs on
+		for (const [life, mins] of minutesPerLife.entries()) {
+			const { logger, sent } = start(store);
+			for (let m = 0; m < mins; m++) {
+				for (let i = 0; i < 60; i++)
+					logger.info("t", `${letters(life)}${letters(m)}${letters(i)}`);
+				await logger.flush();
+				now += 60_000;
+			}
+			sentTotal += sent.length;
+			if (life === 0) expect(total((saved.v as Saved).hours, 1)).toBe(sent.length); // exact
+			// no destroy: the process is killed
+		}
+		expect(sentTotal).toBeLessThanOrEqual(LOG_LIMITS.linesPerDay);
+		expect(sentTotal).toBeGreaterThan(LOG_LIMITS.linesPerDay - 100); // it did spend the cap
+		expect(total((saved.v as Saved).hours, 1)).toBe(sentTotal);
+	});
+
+	test("High: a crash with no flush inside the debounce loses count only of lines that were never sent", async () => {
+		jest.useFakeTimers();
+		try {
+			const { saved, store } = memStore();
+			const a = start(store);
+			for (let i = 0; i < 30; i++) a.logger.info("t", `s${letters(i)}`);
+			await a.logger.flush(); // 30 sent, saved
+			for (let i = 0; i < 25; i++) a.logger.info("t", `u${letters(i)}`);
+			jest.advanceTimersByTime(LOG_LIMITS.persistDebounceMs - 1);
+			// crash here: 25 spent lines never reached the store
+			expect(a.sent).toHaveLength(30);
+			expect(total((saved.v as Saved).hours, 1)).toBe(30); // saved == sent: nothing sent is uncounted
+			// Worst case of the hole: bounded by one minute's cap, and never sent.
+			const spent = 30 + 25;
+			expect(spent - total((saved.v as Saved).hours, 1)).toBeLessThanOrEqual(
+				LOG_LIMITS.linesPerMinute,
+			);
+		} finally {
+			jest.useRealTimers();
+		}
+	});
+
+	test("High: a crash loop with no flush never sends, and the saved count never trails what was sent", async () => {
+		const { saved, store } = memStore();
+		let sentTotal = 0;
+		for (let life = 0; life < 100; life++) {
+			const a = start(store);
+			for (let i = 0; i < 60; i++) a.logger.info("t", `${letters(life)}${letters(i)}`);
+			if (life % 4 === 3) await a.logger.flush(); // some lives flush
+			sentTotal += a.sent.length;
+			expect(total((saved.v as Saved | null)?.hours, 1)).toBeGreaterThanOrEqual(sentTotal);
+			now += 10 * 60_000;
+		}
+		expect(sentTotal).toBeLessThanOrEqual(LOG_LIMITS.linesPerDay);
 	});
 
 	test("High: a flush with nothing to send still saves a pending count", async () => {
