@@ -3,12 +3,10 @@
  */
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import {
-	BUDGET_WINDOW_MS,
-	DEFAULT_LINE_BUDGET,
 	destroyRemoteLog,
 	initRemoteLog,
-	REPEAT_WINDOW_MS,
-	RESERVED_LINE_BUDGET,
+	LOG_LIMITS,
+	type PushLogsResult,
 	type RemoteLogEntry,
 	RemoteLogger,
 	rlog,
@@ -163,67 +161,6 @@ describe("RemoteLogger level threshold", () => {
 		logger.info("cat", "info");
 		logger.flush();
 		expect(pushFn).toHaveBeenCalledTimes(1);
-		logger.destroy();
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Flush threshold
-// ---------------------------------------------------------------------------
-
-describe("RemoteLogger flush threshold", () => {
-	test("auto-flushes at 20 entries", () => {
-		const logger = new RemoteLogger();
-		const pushFn = mock().mockResolvedValue(undefined);
-		logger.configure(pushFn, "1.0.0", "desktop");
-		logger.setEnabled(true);
-		logger.setLevelThreshold("info");
-
-		for (let i = 0; i < 19; i++) {
-			logger.info("test", `msg ${i}`);
-		}
-		expect(pushFn).not.toHaveBeenCalled();
-
-		logger.info("test", "msg 19"); // 20th entry triggers flush
-		expect(pushFn).toHaveBeenCalledTimes(1);
-		expect(pushFn.mock.calls[0][0]).toHaveLength(20);
-		logger.destroy();
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Ring buffer overflow
-// ---------------------------------------------------------------------------
-
-describe("RemoteLogger ring buffer", () => {
-	test("drops oldest entries when exceeding 200", () => {
-		const logger = new RemoteLogger();
-		const pushFn = mock().mockResolvedValue(undefined);
-		logger.configure(pushFn, "1.0.0", "desktop");
-		logger.setEnabled(true);
-
-		// Add 210 entries — flush triggers at 20, so we'll see multiple flushes
-		// But the ring buffer caps at 200 entries in the buffer at any time
-		// After flush threshold (20), the buffer is drained, so we won't hit 200
-		// To test the ring buffer, we need a pushFn that rejects (entries stay in buffer)
-		const rejectPushFn = mock().mockRejectedValue(new Error("offline"));
-		logger.configure(rejectPushFn, "1.0.0", "desktop");
-
-		// The flush at 20 will fail, putting entries back. Keep adding.
-		// Due to flushing flag, we can't easily test exact count,
-		// but we can verify the buffer doesn't grow unbounded.
-		for (let i = 0; i < 250; i++) {
-			logger.info("test", `msg ${i}`);
-		}
-
-		// Flush whatever is left and verify it's <= 200
-		const finalPush = mock().mockResolvedValue(undefined);
-		logger.configure(finalPush, "1.0.0", "desktop");
-		logger.flush();
-
-		if (finalPush.mock.calls.length > 0) {
-			expect(finalPush.mock.calls[0][0].length).toBeLessThanOrEqual(200);
-		}
 		logger.destroy();
 	});
 });
@@ -528,7 +465,7 @@ describe("repeat coalescing", () => {
 		await logger.flush();
 		expect(sent).toHaveLength(1);
 
-		now += REPEAT_WINDOW_MS;
+		now += LOG_LIMITS.repeatWindowMs;
 		await logger.flush();
 		expect(sent).toHaveLength(2);
 		expect(sent[1].message).toBe("Echo skip (attachment): n7 | hash=42 x 4,811 more in 60s");
@@ -551,7 +488,7 @@ describe("repeat coalescing", () => {
 		logger.info("channel", "Joined crdt:x");
 		await logger.flush();
 		logger.setEnabled(false);
-		now += REPEAT_WINDOW_MS + 1000;
+		now += LOG_LIMITS.repeatWindowMs + 1000;
 		await logger.flush();
 		await logger.destroy();
 		expect(sent.filter((e) => !e.forced).map((e) => e.message)).toEqual(["Joined crdt:x"]);
@@ -570,14 +507,18 @@ describe("repeat coalescing", () => {
 		logger.setEnabled(false);
 		logger.anomaly("sync", "drop_seen", { n: 1 });
 		logger.anomaly("sync", "drop_seen", { n: 1 });
-		now += REPEAT_WINDOW_MS;
+		now += LOG_LIMITS.repeatWindowMs;
 		await logger.flush();
 		expect(sent.map((e) => e.forced)).toEqual([true, true]);
 	});
 });
 
-describe("line budget", () => {
-	let now = 5_000_000;
+// ---------------------------------------------------------------------------
+// A plugin must never be able to send many logs (#676, folds in #718)
+// ---------------------------------------------------------------------------
+
+describe("send limits", () => {
+	let now = 9_000_000;
 	let realNow: () => number;
 	beforeEach(() => {
 		realNow = performance.now;
@@ -587,76 +528,261 @@ describe("line budget", () => {
 		performance.now = realNow;
 	});
 
-	test("default budget sits under the server's 500 lines / 10 min cap", () => {
-		expect(DEFAULT_LINE_BUDGET).toBeLessThan(500);
-		expect(BUDGET_WINDOW_MS).toBe(10 * 60_000);
-	});
-
-	test("a loop of distinct lines stops at the budget and says so at once", async () => {
-		const { logger, sent } = makeLogger();
-		for (let i = 0; i < 1000; i++) {
-			logger.warn("queue", `retry ${i}`);
-			if (i % 50 === 49) await logger.flush();
-		}
-		await logger.flush();
-		expect(sent).toHaveLength(DEFAULT_LINE_BUDGET + 1);
-		const notice = sent[DEFAULT_LINE_BUDGET];
-		expect(notice.message).toBe(`log_budget_exhausted budget=${DEFAULT_LINE_BUDGET}`);
-		expect(notice.forced).toBe(true);
-
-		now += BUDGET_WINDOW_MS;
-		logger.warn("queue", "after the window");
-		await logger.flush();
-		expect(sent.slice(DEFAULT_LINE_BUDGET + 1).map((e) => e.message)).toEqual([
-			`log_budget_dropped dropped=800 budget=${DEFAULT_LINE_BUDGET}`,
-			"after the window",
-		]);
-	});
-
-	test("errors and forced anomalies still ship after the budget is spent", async () => {
-		const { logger, sent } = makeLogger();
-		for (let i = 0; i < DEFAULT_LINE_BUDGET + 5; i++) {
-			logger.warn("queue", `noise ${i}`);
-			if (i % 50 === 49) await logger.flush();
-		}
-		logger.error("sync", "the one useful error");
-		logger.anomaly("sync", "first_sync_drop", { n: 3 });
-		await logger.flush();
-		const msgs = sent.map((e) => e.message);
-		expect(msgs).toContain("the one useful error");
-		expect(msgs).toContain("first_sync_drop n=3");
-	});
-
-	test("the reserve for errors is finite too", async () => {
-		const { logger, sent } = makeLogger();
-		for (let i = 0; i < RESERVED_LINE_BUDGET + 10; i++) {
-			logger.error("sync", `err ${i}`);
-			if (i % 10 === 9) await logger.flush();
-		}
-		await logger.flush();
-		expect(sent.filter((e) => e.level === "error")).toHaveLength(RESERVED_LINE_BUDGET);
-	});
-
-	test("destroy ships the pending drop count", async () => {
-		const { logger, sent } = makeLogger();
-		for (let i = 0; i < DEFAULT_LINE_BUDGET + 3; i++) {
-			logger.warn("queue", `noise ${i}`);
-			if (i % 50 === 49) await logger.flush();
-		}
-		await logger.destroy();
-		expect(sent.at(-1)?.message).toBe(
-			`log_budget_dropped dropped=3 budget=${DEFAULT_LINE_BUDGET}`,
+	/** A logger whose push answers with `reply` (a value, a thrower, or a fn). */
+	function limited(reply: () => Promise<PushLogsResult | undefined> = async () => undefined) {
+		const sent: RemoteLogEntry[][] = [];
+		const logger = new RemoteLogger();
+		logger.configure(
+			async (batch) => {
+				sent.push(batch);
+				return reply();
+			},
+			// Short stamps keep a line near 120 bytes, so the day's line bucket
+			// (2,000) binds before its byte bucket (256 KB).
+			"1",
+			"d",
 		);
+		logger.setEnabled(true);
+		logger.setLevelThreshold("info");
+		const lines = () => sent.flat();
+		return { logger, sent, lines };
+	}
+
+	/** Distinct lines that the circuit breaker cannot fold (no shared shape). */
+	const word = (i: number) =>
+		`${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + (((i / 26) % 26) | 0))}${String.fromCharCode(97 + (((i / 676) % 26) | 0))}`;
+
+	test("one constants block holds every limit", () => {
+		expect(LOG_LIMITS).toEqual({
+			flushIntervalMs: 30_000,
+			maxBuffer: 200,
+			repeatWindowMs: 60_000,
+			linesPerMinute: 60,
+			linesPerHour: 600,
+			linesPerDay: 2_000,
+			bytesPerDay: 256 * 1024,
+			pauseDefaultMs: 30_000,
+			pauseMaxMs: 60 * 60_000,
+			breakerShare: 0.5,
+			breakerMinLines: 10,
+			breakerMuteMs: 60 * 60_000,
+			dropSummaryMinMs: 60 * 60_000,
+		});
 	});
 
-	test("budget 0 is unlimited (the e2e suite seeds this)", async () => {
-		const { logger, sent } = makeLogger();
-		logger.setLineBudget(0);
-		for (let i = 0; i < 1000; i++) {
-			logger.info("queue", `line ${i}`);
-			if (i % 50 === 49) await logger.flush();
+	test("(a) budget: 60 lines a minute, the rest dropped and reported once when budget returns", async () => {
+		const { logger, lines } = limited();
+		for (let i = 0; i < 100; i++) logger.info("t", word(i));
+		await logger.flush();
+		expect(lines()).toHaveLength(60);
+
+		now += 60_000;
+		logger.info("t", "after the minute");
+		await logger.flush();
+		const tail = lines()
+			.slice(60)
+			.map((e) => e.message);
+		expect(tail).toEqual(["log_budget_dropped dropped=40", "after the minute"]);
+		expect(lines()[60].forced).toBe(true);
+	});
+
+	/** Drive `perMinute` lines a minute for `minutes`; return what shipped
+	 *  after `from` minutes (the sustained rate, past the initial burst). */
+	async function drive(perMinute: number, minutes: number, from: number, text = "") {
+		const { logger, lines } = limited();
+		let mark = 0;
+		for (let m = 0; m < minutes; m++) {
+			if (m === from) {
+				await logger.flush();
+				mark = lines().length;
+			}
+			for (let i = 0; i < perMinute; i++)
+				logger.info("t", `${word(m * perMinute + i)}${text}`);
+			if (m % 10 === 9) await logger.flush();
+			now += 60_000;
 		}
 		await logger.flush();
-		expect(sent).toHaveLength(1000);
+		// Drop summaries count: every shipped line, bookkeeping included, spends budget.
+		return lines().slice(mark);
+	}
+
+	test("(a) budget: sustained 600 lines an hour", async () => {
+		const second = await drive(60, 120, 60);
+		expect(second.length).toBeGreaterThanOrEqual(595);
+		expect(second.length).toBeLessThanOrEqual(605);
+	});
+
+	test("(a) budget: sustained 2,000 lines a day", async () => {
+		// 8 a minute = 480 an hour, under the hour bucket; the day bucket binds.
+		const second = await drive(8, 2 * 24 * 60, 24 * 60);
+		expect(second.length).toBeGreaterThanOrEqual(1_990);
+		expect(second.length).toBeLessThanOrEqual(2_010);
+	});
+
+	test("(a) budget: sustained 256 KB a day", async () => {
+		const second = await drive(1, 2 * 24 * 60, 24 * 60, ` ${"x".repeat(4_000)}`);
+		const bytes = second.reduce((n, e) => n + JSON.stringify(e).length, 0);
+		expect(bytes).toBeGreaterThan(240 * 1024);
+		expect(bytes).toBeLessThanOrEqual(256 * 1024 + 4_200);
+	});
+
+	test("(b) ships only on the 30 s timer, never on a line count", async () => {
+		jest.useFakeTimers();
+		try {
+			const { logger, sent } = limited();
+			for (let i = 0; i < 50; i++) logger.info("t", word(i));
+			expect(sent).toHaveLength(0);
+			jest.advanceTimersByTime(29_999);
+			expect(sent).toHaveLength(0);
+			jest.advanceTimersByTime(1);
+			await Promise.resolve();
+			expect(sent).toHaveLength(1);
+			expect(sent[0]).toHaveLength(50);
+			await logger.destroy();
+		} finally {
+			jest.useRealTimers();
+		}
+	});
+
+	test("(b) forced anomalies ship on the timer with diagnostics off", async () => {
+		jest.useFakeTimers();
+		try {
+			const { logger, sent } = limited();
+			logger.setEnabled(false);
+			logger.anomaly("sync", "first_sync_drop", { n: 1 });
+			jest.advanceTimersByTime(30_000);
+			await Promise.resolve();
+			expect(sent.flat().map((e) => e.message)).toEqual(["first_sync_drop n=1"]);
+			await logger.destroy();
+		} finally {
+			jest.useRealTimers();
+		}
+	});
+
+	test("(c) throttled reply drops the batch and pauses until retry_after_ms", async () => {
+		let reply: PushLogsResult | undefined = { throttled: true, retry_after_ms: 120_000 };
+		const { logger, sent } = limited(async () => reply);
+		logger.info("t", "refused");
+		await logger.flush();
+		reply = undefined;
+		logger.info("t", "during pause");
+		now += 119_000;
+		await logger.flush();
+		expect(sent).toHaveLength(1);
+		now += 1_000;
+		await logger.flush();
+		expect(sent).toHaveLength(2);
+		// Refused batch is gone, not replayed.
+		expect(sent[1].map((e) => e.message)).toEqual(["during pause"]);
+	});
+
+	test("(c) a non-2xx or network error drops the batch and pauses 30 s", async () => {
+		let fail = true;
+		const { logger, sent } = limited(async () => {
+			if (fail) throw Object.assign(new Error("Request failed, status 500"), { status: 500 });
+			return undefined;
+		});
+		logger.info("t", "lost");
+		await logger.flush();
+		fail = false;
+		logger.info("t", "next");
+		now += 29_000;
+		await logger.flush();
+		expect(sent).toHaveLength(1);
+		now += 1_000;
+		await logger.flush();
+		expect(sent[1].map((e) => e.message)).toEqual(["next"]);
+	});
+
+	test("(c) a missing or bad retry_after_ms pauses 30 s; a huge one is capped at 1 h", async () => {
+		for (const [retry, pause] of [
+			[undefined, 30_000],
+			["soon", 30_000],
+			[-5, 30_000],
+			[Number.NaN, 30_000],
+			[10 * 60 * 60_000, 60 * 60_000],
+		] as const) {
+			let reply: PushLogsResult | undefined = { throttled: true, retry_after_ms: retry };
+			const { logger, sent } = limited(async () => reply);
+			logger.info("t", "a");
+			await logger.flush();
+			reply = undefined;
+			logger.info("t", "b");
+			now += pause - 1;
+			await logger.flush();
+			expect(sent).toHaveLength(1);
+			now += 1;
+			await logger.flush();
+			expect(sent).toHaveLength(2);
+		}
+	});
+
+	test("(e) circuit breaker: a message over half a minute's lines is named once and muted 1 h", async () => {
+		const { logger, lines } = limited();
+		for (let i = 0; i < 40; i++) logger.warn("queue", `retry note ${i} attempt ${i * 7}`);
+		logger.info("t", "other");
+		await logger.flush();
+		const msgs = lines().map((e) => e.message);
+		const anomaly = msgs.filter((m) => m.startsWith("log_breaker_muted"));
+		expect(anomaly).toHaveLength(1);
+		expect(anomaly[0]).toContain("retry note # attempt #");
+		expect(msgs.filter((m) => m.startsWith("retry note")).length).toBe(
+			LOG_LIMITS.breakerMinLines,
+		);
+		expect(msgs).toContain("other");
+
+		now += 30 * 60_000;
+		logger.warn("queue", "retry note 999 attempt 1");
+		await logger.flush();
+		expect(lines().map((e) => e.message)).not.toContain("retry note 999 attempt 1");
+
+		now += 30 * 60_000;
+		logger.warn("queue", "retry note 1000 attempt 1");
+		await logger.flush();
+		expect(lines().map((e) => e.message)).toContain("retry note 1000 attempt 1");
+	});
+
+	test("(e) a few lines in a quiet minute never trip the breaker", async () => {
+		const { logger, lines } = limited();
+		for (let i = 0; i < 5; i++) logger.info("t", `seq ${i}`);
+		await logger.flush();
+		expect(lines()).toHaveLength(5);
+	});
+
+	test("(f) remote_log off stops shipping until the next plugin start", async () => {
+		let reply: PushLogsResult | undefined = { remote_log: "off" };
+		const { logger, sent } = limited(async () => reply);
+		logger.info("t", "a");
+		await logger.flush();
+		reply = undefined;
+		logger.anomaly("sync", "even_forced");
+		logger.warn("t", "b");
+		now += 24 * 60 * 60_000;
+		await logger.flush();
+		await logger.destroy();
+		expect(sent).toHaveLength(1);
+
+		// A fresh logger (next plugin start) ships again.
+		const next = limited();
+		next.logger.info("t", "c");
+		await next.logger.flush();
+		expect(next.sent).toHaveLength(1);
+	});
+
+	test("older server: no throttled field, keeps shipping on every flush", async () => {
+		const { logger, sent } = limited(async () => ({}) as PushLogsResult);
+		logger.info("t", "a");
+		await logger.flush();
+		logger.info("t", "b");
+		await logger.flush();
+		expect(sent).toHaveLength(2);
+	});
+
+	test("remoteLogBudget 0 lifts the budget and the breaker (the e2e suite seeds this)", async () => {
+		const { logger, lines } = limited();
+		logger.setUnlimited(true);
+		for (let i = 0; i < 1000; i++) logger.info("queue", `line ${i}`);
+		await logger.flush();
+		expect(lines()).toHaveLength(1000);
 	});
 });
