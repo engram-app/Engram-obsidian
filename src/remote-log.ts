@@ -68,12 +68,20 @@ const LEVEL_SEVERITY: Record<RemoteLogLevel, number> = {
  *    explicit flush on app-hide and unload).
  *  - maxBuffer: ring cap between sends.
  *  - repeatWindowMs: identical lines inside it ship once, then one "x N more".
- *  - linesPerMinute/Hour/Day, bytesPerDay: token buckets, refilled continuously. A line ships
- *    only when every bucket has room; the rest are dropped on the device,
- *    counted, and reported in one line when budget returns. All four apply to
- *    every line, errors and forced anomalies included: the cap is a hard total.
- *    Under sustained overload the drop summary goes out at most once per
- *    dropSummaryMinMs (it spends budget too), plus once at unload.
+ *  - linesPerMinute/Hour/Day, bytesPerDay: FIXED windows (a window opens at
+ *    its first line and lasts exactly its period; nothing carries over). A
+ *    line ships only when every window has room; the rest are dropped on the
+ *    device, counted, and reported in one line when budget returns. EVERY line
+ *    that leaves the plugin is charged, errors, forced anomalies, breaker
+ *    notices and drop summaries included; a notice with no room is dropped and
+ *    counted. The hour and day windows (and the pause) are persisted through
+ *    the store, written at most once per persistDebounceMs, so a restart loop
+ *    does not reset them. Under sustained overload the drop summary goes out
+ *    at most once per dropSummaryMinMs, plus once at unload.
+ *    Worst case: no window ever holds more than its quota (60 / 600 / 2,000
+ *    lines, 256 KB). A rolling period that straddles a window boundary can
+ *    hold up to twice a window's quota (120 lines in 60 s, 1,200 in an hour);
+ *    a rolling 24 h is bounded by the hour windows inside it.
  *  - pause*: after a throttled reply or any failed push, the batch is dropped
  *    (never requeued) and nothing ships until retry_after_ms, else 30 s,
  *    capped at an hour.
@@ -94,42 +102,53 @@ export const LOG_LIMITS = {
 	breakerMinLines: 10,
 	breakerMuteMs: 60 * 60_000,
 	dropSummaryMinMs: 60 * 60_000,
+	persistDebounceMs: 5_000,
 } as const;
+
+/** Where the persisted windows live (Obsidian's per-device local storage). */
+export const LOG_LIMIT_STORE_KEY = "engram-remote-log-limits";
+
+/** The part of the budget that must survive a restart. Wall-clock based
+ *  (a monotonic clock does not outlive the process). */
+export interface LogLimitState {
+	hourStart: number | null;
+	hourLines: number;
+	dayStart: number | null;
+	dayLines: number;
+	dayBytes: number;
+	pausedUntil: number;
+}
+
+export interface LogLimitStore {
+	load(): unknown;
+	save(state: LogLimitState): void;
+}
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
-/** Continuous-refill token bucket: `cap` tokens per `periodMs`. */
-class TokenBucket {
-	private tokens: number;
-	private at: number;
-	constructor(
-		private readonly cap: number,
-		private readonly periodMs: number,
-		now: number,
-	) {
-		this.tokens = cap;
-		this.at = now;
-	}
-	private refill(now: number): void {
-		this.tokens = Math.min(
-			this.cap,
-			this.tokens + ((now - this.at) * this.cap) / this.periodMs,
-		);
-		this.at = now;
-	}
-	has(cost: number, now: number): boolean {
-		this.refill(now);
-		return this.tokens >= cost;
-	}
-	/** Debit even past zero: a bookkeeping line borrows from the future,
-	 *  so the long-run total still never exceeds the cap. */
-	take(cost: number, now: number): void {
-		this.refill(now);
-		this.tokens -= cost;
+/** One fixed window: opens at its first line, closes `periodMs` later. */
+interface Win {
+	start: number | null;
+	lines: number;
+	bytes: number;
+}
+
+const newWin = (): Win => ({ start: null, lines: 0, bytes: 0 });
+
+/** Roll `w` if its period is over. A clock that moved back keeps the window
+ *  (counts stay, nothing is refunded) unless it moved back by more than a
+ *  period, which restarts the window instead of stalling it for days. */
+function roll(w: Win, periodMs: number, now: number): void {
+	if (w.start === null || now - w.start >= periodMs || w.start - now > periodMs) {
+		w.start = now;
+		w.lines = 0;
+		w.bytes = 0;
 	}
 }
+
+const utf8Bytes = (s: string): number => new TextEncoder().encode(s).byteLength;
 
 /** How long a refused or failed push pauses shipping. */
 function pauseMs(retryAfterMs: unknown): number {
@@ -150,10 +169,24 @@ function retryAfterOf(e: unknown): unknown {
 	}
 }
 
-/** A message's shape for the circuit breaker: digits stripped, so
- *  `retry note 41` and `retry note 42` count as one message. */
+const SHAPE_CHARS = 200;
+const UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+const PATH_RE =
+	/[^\s|,;()]*[\\/][^\s|,;()]*|[^\s|,;()/]+\.(?:md|canvas|base|png|jpe?g|gif|webp|svg|pdf|mp[34]|wav|txt|json|csv)\b/gi;
+const HEX_RE = /\b(?=[0-9a-f]*\d)[0-9a-f]{6,}\b/gi;
+
+/** A message's shape for the circuit breaker: uuids, paths, hex ids and
+ *  hashes, and numbers collapsed, so `Echo skip: a/b.md | hash=9f3c1a`
+ *  and the same line for any other file are one message. */
 const shapeOf = (level: string, category: string, message: string) =>
-	`${level}|${category}|${message.replace(/\d+/g, "#")}`;
+	// Prefix only: the shape needs no more than the notice names (200), and the
+	// path pattern backtracks quadratically on a long run with no separator.
+	`${level}|${category}|${message
+		.slice(0, SHAPE_CHARS)
+		.replace(UUID_RE, "#")
+		.replace(PATH_RE, "<path>")
+		.replace(HEX_RE, "#")
+		.replace(/\d+/g, "#")}`;
 
 /** Monotonic clock for every window here. Wall-clock jumps (NTP, sleep,
  *  manual changes) must not stall or skip a window. */
@@ -226,10 +259,15 @@ export class RemoteLogger {
 	>();
 	/** e2e only (`remoteLogBudget: 0`): no buckets, no breaker. */
 	private unlimited = false;
-	private buckets: { lines: TokenBucket[]; bytes: TokenBucket } | null = null;
+	private minute = newWin();
+	private hour = newWin();
+	private day = newWin();
+	private store: LogLimitStore | null = null;
+	private saveTimer: number | null = null;
 	private budgetDropped = 0;
 	private lastDropReport: number | null = null;
-	/** Monotonic ms before which nothing ships (throttled or failed push). */
+	/** Wall-clock ms before which nothing ships (throttled or failed push).
+	 *  Wall, not monotonic, so it survives a restart. */
 	private pausedUntil = 0;
 	/** The server said `remote_log: "off"`: silent until the next plugin start
 	 *  (this logger is rebuilt on every load, so the flag dies with it). */
@@ -289,6 +327,59 @@ export class RemoteLogger {
 		this.unlimited = unlimited;
 	}
 
+	/** Restore the persisted hour/day windows and pause, and keep them saved
+	 *  (debounced). Storage trouble degrades to in-memory limits; it is never
+	 *  logged, since a log line here would feed this logger. */
+	setStore(store: LogLimitStore): void {
+		this.store = store;
+		let raw: unknown;
+		try {
+			raw = store.load();
+		} catch {
+			return;
+		}
+		const r = raw as Partial<Record<keyof LogLimitState, unknown>> | null;
+		if (!r || typeof r !== "object") return;
+		const num = (v: unknown): v is number =>
+			typeof v === "number" && Number.isFinite(v) && v >= 0;
+		const at = (v: unknown): number | null => (num(v) ? v : null);
+		const now = Date.now();
+		if (num(r.hourLines))
+			Object.assign(this.hour, { start: at(r.hourStart), lines: r.hourLines });
+		if (num(r.dayLines) && num(r.dayBytes))
+			Object.assign(this.day, {
+				start: at(r.dayStart),
+				lines: r.dayLines,
+				bytes: r.dayBytes,
+			});
+		if (num(r.pausedUntil))
+			this.pausedUntil = Math.min(r.pausedUntil, now + LOG_LIMITS.pauseMaxMs);
+	}
+
+	private dirty(): void {
+		if (!this.store || this.saveTimer !== null) return;
+		this.saveTimer = window.setTimeout(() => this.saveNow(), LOG_LIMITS.persistDebounceMs);
+	}
+
+	private saveNow(): void {
+		if (this.saveTimer !== null) {
+			window.clearTimeout(this.saveTimer);
+			this.saveTimer = null;
+		}
+		try {
+			this.store?.save({
+				hourStart: this.hour.start,
+				hourLines: this.hour.lines,
+				dayStart: this.day.start,
+				dayLines: this.day.lines,
+				dayBytes: this.day.bytes,
+				pausedUntil: this.pausedUntil,
+			});
+		} catch {
+			// In-memory limits still hold for this session.
+		}
+	}
+
 	setClientContext(deviceId: string | null, vaultId: string | null): void {
 		this.deviceId = deviceId;
 		this.vaultId = vaultId;
@@ -303,14 +394,17 @@ export class RemoteLogger {
 	async flush(): Promise<void> {
 		const now = monoNow();
 		this.closeRepeatWindows(now, false);
-		if (this.budgetDropped > 0 && this.lineRoom(now)) this.reportDropped(now);
+		this.reportDropped(false);
 		// Wait out an in-flight batch instead of returning: a flush that no-ops
 		// while the timer flush is still posting left destroy() to discard
 		// whatever was buffered after it (including the unload drop count).
 		while (this.inflight) await this.inflight;
 		if (this.serverOff || this.buffer.length === 0 || !this.pushFn) return;
 		// Throttled or failed: nothing ships, nothing retries, until the pause ends.
-		if (monoNow() < this.pausedUntil) return;
+		const wall = Date.now();
+		// A clock set back must not stretch a pause past the cap.
+		this.pausedUntil = Math.min(this.pausedUntil, wall + LOG_LIMITS.pauseMaxMs);
+		if (wall < this.pausedUntil) return;
 
 		const batch = this.buffer.splice(0, this.buffer.length);
 		let sent: Promise<PushLogsResult | undefined>;
@@ -330,12 +424,14 @@ export class RemoteLogger {
 				this.serverOff = true;
 				this.buffer = [];
 			} else if (reply?.throttled === true) {
-				this.pausedUntil = monoNow() + pauseMs(reply.retry_after_ms);
+				this.pausedUntil = Date.now() + pauseMs(reply.retry_after_ms);
+				this.dirty();
 			}
 		} catch (e) {
 			// The batch is dropped, never requeued: a retry loop is exactly the
 			// volume this logger exists to prevent.
-			this.pausedUntil = monoNow() + pauseMs(retryAfterOf(e));
+			this.pausedUntil = Date.now() + pauseMs(retryAfterOf(e));
+			this.dirty();
 		} finally {
 			this.inflight = null;
 		}
@@ -344,8 +440,9 @@ export class RemoteLogger {
 	async destroy(): Promise<void> {
 		this.stopTimer();
 		this.closeRepeatWindows(monoNow(), true);
-		this.reportDropped(null);
+		this.reportDropped(true);
 		await this.flush();
+		this.saveNow();
 		this.buffer = [];
 		this.pushFn = null;
 	}
@@ -437,39 +534,28 @@ export class RemoteLogger {
 		}
 	}
 
-	private bucketsAt(now: number): { lines: TokenBucket[]; bytes: TokenBucket } {
-		this.buckets ??= {
-			lines: [
-				new TokenBucket(LOG_LIMITS.linesPerMinute, MINUTE_MS, now),
-				new TokenBucket(LOG_LIMITS.linesPerHour, HOUR_MS, now),
-				new TokenBucket(LOG_LIMITS.linesPerDay, DAY_MS, now),
-			],
-			bytes: new TokenBucket(LOG_LIMITS.bytesPerDay, DAY_MS, now),
-		};
-		return this.buckets;
+	/** True when every window can take one more line (and `bytes` more bytes). */
+	private room(bytes: number, now: number): boolean {
+		roll(this.minute, MINUTE_MS, now);
+		roll(this.hour, HOUR_MS, now);
+		roll(this.day, DAY_MS, now);
+		return (
+			this.minute.lines < LOG_LIMITS.linesPerMinute &&
+			this.hour.lines < LOG_LIMITS.linesPerHour &&
+			this.day.lines < LOG_LIMITS.linesPerDay &&
+			this.day.bytes + bytes <= LOG_LIMITS.bytesPerDay
+		);
 	}
 
-	private lineRoom(now: number): boolean {
-		return this.bucketsAt(now).lines.every((b) => b.has(1, now));
-	}
-
-	/** Spend budget for one built line. False = drop it (counted). */
+	/** Charge one built line to every window. False = no room, nothing charged.
+	 *  The ONLY gate a line passes to leave the plugin, notices included. */
 	private spend(entry: RemoteLogEntry, now: number): boolean {
-		const b = this.bucketsAt(now);
-		const bytes = JSON.stringify(entry).length;
-		if (!this.lineRoom(now) || !b.bytes.has(bytes, now)) {
-			this.budgetDropped++;
-			return false;
-		}
-		this.reportDropped(now);
-		this.debit(entry, now, bytes);
+		const bytes = utf8Bytes(JSON.stringify(entry));
+		if (!this.room(bytes, now)) return false;
+		for (const w of [this.minute, this.hour, this.day]) w.lines++;
+		this.day.bytes += bytes;
+		this.dirty();
 		return true;
-	}
-
-	private debit(entry: RemoteLogEntry, now: number, bytes = JSON.stringify(entry).length): void {
-		const b = this.bucketsAt(now);
-		for (const l of b.lines) l.take(1, now);
-		b.bytes.take(bytes, now);
 	}
 
 	/** Circuit breaker. True = this line is muted (do not ship). */
@@ -501,39 +587,45 @@ export class RemoteLogger {
 		this.muted.set(shape, now + LOG_LIMITS.breakerMuteMs);
 		const share = Math.round((n / m.total) * 100);
 		const named = shape.slice(shape.indexOf("|", shape.indexOf("|") + 1) + 1).slice(0, 200);
-		this.pushNotice(
-			`log_breaker_muted share=${share}% lines=${n} mute_s=${LOG_LIMITS.breakerMuteMs / 1000} category=${category} message=${named}`,
-			forced,
-		);
+		// Charged like any line: with no room the notice is dropped and counted.
+		// Forced only when the line it names was (anomaly text is slug-only).
+		if (
+			!this.notice(
+				`log_breaker_muted share=${share}% lines=${n} mute_s=${LOG_LIMITS.breakerMuteMs / 1000} category=${category} message=${named}`,
+				forced,
+			)
+		)
+			this.budgetDropped++;
 		return true;
 	}
 
-	/** Ship the drop count, if any, and reset it. Rate-limited unless `now`
-	 *  is null (unload). */
-	private reportDropped(now: number | null): void {
+	/** Ship the drop count, if any. It is a notice like any other: with no
+	 *  room it stays counted and waits. Rate-limited unless `unload`. */
+	private reportDropped(unload: boolean): void {
 		if (this.budgetDropped === 0) return;
-		if (now !== null) {
-			if (
-				this.lastDropReport !== null &&
-				now - this.lastDropReport < LOG_LIMITS.dropSummaryMinMs
-			)
-				return;
-			this.lastDropReport = now;
-		}
-		const dropped = this.budgetDropped;
+		const mono = monoNow();
+		if (
+			!unload &&
+			this.lastDropReport !== null &&
+			mono - this.lastDropReport < LOG_LIMITS.dropSummaryMinMs
+		)
+			return;
+		if (
+			!this.notice(formatAnomaly("log_budget_dropped", { dropped: this.budgetDropped }), true)
+		)
+			return;
 		this.budgetDropped = 0;
-		this.pushNotice(formatAnomaly("log_budget_dropped", { dropped }), true);
+		this.lastDropReport = mono;
 	}
 
-	/** Logger bookkeeping lines (drop summary, breaker trip). They skip the
-	 *  "has room" check but still debit every bucket, so they cannot push the
-	 *  long-run total past the cap. `forced` only when the line carries no
-	 *  consent-only text. */
-	private pushNotice(message: string, forced: boolean): void {
-		if (!this.pushFn) return;
+	/** Logger bookkeeping line (drop summary, breaker trip), charged to the
+	 *  same windows as every other line. False = no room, not shipped. */
+	private notice(message: string, forced: boolean): boolean {
+		if (!this.pushFn) return false;
 		const entry = this.build("warn", "remote_log", message, undefined, false, forced);
-		if (!this.unlimited) this.debit(entry, monoNow());
+		if (!this.unlimited && !this.spend(entry, Date.now())) return false;
 		this.push(entry);
+		return true;
 	}
 
 	private enqueue(
@@ -544,10 +636,21 @@ export class RemoteLogger {
 		diagnostic?: boolean,
 		force?: boolean,
 	): void {
-		const now = monoNow();
-		if (!this.unlimited && this.tripped(level, category, message, !!force, now)) return;
+		if (!this.unlimited) {
+			// Cheap refusal first: with no room the line is gone either way, so a
+			// hot loop pays no shape regexes, build or stringify.
+			if (!this.room(0, Date.now())) {
+				this.budgetDropped++;
+				return;
+			}
+			if (this.tripped(level, category, message, !!force, monoNow())) return;
+			this.reportDropped(false);
+		}
 		const entry = this.build(level, category, message, stack, diagnostic, force);
-		if (!this.unlimited && !this.spend(entry, now)) return;
+		if (!this.unlimited && !this.spend(entry, Date.now())) {
+			this.budgetDropped++;
+			return;
+		}
 		this.push(entry);
 	}
 

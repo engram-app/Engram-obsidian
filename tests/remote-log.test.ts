@@ -518,14 +518,20 @@ describe("repeat coalescing", () => {
 // ---------------------------------------------------------------------------
 
 describe("send limits", () => {
-	let now = 9_000_000;
+	// Both clocks are mocked to one value: repeat/breaker windows run on the
+	// monotonic clock, the budget windows and the pause on the wall clock.
+	let now = 1_700_000_000_000;
 	let realNow: () => number;
+	let realDate: () => number;
 	beforeEach(() => {
 		realNow = performance.now;
+		realDate = Date.now;
 		performance.now = () => now;
+		Date.now = () => now;
 	});
 	afterEach(() => {
 		performance.now = realNow;
+		Date.now = realDate;
 	});
 
 	/** A logger whose push answers with `reply` (a value, a thrower, or a fn). */
@@ -567,6 +573,7 @@ describe("send limits", () => {
 			breakerMinLines: 10,
 			breakerMuteMs: 60 * 60_000,
 			dropSummaryMinMs: 60 * 60_000,
+			persistDebounceMs: 5_000,
 		});
 	});
 
@@ -598,10 +605,9 @@ describe("send limits", () => {
 			}
 			for (let i = 0; i < perMinute; i++)
 				logger.info("t", `${word(m * perMinute + i)}${text}`);
-			if (m % 10 === 9) await logger.flush();
+			await logger.flush();
 			now += 60_000;
 		}
-		await logger.flush();
 		// Drop summaries count: every shipped line, bookkeeping included, spends budget.
 		return lines().slice(mark);
 	}
@@ -784,5 +790,157 @@ describe("send limits", () => {
 		for (let i = 0; i < 1000; i++) logger.info("queue", `line ${i}`);
 		await logger.flush();
 		expect(lines()).toHaveLength(1000);
+	});
+});
+
+describe("hard cap on every line that leaves the plugin", () => {
+	let now = 1_700_000_000_000;
+	let realNow: () => number;
+	let realDate: () => number;
+	beforeEach(() => {
+		realNow = performance.now;
+		realDate = Date.now;
+		performance.now = () => now;
+		Date.now = () => now;
+	});
+	afterEach(() => {
+		performance.now = realNow;
+		Date.now = realDate;
+	});
+
+	const start = (store?: { load(): unknown; save(s: unknown): void }) => {
+		const sent: RemoteLogEntry[] = [];
+		const logger = new RemoteLogger();
+		logger.configure(
+			async (b) => {
+				sent.push(...b);
+				return undefined;
+			},
+			"1",
+			"d",
+		);
+		logger.setEnabled(true);
+		logger.setLevelThreshold("info");
+		if (store) logger.setStore(store as never);
+		return { logger, sent };
+	};
+	const letters = (i: number) =>
+		String.fromCharCode(97 + (i % 26)) + String.fromCharCode(97 + (((i / 26) | 0) % 26));
+	const bytesOf = (sent: RemoteLogEntry[]) =>
+		sent.reduce((n, e) => n + new TextEncoder().encode(JSON.stringify(e)).byteLength, 0);
+
+	test("B1: a hot loop of breaker-tripping shapes ships at most 2,000 lines and 256 KB a day", async () => {
+		const { logger, sent } = start();
+		// ~1,000 lines a minute; each file's lines differ only by a counter, so
+		// every file is its own breaker shape and trips in turn.
+		for (let m = 0; m < 24 * 60; m++) {
+			for (let i = 0; i < 1000; i++)
+				logger.warn("queue", `retry file${letters(i % 40)}x attempt ${m * 1000 + i}`);
+			await logger.flush();
+			now += 60_000;
+		}
+		expect(sent.length).toBeLessThanOrEqual(LOG_LIMITS.linesPerDay);
+		expect(bytesOf(sent)).toBeLessThanOrEqual(LOG_LIMITS.bytesPerDay);
+	}, 60_000);
+
+	test("B1: a breaker notice with no budget is dropped and counted, not sent", async () => {
+		const { logger, sent } = start();
+		for (let m = 0; m < 10; m++) {
+			for (let i = 0; i < 60; i++) logger.info("t", `x${letters(m * 60 + i)}`);
+			now += 60_000;
+		}
+		await logger.flush(); // hour budget (600) is spent
+		const before = sent.length;
+		for (let i = 0; i < 100; i++) logger.warn("queue", `retry alpha attempt ${i}`);
+		await logger.flush();
+		expect(sent.length).toBe(before);
+	});
+
+	test("H1: a restart loop does not reset the day or hour count", async () => {
+		const saved: { v: unknown } = { v: null };
+		const store = { load: () => saved.v, save: (s: unknown) => (saved.v = structuredClone(s)) };
+		let total = 0;
+		// 40 starts in 20 hours, each trying 60 lines (34 would beat 2,000 if memory-only).
+		for (let r = 0; r < 40; r++) {
+			const { logger, sent } = start(store);
+			for (let i = 0; i < 60; i++) logger.info("t", `r${letters(r)} ${letters(i)}`);
+			await logger.destroy();
+			total += sent.length;
+			now += 30 * 60_000;
+		}
+		expect(total).toBeLessThanOrEqual(LOG_LIMITS.linesPerDay);
+	});
+
+	test("H1: a restart does not clear a pause", async () => {
+		const saved: { v: unknown } = { v: null };
+		const store = { load: () => saved.v, save: (s: unknown) => (saved.v = structuredClone(s)) };
+		const a = start(store);
+		a.logger.configure(async () => ({ throttled: true, retry_after_ms: 120_000 }), "1", "d");
+		a.logger.info("t", "refused");
+		await a.logger.flush();
+		await a.logger.destroy();
+
+		const b = start(store);
+		b.logger.info("t", "after restart");
+		now += 60_000;
+		await b.logger.flush();
+		expect(b.sent).toHaveLength(0);
+		now += 60_000;
+		await b.logger.flush();
+		expect(b.sent.map((e) => e.message)).toEqual(["after restart"]);
+	});
+
+	test("H1: a burst of lines writes storage once per debounce window, not per line", () => {
+		jest.useFakeTimers();
+		try {
+			const saves: unknown[] = [];
+			const { logger } = start({ load: () => null, save: (s) => saves.push(s) });
+			for (let i = 0; i < 50; i++) logger.info("t", `l${letters(i)}`);
+			expect(saves).toHaveLength(0);
+			jest.advanceTimersByTime(LOG_LIMITS.persistDebounceMs);
+			expect(saves).toHaveLength(1);
+			expect((saves[0] as { dayLines: number }).dayLines).toBe(50);
+		} finally {
+			jest.useRealTimers();
+		}
+	});
+
+	test("H1: a corrupt store is ignored, limits still hold", async () => {
+		const { logger, sent } = start({
+			load: () => ({ dayLines: "lots", pausedUntil: -1 }),
+			save() {},
+		});
+		for (let i = 0; i < 100; i++) logger.info("t", `c${letters(i)}`);
+		await logger.flush();
+		expect(sent.length).toBeGreaterThan(0);
+		expect(sent.length).toBeLessThanOrEqual(LOG_LIMITS.linesPerMinute);
+	});
+
+	test("M1: a long separator-free message does not stall the breaker (regex backtracking)", async () => {
+		const { logger } = start();
+		// Clocks are mocked here; hrtime is the real one.
+		const wall = process.hrtime.bigint();
+		for (let i = 0; i < 100; i++) logger.info("t", `${"x".repeat(5000)}${letters(i)}`);
+		const ms = Number(process.hrtime.bigint() - wall) / 1e6;
+		expect(ms).toBeLessThan(500);
+	});
+
+	test("M1: lines that differ only by path, hash or uuid trip the breaker", async () => {
+		const { logger, sent } = start();
+		for (let i = 0; i < 40; i++) {
+			const hex = (0x9f3c1a00 + i * 977).toString(16);
+			const uuid = `${hex}-1111-4222-8333-${hex}${hex.slice(0, 4)}`;
+			logger.warn(
+				"queue",
+				`Echo skip (attachment): Projects/${letters(i)}/img ${letters(i + 7)}.png | hash=${hex} id=${uuid}`,
+			);
+		}
+		await logger.flush();
+		const msgs = sent.map((e) => e.message);
+		expect(msgs.filter((m) => m.startsWith("log_breaker_muted"))).toHaveLength(1);
+		expect(msgs.filter((m) => m.startsWith("Echo skip"))).toHaveLength(
+			LOG_LIMITS.breakerMinLines,
+		);
+		expect(msgs.find((m) => m.startsWith("log_breaker_muted"))).toContain("<path>");
 	});
 });
