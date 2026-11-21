@@ -664,7 +664,8 @@ export class RemoteLogger {
 					m.forced,
 				)
 			)
-				this.budgetDropped++;
+				// No room for the notice: the muted lines are dropped lines, all of them.
+				this.budgetDropped += m.count;
 		}
 	}
 

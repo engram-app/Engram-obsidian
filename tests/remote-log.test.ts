@@ -1128,6 +1128,46 @@ describe("hard cap on every line that leaves the plugin", () => {
 		expect(sentTotal).toBeLessThanOrEqual(LOG_LIMITS.linesPerDay);
 	});
 
+	test("Medium: a mute that ends with no budget reports every muted line in the drop summary", async () => {
+		const { logger, sent } = start();
+		let logged = 0;
+		const log = (level: "error" | "info", msg: string) => {
+			logged++;
+			logger[level]("sync", msg);
+		};
+		// An error storm: 10 ship, the 11th trips the breaker, the other 19 are muted.
+		for (let i = 0; i < 30; i++) log("error", `upload failed note ${i}`);
+		await logger.flush();
+		// Spend the rest of the day's bytes: big lines, then small ones, until
+		// the headroom is smaller than a notice.
+		for (let m = 0; m < 8; m++) {
+			now += 60_000;
+			for (let i = 0; i < 60; i++)
+				log(
+					"info",
+					m < 2
+						? `big${letters(m)}${letters(i)} ${"x".repeat(4_000)}`
+						: `sm${letters(m)}${letters(i)}`,
+				);
+			await logger.flush();
+		}
+		now += 61 * 60_000; // the one-hour mute is over; the day budget is not back
+		await logger.flush();
+		now += 25 * 60 * 60_000; // budget returns
+		log("info", "after the day");
+		await logger.flush();
+		const msgs = sent.map((e) => e.message);
+		expect(msgs.some((x) => x.startsWith("log_breaker_unmuted"))).toBe(false); // it had no room
+		const real = msgs.filter(
+			(x) => !x.startsWith("log_breaker_") && !x.startsWith("log_budget_"),
+		);
+		const reported = msgs
+			.filter((x) => x.startsWith("log_budget_dropped"))
+			.reduce((n, x) => n + Number(/dropped=(\d+)/.exec(x)?.[1] ?? 0), 0);
+		// Every line logged is either sent or counted as dropped, muted ones included.
+		expect(reported).toBe(logged - real.length);
+	});
+
 	test("High: a flush with nothing to send still saves a pending count", async () => {
 		const saves: unknown[] = [];
 		const a = start({ load: () => null, save: (s) => saves.push(s) });
