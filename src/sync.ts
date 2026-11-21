@@ -84,6 +84,7 @@ import { Semaphore } from "./semaphore";
 import {
 	createFolderRenameReporter,
 	createRateLimitReporter,
+	joinReporter,
 	reportFolderDeleteCleared,
 	reportFolderDeleteFailed,
 	reportGateTransition,
@@ -726,6 +727,9 @@ export class SyncEngine {
 			clearTimeout: (id) => this.time.clearTimeout(id),
 		}),
 	);
+	/** The join reporter is one per plugin load (main.ts feeds it); registering
+	 *  it here ends its session on a vault switch and on unload. */
+	private readonly joinSession = this.track(["vault", "destroy"], joinReporter);
 	/** 429 diagnostic lines, hard-capped per hour on the engine's clock. */
 	private readonly rateLimits = createRateLimitReporter(() => this.time.now());
 	private debounceTimers = this.track(["destroy"], new Map<string, number>(), (timer) =>
@@ -7631,19 +7635,21 @@ export class SyncEngine {
 	private failedFolderDeletes = this.track(["destroy", "vault"], new Set<string>());
 
 	private async deleteFolderNow(path: string): Promise<void> {
+		// The retry set is keyed by the cleaned path, like every other writer.
+		const key = cleanFolderPath(path);
 		if (this.suppressDeletes) return;
 		if (!this.explicitFolders) return;
 		if (!this.explicitFolders.has(path)) return;
 
 		try {
 			await this.api.deleteFolder(path);
-			this.failedFolderDeletes.delete(path);
+			this.failedFolderDeletes.delete(key);
 		} catch (e) {
 			// The server still lists the marker; remember it so the next pull does
 			// not recreate the folder the user just deleted (syncExplicitFolders).
 			// Edge only: re-deleting a folder already waiting must not log again.
-			const firstFailure = !this.failedFolderDeletes.has(path);
-			this.failedFolderDeletes.add(path);
+			const firstFailure = !this.failedFolderDeletes.has(key);
+			this.failedFolderDeletes.add(key);
 			if (firstFailure) reportFolderDeleteFailed(this.failedFolderDeletes.size, e);
 			devLog().log("push", `deleteFolder("${path}") failed: ${errMsg(e)}`);
 			rlog().warn("push", `deleteFolder("${noteRef(path)}") failed: ${errMsg(e, path)}`);
@@ -14189,15 +14195,15 @@ export class SyncEngine {
 			// e.g. in the web app): no moved-away record may still cover it.
 			if (this.isMovedAway(name)) this.forgetMovedAway(name);
 			// Locally deleted, server delete failed: retry it instead of resurrecting.
-			if (this.failedFolderDeletes.has(name)) {
+			if (this.failedFolderDeletes.has(cleanFolderPath(name))) {
 				// Never delete the marker of a folder that exists locally.
 				if (this.app.vault.getAbstractFileByPath(name)) {
-					this.failedFolderDeletes.delete(name);
+					this.failedFolderDeletes.delete(cleanFolderPath(name));
 					continue;
 				}
 				try {
 					await this.api.deleteFolder(name);
-					this.failedFolderDeletes.delete(name);
+					this.failedFolderDeletes.delete(cleanFolderPath(name));
 					reportFolderDeleteCleared(this.failedFolderDeletes.size);
 				} catch (e) {
 					devLog().log("pull", `deleteFolder retry(${name}) failed: ${errMsg(e)}`);

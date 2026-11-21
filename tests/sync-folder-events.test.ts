@@ -15,6 +15,7 @@ import type { EngramApi } from "../src/api";
 import { ExplicitFolders } from "../src/explicit-folders";
 import { initRemoteLog, rlog } from "../src/remote-log";
 import { SyncEngine } from "../src/sync";
+import { joinReporter } from "../src/sync-diagnostics";
 import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -671,5 +672,26 @@ describe("forced diagnostics from the engine", () => {
 		await engine.handleRename(new TFolder("B", []), "A");
 		await engine.resetForVaultChange();
 		expect((await shipped()).filter((l) => l.startsWith("folder_renamed"))).toHaveLength(1);
+	});
+
+	test("a trailing-slash delete and a clean-path re-create address the SAME failed-delete entry", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("A/b/");
+		(mockApi.deleteFolder as jest.Mock).mockReset().mockRejectedValue({ status: 504 });
+		await engine.handleFolderDelete({ path: "A/b/" });
+		expect((engine as any).failedFolderDeletes.has("A/b")).toBe(true);
+		await engine.handleFolderCreate({ path: "A/b" }); // user re-makes it
+		expect((engine as any).failedFolderDeletes.size).toBe(0);
+	});
+
+	test("a vault switch and destroy reset the join reporter", async () => {
+		const { engine } = await createEngine();
+		joinReporter.rejected("plan_limit");
+		await engine.resetForVaultChange();
+		joinReporter.rejected("plan_limit"); // same reason inside the cooldown: logs only if reset
+		engine.destroy();
+		joinReporter.rejected("plan_limit");
+		const rejected = (await shipped()).filter((l) => l.startsWith("crdt_join_rejected"));
+		expect(rejected).toHaveLength(3);
 	});
 });

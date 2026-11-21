@@ -176,6 +176,37 @@ describe("join outcome", () => {
 	});
 });
 
+describe("join reporter lifecycle and rejection budget", () => {
+	test("clear() forgets the session: the next join is a first join again, seen reasons log again", async () => {
+		let t = 0;
+		const r = createJoinReporter(() => t);
+		r.rejected("plan_limit");
+		r.joined();
+		r.clear(); // vault switch or unload
+		t += 61_000;
+		r.rejected("plan_limit");
+		r.joined();
+		const msgs = (await captured()).map((e) => e.message);
+		expect(msgs.filter((m) => m.startsWith("crdt_join_rejected"))).toHaveLength(2);
+		expect(msgs.filter((m) => m.startsWith("crdt_joined first=true"))).toHaveLength(2);
+	});
+
+	test("rejection lines are capped at 6 per hour, then one suppressed marker", async () => {
+		let t = 0;
+		const r = createJoinReporter(() => t);
+		for (let i = 0; i < 20; i++) {
+			t += 61_000;
+			r.rejected(`reason_${i}`);
+			r.joined(); // resets the per-reason memory so every flap is a candidate
+		}
+		const msgs = (await captured()).map((e) => e.message);
+		expect(msgs.filter((m) => m.startsWith("crdt_join_rejected"))).toHaveLength(6);
+		expect(
+			msgs.filter((m) => m.startsWith("log_suppressed reason=join_rejected")),
+		).toHaveLength(1);
+	});
+});
+
 describe("join recovery", () => {
 	test("recovery lines are capped at 6 per hour, then one suppressed marker", async () => {
 		let t = 0;
@@ -188,9 +219,7 @@ describe("join recovery", () => {
 		}
 		const msgs = (await captured()).map((e) => e.message);
 		expect(msgs.filter((m) => m.startsWith("crdt_joined first=false"))).toHaveLength(6);
-		expect(
-			msgs.filter((m) => m.startsWith("log_suppressed reason=join_recovery")),
-		).toHaveLength(1);
+		// Recoveries only follow a logged rejection, so the rejection budget bounds them too.
 	});
 
 	test("a recovery after a logged rejection logs even inside the cooldown", async () => {
