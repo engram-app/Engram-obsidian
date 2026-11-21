@@ -970,7 +970,7 @@ export default class EngramSyncPlugin extends Plugin {
 		if (saved?.crdtOpQueue?.length) {
 			this.crdtOpQueue?.load(saved.crdtOpQueue);
 		}
-		if (saved?.folderOps?.length) this.syncEngine.folderOps.load(saved.folderOps);
+		if (saved?.folderOps?.length) this.syncEngine.restoreFolderOps(saved.folderOps);
 		this.refusalAccount = saved?.refusal?.account ?? null;
 		restoreRefusal(saved?.refusal, this.manifest.version, this.settings.userEmail ?? null);
 		this.syncEngine.restoreFolderIndex(saved?.folderIndex);

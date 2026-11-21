@@ -4098,6 +4098,27 @@ export class SyncEngine {
 		}, 1000);
 	}
 
+	/** Restore unanswered folder ops from plugin data, with the id-map claims
+	 *  each one had staged. Before the restart those claims sat in the map's
+	 *  overlay, held local until the op is answered (SyncStore.holdsCommit); a
+	 *  restart keeps only data.json's cache of them, which the server's
+	 *  committed claims (still the OLD paths until the op lands) outrank. Every
+	 *  note under the folder then resolved to its old path, and a flush between
+	 *  the op's ack and the server's re-key recreated it there (e2e test_107
+	 *  restart case, run 44655471041). Re-staged here, held like before. */
+	restoreFolderOps(ops: FolderOp[]): void {
+		this.folderOps.load(ops);
+		const ids = this.noteIdMap;
+		const pending = this.folderOps.all();
+		if (!ids || pending.length === 0) return;
+		const known = Object.entries(ids.toJSON());
+		ids.batch(() => {
+			for (const op of pending) {
+				for (const [path, id] of known) if (path.startsWith(`${op.to}/`)) ids.set(path, id);
+			}
+		});
+	}
+
 	/** Unanswered folder ops, for the wholesale plugin-data save. */
 	exportFolderOps(): FolderOp[] {
 		return this.folderOps.all();
@@ -6642,7 +6663,9 @@ export class SyncEngine {
 				.map((r) => ({ row: r, at: server.pathFor(r.id) }))
 				.filter((m): m is { row: FolderRow; at: string } => m.at !== null)
 				.sort((a, b) => a.at.split("/").length - b.at.split("/").length);
-			let local: Map<string, string> | null = null;
+			let direct: Map<string, { id: string; name: string; path: string }[]> | null = null;
+			let heldIn: Map<string, Set<string>> | null = null;
+			let serverPaths: Set<string> | null = null;
 			for (const { row, at } of moves) {
 				const here = this.folderOps.index.pathFor(row.id);
 				// A folder with OUR op pending: the manifest is the server's state
@@ -6655,11 +6678,21 @@ export class SyncEngine {
 					if (here !== at) await this.followFolderMoveOnDisk(row);
 					continue;
 				}
+				// Never learned here, but already at the server's path: in place,
+				// learn it so its children's moves can resolve (the rule
+				// followFolderMoveOnDisk applies to a live change).
+				if (this.app.vault.getAbstractFileByPath(at) instanceof TFolder) {
+					this.learnAncestors(row, server);
+					this.folderOps.index.set(row);
+					continue;
+				}
 				// Never learned here (made over REST, MCP or the web app): where its
 				// notes live on this device says where the folder is.
-				local ??= this.localFolderPaths(manifest);
-				const was = local.get(at);
-				if (was === undefined) continue;
+				direct ??= notesByFolder(manifest);
+				heldIn ??= this.serverFoldersByLocalFolder(manifest);
+				serverPaths ??= new Set(moves.map((m) => foldPath(m.at)));
+				const was = this.localPathForFolder(at, direct.get(at) ?? [], heldIn, serverPaths);
+				if (was === null || was === at) continue;
 				this.learnAncestors(row, server);
 				// The move's seq fences stale rows naming the old path: the live
 				// event's own, else the manifest's (the move is at or before it).
@@ -6670,31 +6703,67 @@ export class SyncEngine {
 		this.learnFolders(rows);
 	}
 
-	/** Server folder path -> this device's path for it, from the manifest notes:
-	 *  a note id this device holds at `X/rest` that the server lists at `S/rest`
-	 *  puts server folder `S` at `X` here. Keyed at the deepest differing
-	 *  folder only (a moved parent carries the rest). O(notes x depth), once
-	 *  per manifest. */
-	private localFolderPaths(manifest: ManifestResponse): Map<string, string> {
-		const out = new Map<string, string>();
-		if (!this.noteIdMap) return out;
+	/** Where a server folder this device never learned is here, from the
+	 *  notes the server lists DIRECTLY in it: X when EVERY one of them this
+	 *  device holds sits at `X/<its name>`, the same X for all, and at least
+	 *  one is held. Otherwise null, and the folder is not learned.
+	 *
+	 *  Exact on purpose: what this answers is followed on disk and its re-keys
+	 *  are published (rekeyMoved -> the id map -> the shared index the server
+	 *  projects rows from), so a wrong answer is a folder merge on every
+	 *  device. A path-tail match was that bug (e2e test_108 rename chain:
+	 *  `c/sub/n2.md` vs `other/sub/n2.md` read as c = other, and c merged into
+	 *  other). A nested match never counts: only direct children say where the
+	 *  folder itself is.
+	 *
+	 *  X must be gone from the server (a folder still listed at X did not
+	 *  move to S) and is never the vault root.
+	 *
+	 *  Both ways: every held note directly in X must also be listed directly
+	 *  in S. Notes moved one by one out of X into a new folder S would
+	 *  otherwise read as X = S, and the follow would carry X's other notes. */
+	private localPathForFolder(
+		at: string,
+		notes: { id: string; name: string; path: string }[],
+		heldIn: Map<string, Set<string>>,
+		serverPaths: Set<string>,
+	): string | null {
+		let x: string | null = null;
+		let held = 0;
+		for (const n of notes) {
+			const mine = this.fileOfNote(n.id, n.path);
+			if (mine === null || !this.app.vault.getFileByPath?.(mine)) continue;
+			const cut = mine.lastIndexOf("/");
+			if (mine.slice(cut + 1) !== n.name) return null;
+			const parent = cut < 0 ? "" : mine.slice(0, cut);
+			if (x !== null && parent !== x) return null;
+			x = parent;
+			held++;
+		}
+		// The vault root is never a folder that moved.
+		if (held === 0 || x === null || x === "") return null;
+		// X still a folder on the server: S cannot be X moved. A note moved out
+		// of a live folder would otherwise carry the whole folder (subfolders,
+		// local-only drafts) with it. Compared case- and NFC-folded, so a
+		// server `notes` also refuses a local `Notes`: this only refuses more.
+		if (serverPaths.has(foldPath(x))) return null;
+		const theirs = heldIn.get(x);
+		return theirs?.size === 1 && theirs.has(at) ? x : null;
+	}
+
+	/** Local folder -> the server folders its held notes are listed in
+	 *  directly, for `localPathForFolder`. O(notes), once per manifest. */
+	private serverFoldersByLocalFolder(manifest: ManifestResponse): Map<string, Set<string>> {
+		const out = new Map<string, Set<string>>();
 		for (const n of manifest.notes ?? []) {
 			if (!n.id) continue;
 			const mine = this.fileOfNote(n.id, n.path);
-			if (mine === null || mine === n.path) continue;
-			const a = mine.split("/");
-			const b = n.path.split("/");
-			let i = a.length - 1;
-			let j = b.length - 1;
-			while (i > 0 && j > 0 && a[i] === b[j]) {
-				i--;
-				j--;
-			}
-			// Only the file name differs (a note rename, not a folder move), or
-			// the paths share no tail at all.
-			if (i === a.length - 1) continue;
-			const s = b.slice(0, j + 1).join("/");
-			if (!out.has(s)) out.set(s, a.slice(0, i + 1).join("/"));
+			if (mine === null || !this.app.vault.getFileByPath?.(mine)) continue;
+			const local = mine.includes("/") ? mine.slice(0, mine.lastIndexOf("/")) : "";
+			const server = n.path.includes("/") ? n.path.slice(0, n.path.lastIndexOf("/")) : "";
+			const set = out.get(local) ?? new Set<string>();
+			set.add(server);
+			out.set(local, set);
 		}
 		return out;
 	}
@@ -16227,4 +16296,26 @@ function conflictCopyPath(normalized: string): string {
 	const ext = canvasPath(normalized) ? "canvas" : "md";
 	const base = normalized.replace(/\.(md|canvas)$/, "");
 	return `${base} (conflict ${stamp}).${ext}`;
+}
+
+/** A path compared without case or Unicode-normalization differences. */
+function foldPath(path: string): string {
+	return path.normalize("NFC").toLowerCase();
+}
+
+/** The manifest's notes grouped by their direct parent folder (server
+ *  paths), for `localPathForFolder`. O(notes), once per manifest. */
+function notesByFolder(
+	manifest: ManifestResponse,
+): Map<string, { id: string; name: string; path: string }[]> {
+	const out = new Map<string, { id: string; name: string; path: string }[]>();
+	for (const n of manifest.notes ?? []) {
+		if (!n.id) continue;
+		const cut = n.path.lastIndexOf("/");
+		const folder = cut < 0 ? "" : n.path.slice(0, cut);
+		const list = out.get(folder) ?? [];
+		list.push({ id: n.id, name: n.path.slice(cut + 1), path: n.path });
+		out.set(folder, list);
+	}
+	return out;
 }
