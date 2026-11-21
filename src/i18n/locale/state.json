@@ -416,7 +416,6 @@
 			"{count} retrying": "Sync Center badge: how many files are being retried after an error."
 		},
 		"failed": {
-			"The Engram server no longer accepts this plugin version. {versions} Changes made on this device stay here until you update.": "2026-11-19",
 			"{count} attachments skipped. See Sync Center.": "2026-11-12"
 		},
 		"glossary": {
@@ -961,10 +960,7 @@
 			"{count} need attention": "Sync Center badge: how many files need the user to act.",
 			"{count} retrying": "Sync Center badge: how many files are being retried after an error."
 		},
-		"failed": {
-			"Engram: {count} attachments skipped. See Sync Center for why.": "2026-11-12",
-			"{count} attachments skipped. See Sync Center.": "2026-11-12"
-		},
+		"failed": {},
 		"glossary": {
 			"Attachments": "附件",
 			"Ignore patterns": "忽略规则",
@@ -990,6 +986,7 @@
 			"Engram Sync: pushed {count} files": "Engram Sync: pushed {count} file",
 			"Engram: offline ({count} queued)": "Engram: offline ({count} queued)",
 			"Engram: plan upgraded — syncing {count} attachments…": "Engram: plan upgraded — syncing {count} attachment…",
+			"Engram: {count} attachments skipped. See Sync Center for why.": "Engram: {count} attachment skipped. See Sync Center for why.",
 			"Engram: {count} files failed to sync{detail} — open Sync Center": "Engram: {count} file failed to sync{detail} — open Sync Center",
 			"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.": "Engram: {count} note has frontmatter problems. Open Sync Center to fix.",
 			"Engram: ⚠ {count} sync errors": "Engram: ⚠ {count} sync error",
@@ -999,6 +996,7 @@
 			"Will download {count} files.": "Will download {count} file.",
 			"Will upload {count} files.": "Will upload {count} file.",
 			"{count} attachments": "{count} attachment",
+			"{count} attachments skipped. See Sync Center.": "{count} attachment skipped. See Sync Center.",
 			"{count} attachments will be skipped: this server only accepts text files.": "{count} attachment will be skipped: this server only accepts text files.",
 			"{count} attempts": "{count} attempt",
 			"{count} conflicts need resolution": "{count} conflict needs resolution",
