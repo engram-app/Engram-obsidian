@@ -407,7 +407,7 @@ describe("privacy — no content retention for export", () => {
 		// appends one. Neither loosens what is pinned: the payload object shape,
 		// the argument list and their order still have to match exactly.
 		const wireStatement =
-			/^(?:return)?this\.send\(\[this\.crdtJoinRef,[^{}]*\{\s*doc_id:\s*docId,\s*b64\s*\},?\]\);$/;
+			/^(?:return)?this\.send\(\[this\.crdtJoinRef,[^{}]*\{\s*doc_id:\s*docId,\s*b64,\s*\.\.\.this\.fileTimes\(docId\)\s*\},?\]\);$/;
 
 		// The per-vault index room's wire send (#362). A SECOND exact form rather
 		// than a loosened first one: it differs only by having no doc_id — there
@@ -435,7 +435,7 @@ describe("privacy — no content retention for export", () => {
 		// closing `;` — matched here as one literal block, same "exact text,
 		// not a loosened anchor" principle as the other two.
 		const crdtCreateWireStatement =
-			/^asynccrdtCreate\(docId:string,path:string,b64\?:string\):Promise<CrdtCreateResult>\{constres=\(awaitthis\.sendRequest\("",\{doc_id:docId,path,\.\.\.\(b64===undefined\?\{\}:\{b64\}\),\}\)\)asCrdtCreateReply;$/;
+			/^asynccrdtCreate\(docId:string,path:string,b64\?:string\):Promise<CrdtCreateResult>\{constres=\(awaitthis\.sendRequest\("",\{doc_id:docId,path,\.\.\.\(b64===undefined\?\{\}:\{b64\}\),\.\.\.this\.fileTimes\(docId,path\),\}\)\)asCrdtCreateReply;$/;
 
 		// The FOURTH legitimate wire send (#1493): `NoteChannel.crdtDocUpdate`'s
 		// room-free delivery of a queued edit. Like `crdtCreate` it is a plain
@@ -451,7 +451,7 @@ describe("privacy — no content retention for export", () => {
 		// whole method signature: the forms are transcriptions of what the
 		// extractor actually produces, not of what the source looks like.
 		const crdtDocUpdateWireStatement =
-			/^asynccrdtDocUpdate\(docId:string,b64:string\):Promise<\{head:string\}>\{return\(awaitthis\.sendRequest\("",\{doc_id:docId,b64\}\)\)as\{head:string;$/;
+			/^asynccrdtDocUpdate\(docId:string,b64:string\):Promise<\{head:string\}>\{return\(awaitthis\.sendRequest\("",\{doc_id:docId,b64,\.\.\.this\.fileTimes\(docId\),\}\)\)as\{head:string;$/;
 
 		const findings: Finding[] = [];
 		for (const f of sources) {

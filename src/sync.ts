@@ -36,6 +36,7 @@ import { ECHO_COOLDOWN_MS } from "./echo-window";
 import { errMsg, isAlreadyGone, isHttpStatus, statusOf } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
+import { fileTimes } from "./file-times";
 import {
 	type FolderChange,
 	FolderIndex,
@@ -317,13 +318,6 @@ export async function reconcileColdStart(
 	// live sync until the user opens it. Enrollment is idempotent (once per
 	// session), so seeding paths pay nothing extra.
 	crdt.enroll?.(file.noteId);
-}
-
-/** File creation time in seconds (Obsidian reports ms), or undefined when the
- *  platform gives none (0/absent), so callers omit the key rather than send 0. */
-function fileCtimeSeconds(file: TFile): number | undefined {
-	const ms = file.stat?.ctime;
-	return ms !== undefined && ms > 0 ? ms / 1000 : undefined;
 }
 
 const CTIME_SWEEP_BATCH = 500;
@@ -4233,7 +4227,7 @@ export class SyncEngine {
 						this.isSyncable(f) && !this.isBinaryFile(f) && !this.shouldIgnore(f.path),
 				)
 				.flatMap((f: TFile) => {
-					const ctime = fileCtimeSeconds(f);
+					const ctime = fileTimes(f).ctime;
 					return ctime === undefined ? [] : [{ path: f.path, ctime }];
 				});
 			for (let i = 0; i < entries.length; i += CTIME_SWEEP_BATCH) {
@@ -4261,7 +4255,7 @@ export class SyncEngine {
 		const vaultId = this.settings.vaultId;
 		if (!vaultId || (this.ctimeSweepVaultId !== vaultId && !this.ctimeSweepRunning)) return;
 		const file = this.app.vault.getFileByPath(path);
-		const ctime = file ? fileCtimeSeconds(file) : undefined;
+		const ctime = file ? fileTimes(file).ctime : undefined;
 		if (ctime === undefined) return;
 		this.pendingCtimes.set(path, ctime);
 		if (this.ctimeFlushTimer !== null) return;
@@ -8471,7 +8465,7 @@ export class SyncEngine {
 				}
 				let resp: Awaited<ReturnType<EngramApi["pushNote"]>>;
 				try {
-					const ctime = fileCtimeSeconds(file);
+					const ctime = fileTimes(file).ctime;
 					resp =
 						ctime === undefined
 							? await this.api.pushNote(pushedPath, content, mtime)
@@ -16093,7 +16087,7 @@ export class SyncEngine {
 						}
 						content = await this.app.vault.cachedRead(file);
 						mtime = file.stat.mtime / 1000;
-						replayCtime = fileCtimeSeconds(file);
+						replayCtime = fileTimes(file).ctime;
 					}
 					// Mint-and-send the client id like a live push — and adopt the id
 					// the server echoes back. The replay path never adopted, so a

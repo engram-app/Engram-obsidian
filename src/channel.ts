@@ -2,6 +2,7 @@ import type { AuthProvider } from "./auth";
 import { expBackoff } from "./backoff";
 import { crdtOpFailureReason } from "./crdt-op-dispatch";
 import { errMsg } from "./error-util";
+import type { FileTimesResolver } from "./file-times";
 import type { FolderChange, FolderOp, FolderOpResult } from "./folder-ops";
 import { noteRef } from "./note-ref";
 import { pluginVersion } from "./plugin-version";
@@ -509,6 +510,14 @@ export class NoteChannel {
 		return this.vaultId ? `crdt:${this.userId}:${this.vaultId}` : null;
 	}
 
+	/** Times to attach to a note's create / edit messages (`file-times.ts`). Unset
+	 *  until main.ts wires the vault reader; unset sends none. */
+	private fileTimes: FileTimesResolver = () => ({});
+
+	setFileTimes(fn: FileTimesResolver): void {
+		this.fileTimes = fn;
+	}
+
 	/** Send a CRDT update frame on the crdt topic.
 	 *  Returns false without sending until the crdt: join is server-acked —
 	 *  a frame with a stale/absent join_ref is silently dropped server-side
@@ -548,7 +557,7 @@ export class NoteChannel {
 			String(++this.ref),
 			t,
 			"crdt_msg",
-			{ doc_id: docId, b64 },
+			{ doc_id: docId, b64, ...this.fileTimes(docId) },
 		]);
 	}
 
@@ -653,6 +662,7 @@ export class NoteChannel {
 			doc_id: docId,
 			path,
 			...(b64 === undefined ? {} : { b64 }),
+			...this.fileTimes(docId, path),
 		})) as CrdtCreateReply;
 		// Engram#2523 S4: the frame is main's. #2533 places by path and reads no
 		// folder id, so none is sent until a server stage reads one. The note's
@@ -766,7 +776,11 @@ export class NoteChannel {
 	 *  `unmatched_topic`-shaped one from a backend too old to know the frame.
 	 *  Convergence is the invariant; the room saving is the optimization. */
 	async crdtDocUpdate(docId: string, b64: string): Promise<{ head: string }> {
-		return (await this.sendRequest("crdt_doc_update", { doc_id: docId, b64 })) as {
+		return (await this.sendRequest("crdt_doc_update", {
+			doc_id: docId,
+			b64,
+			...this.fileTimes(docId),
+		})) as {
 			head: string;
 		};
 	}
