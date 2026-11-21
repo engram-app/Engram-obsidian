@@ -39,21 +39,23 @@ export function reportPlanLoadFailure(e: unknown): void {
 const JOIN_LOG_COOLDOWN_MS = 60_000;
 const MAX_REJECT_REASONS = 5;
 const MAX_RECOVERY_LINES_PER_HOUR = 6;
+const MAX_REJECT_LINES_PER_HOUR = 6;
 
 /** Outcome of the `crdt:` topic join. Logs what a query needs and nothing on
  *  the steady state: each distinct rejection reason once until a join
- *  succeeds (at most one per cooldown window), the first join of the session,
- *  and the recovery after a rejection that was actually logged. The recovery
- *  always logs: it is the state transition an incident needs, and it can only
- *  follow a rejection line, so it cannot add to the flap bound. Worst case is
- *  2 lines per cooldown window. */
+ *  succeeds (one per cooldown window, 6 per hour), the first join of the
+ *  session, and the recovery after a rejection that was actually logged (also
+ *  6 per hour). Both hourly caps use the shared line budget, which emits one
+ *  `log_suppressed` marker past the cap. `clear` forgets the session: register
+ *  it with the owner's sweep registry so a vault switch starts clean. */
 export function createJoinReporter(now: () => number = Date.now) {
 	let everJoined = false;
 	let rejections = 0;
 	let rejectionLogged = false;
 	let lastLoggedAt = Number.NEGATIVE_INFINITY;
 	const seen = new Set<string>();
-	const takeRecovery = createLineBudget(now, MAX_RECOVERY_LINES_PER_HOUR, "join_recovery");
+	let takeRecovery = createLineBudget(now, MAX_RECOVERY_LINES_PER_HOUR, "join_recovery");
+	let takeRejection = createLineBudget(now, MAX_REJECT_LINES_PER_HOUR, "join_rejected");
 	// A backward clock jump counts as elapsed, never as "still cooling down".
 	const due = () => {
 		const t = now();
@@ -77,11 +79,21 @@ export function createJoinReporter(now: () => number = Date.now) {
 		rejected(reason: string | undefined, min?: number): void {
 			const slug = slugPart(reason);
 			rejections += 1;
-			if (seen.has(slug) || seen.size >= MAX_REJECT_REASONS || !due()) return;
+			if (seen.has(slug) || seen.size >= MAX_REJECT_REASONS || !due() || !takeRejection())
+				return;
 			seen.add(slug);
 			rejectionLogged = true;
 			const counts: AnomalyCounts = min !== undefined && Number.isFinite(min) ? { min } : {};
 			rlog().anomaly("crdt", "crdt_join_rejected", counts, slug);
+		},
+		clear(): void {
+			everJoined = false;
+			rejections = 0;
+			rejectionLogged = false;
+			lastLoggedAt = Number.NEGATIVE_INFINITY;
+			seen.clear();
+			takeRecovery = createLineBudget(now, MAX_RECOVERY_LINES_PER_HOUR, "join_recovery");
+			takeRejection = createLineBudget(now, MAX_REJECT_LINES_PER_HOUR, "join_rejected");
 		},
 	};
 }
