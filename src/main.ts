@@ -64,7 +64,7 @@ import { notifyLimitExceeded } from "./limit-toast";
 import { parsePlanState } from "./plan-state";
 import { atomicWriteJson, resilientReadJson } from "./plugin-data-io";
 import { setPluginVersion } from "./plugin-version";
-import { DEFAULT_LINE_BUDGET, destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
+import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
 import { SearchModal } from "./search-modal";
 import { SEARCH_VIEW_TYPE, SearchView } from "./search-view";
 import { EngramSyncSettingTab } from "./settings";
@@ -705,7 +705,7 @@ export default class EngramSyncPlugin extends Plugin {
 			Platform.isMobile ? "mobile" : "desktop",
 		);
 		remoteLogger.setLevelThreshold(this.settings.remoteLogLevel);
-		remoteLogger.setLineBudget(this.settings.remoteLogBudget ?? DEFAULT_LINE_BUDGET);
+		remoteLogger.setUnlimited(this.settings.remoteLogBudget === 0);
 		remoteLogger.setEnabled(this.settings.diagnosticsEnabled);
 		// Diagnostics expires on its own (reconcileDiagnosticsWindow); a desktop
 		// session can stay open for days, so check while running, not just on load.

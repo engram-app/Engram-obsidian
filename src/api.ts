@@ -22,7 +22,7 @@ import { BeaconBuffer } from "./observability/beacon";
 import { newTraceContext } from "./observability/traceGen";
 import type { BillingUsage } from "./plan-usage";
 import { pluginVersion } from "./plugin-version";
-import { type RemoteLogEntry, rlog } from "./remote-log";
+import { type PushLogsResult, type RemoteLogEntry, rlog } from "./remote-log";
 import type {
 	AttachmentDetail,
 	AttachmentResponse,
@@ -405,20 +405,23 @@ export class EngramApi {
 					if (this.noteIfUpgradeRequired(e2, retryStatus, method, path)) {
 						throw retryStatus === 403 ? upgradeRequiredError() : e2;
 					}
-					rlog().warn(
-						"api",
-						`${method} ${beaconRoute(path)} failed after 401 retry — status=${retryStatus ?? "none"} vault=${this.vaultId ?? "none"}`,
-					);
+					if (path !== LOGS_ROUTE)
+						rlog().warn(
+							"api",
+							`${method} ${beaconRoute(path)} failed after 401 retry — status=${retryStatus ?? "none"} vault=${this.vaultId ?? "none"}`,
+						);
 					throw e2;
 				}
 			}
 			// Log every non-2xx with method/status/vault so failures are legible
 			// (a 404 here meaning "token's user doesn't own this vault" is easy
 			// to misread as a missing note otherwise). Token itself is never logged.
-			rlog().warn(
-				"api",
-				`${method} ${beaconRoute(path)} failed — status=${status ?? "none"} vault=${this.vaultId ?? "none"}`,
-			);
+			// Never for the log push itself: its failure would feed its own buffer.
+			if (path !== LOGS_ROUTE)
+				rlog().warn(
+					"api",
+					`${method} ${beaconRoute(path)} failed — status=${status ?? "none"} vault=${this.vaultId ?? "none"}`,
+				);
 			throw e;
 		}
 	}
@@ -978,8 +981,14 @@ export class EngramApi {
 	/** Push batched log entries to the server for remote debugging. Typed as
 	 *  the real wire shape — an inline copy of it here had already drifted
 	 *  (missing conn_id/device_id/vault_id/seq that ARE sent). */
-	async pushLogs(entries: RemoteLogEntry[]): Promise<void> {
-		await this.request("POST", "/logs", { logs: entries });
+	async pushLogs(entries: RemoteLogEntry[]): Promise<PushLogsResult | undefined> {
+		const resp = await this.request("POST", LOGS_ROUTE, { logs: entries });
+		// Accepted either way; an unreadable body only means no throttle hint.
+		try {
+			return resp.json as PushLogsResult | undefined;
+		} catch {
+			return undefined;
+		}
 	}
 
 	// --- Explicit folder markers (kind='folder' rows) ---
@@ -1080,6 +1089,9 @@ export function beaconRoute(path: string): string {
 function vaultHeader(vaultId: string | null): Record<string, string> {
 	return vaultId ? { "X-Vault-ID": vaultId } : {};
 }
+
+/** The remote logger's endpoint. Its failures are never logged remotely. */
+const LOGS_ROUTE = "/logs";
 
 function throwIfHttpError(resp: RequestUrlResponse): RequestUrlResponse {
 	if (resp.status < 400) return resp;
