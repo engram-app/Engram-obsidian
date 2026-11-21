@@ -359,6 +359,10 @@ const es: Dict = {
 	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
 		"Vincula Claude, Cursor, ChatGPT o cualquier aplicación MCP para que pueda leer y escribir tus notas ",
 	"Link Obsidian to Engram": "Conecta Obsidian a Engram",
+	"Live sync did not connect in time. Try again in a moment.":
+		"La sincronización en tiempo real no se conectó a tiempo. Inténtalo de nuevo en un momento.",
+	"Live sync was refused for this account, so the comparison can't run. Check your plan or update the plugin.":
+		"La sincronización en tiempo real fue rechazada para esta cuenta, por lo que la comparación no se puede ejecutar. Verifica tu plan o actualiza el plugin.",
 	"Loading vaults…": "Cargando bóvedas…",
 	"Love it": "Me encanta",
 	"Make new vault": "Crear nueva bóveda",
@@ -379,6 +383,8 @@ const es: Dict = {
 	"No results found": "No se encontraron resultados",
 	"No source path for this result": "No hay ruta de origen para este resultado",
 	"No sync activity this session.": "No hay actividad de sincronización en esta sesión.",
+	"No vault is selected. Pick a vault in Engram settings.":
+		"No se ha seleccionado ninguna bóveda. Elige una bóveda en la configuración de Engram.",
 	"No vaults found — first sync will create one":
 		"No se encontraron bóvedas — la primera sincronización creará una",
 	"Node.js dependencies": "Dependencias de Node.js",
@@ -578,6 +584,8 @@ const es: Dict = {
 		"El servidor perdió el contenido almacenado de este archivo e intentará restaurarlo. Nada se modificó en este dispositivo.",
 	"The server took too long to respond. Try again.":
 		"El servidor tardó demasiado en responder. Inténtalo de nuevo.",
+	"The vault changed while loading. Close this and try again.":
+		"La bóveda cambió mientras se cargaba. Cierra esto e inténtalo de nuevo.",
 	"These files are fine. Each card below says why they did not sync.":
 		"Estos archivos están bien. Cada tarjeta a continuación explica por qué no se sincronizaron.",
 	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":

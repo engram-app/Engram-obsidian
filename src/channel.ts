@@ -5,6 +5,7 @@ import { errMsg } from "./error-util";
 import type { FolderChange, FolderOp, FolderOpResult } from "./folder-ops";
 import { noteRef } from "./note-ref";
 import { pluginVersion } from "./plugin-version";
+import { PreviewUnavailableError } from "./preview-error";
 import { rlog } from "./remote-log";
 import { markAdmitted, notifyUpgradeRequired, parseRefusal } from "./upgrade-required";
 
@@ -153,7 +154,7 @@ export function makeCrdtCatchupSender(
 ) => ReturnType<NoteChannel["crdtCatchupSince"]> {
 	return (cursorSeq, limit, cursorId) => {
 		if (channel.getVaultId() !== currentVaultId()) {
-			throw new Error("Sync preview needs the live socket (vault switching)");
+			throw new PreviewUnavailableError("identity_mismatch");
 		}
 		return channel.crdtCatchupSince(cursorSeq, limit, cursorId);
 	};

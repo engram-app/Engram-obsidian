@@ -13,7 +13,10 @@ import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:t
 import { TFile, TFolder } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { ExplicitFolders } from "../src/explicit-folders";
+import { initRemoteLog, rlog } from "../src/remote-log";
 import { SyncEngine } from "../src/sync";
+import { joinReporter } from "../src/sync-diagnostics";
+import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 // --- Minimal API mock (only folder methods are exercised) ---
@@ -404,4 +407,291 @@ describe("SyncEngine.seedEmptyFolders", () => {
 // documentation of the engine's folder contract.
 test("module loaded", () => {
 	expect(TFile).toBeDefined();
+});
+
+// ---------------------------------------------------------------------------
+// Mobile incident 2026-11-16: 429 hammering + failed delete resurrecting
+// ---------------------------------------------------------------------------
+
+describe("seedEmptyFolders rate limiting", () => {
+	const rateLimited = () =>
+		Object.assign(new Error("Request failed, status 429"), {
+			status: 429,
+			headers: { "Retry-After": "30" },
+		});
+
+	test("a 429 stops the pass and the next pass waits out the cooldown", async () => {
+		const { engine } = await createEngine();
+		mockApp.vault.getAllLoadedFiles = mock().mockReturnValue([
+			new TFolder("A", []),
+			new TFolder("B", []),
+			new TFolder("C", []),
+		]);
+		(mockApi.createFolder as jest.Mock).mockReset().mockRejectedValue(rateLimited());
+
+		await engine.seedEmptyFolders();
+		expect(mockApi.createFolder).toHaveBeenCalledTimes(1); // not 3
+		await engine.seedEmptyFolders(); // next catch-up pass, immediately
+		expect(mockApi.createFolder).toHaveBeenCalledTimes(1); // still cooling down
+	});
+});
+
+describe("syncExplicitFolders vs a failed local folder delete", () => {
+	test("does not recreate a folder whose server delete failed; retries the delete", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("Gone");
+		(mockApi.deleteFolder as jest.Mock)
+			.mockReset()
+			.mockRejectedValueOnce(new Error("Request timed out after 15000ms"))
+			.mockResolvedValue(undefined);
+		await engine.handleFolderDelete({ path: "Gone" });
+		// server never processed the delete, so it still lists the marker
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValue(["Gone"]);
+		mockApp.vault.createFolder.mockClear();
+
+		await engine.resyncFolders();
+
+		expect(mockApp.vault.createFolder).not.toHaveBeenCalledWith("Gone");
+		expect(mockApi.deleteFolder).toHaveBeenCalledTimes(2);
+	});
+
+	test("a server-listed empty/slash-only name never creates a folder", async () => {
+		const { engine } = await createEngine();
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValue(["", "/", "ok//sub"]);
+		mockApp.vault.createFolder.mockClear();
+
+		await engine.resyncFolders();
+
+		expect(mockApp.vault.createFolder.mock.calls.map((c: any[]) => c[0])).toEqual([
+			"ok",
+			"ok/sub",
+		]);
+	});
+});
+
+describe("failed-delete and seed-cooldown memory lifecycle", () => {
+	async function failDelete(engine: SyncEngine, explicit: ExplicitFolders) {
+		await explicit.add("Gone");
+		(mockApi.deleteFolder as jest.Mock)
+			.mockReset()
+			.mockRejectedValueOnce(new Error("Request timed out after 15000ms"))
+			.mockResolvedValue(undefined);
+		await engine.handleFolderDelete({ path: "Gone" });
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValue(["Gone"]);
+	}
+
+	test("recreating the folder locally clears the memory: its marker is not deleted", async () => {
+		const { engine, explicit } = await createEngine();
+		await failDelete(engine, explicit);
+		await engine.handleFolderCreate({ path: "Gone" });
+		mockApp.vault.getAbstractFileByPath.mockImplementation((p: string) =>
+			p === "Gone" ? new TFolder("Gone", []) : null,
+		);
+		await engine.resyncFolders();
+		expect(mockApi.deleteFolder).toHaveBeenCalledTimes(1); // only the failed one
+	});
+
+	test("renaming a folder onto the path clears the memory", async () => {
+		const { engine, explicit } = await createEngine();
+		await failDelete(engine, explicit);
+		await engine.handleRename(new TFolder("Gone", []), "Old");
+		mockApp.vault.getAbstractFileByPath.mockImplementation((p: string) =>
+			p === "Gone" ? new TFolder("Gone", []) : null,
+		);
+		await engine.resyncFolders();
+		expect(mockApi.deleteFolder).toHaveBeenCalledTimes(1);
+	});
+
+	test("never deletes the marker of a folder that exists on disk", async () => {
+		const { engine, explicit } = await createEngine();
+		await failDelete(engine, explicit);
+		mockApp.vault.getAbstractFileByPath.mockImplementation((p: string) =>
+			p === "Gone" ? new TFolder("Gone", []) : null,
+		);
+		await engine.resyncFolders();
+		expect(mockApi.deleteFolder).toHaveBeenCalledTimes(1);
+	});
+
+	test("a vault switch forgets failed deletes", async () => {
+		const { engine, explicit } = await createEngine();
+		await failDelete(engine, explicit);
+		await engine.resetForVaultChange();
+		await engine.resyncFolders();
+		expect(mockApi.deleteFolder).toHaveBeenCalledTimes(1);
+	});
+
+	test("a vault switch ends the seed cooldown", async () => {
+		const { engine } = await createEngine();
+		mockApp.vault.getAllLoadedFiles = mock().mockReturnValue([new TFolder("A", [])]);
+		(mockApi.createFolder as jest.Mock)
+			.mockReset()
+			.mockRejectedValueOnce(Object.assign(new Error("429"), { status: 429 }))
+			.mockResolvedValue({});
+		await engine.seedEmptyFolders();
+		await engine.resetForVaultChange();
+		await engine.seedEmptyFolders();
+		expect(mockApi.createFolder).toHaveBeenCalledTimes(2);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Always-on outcome lines (Loki-diagnosable mobile reports)
+// ---------------------------------------------------------------------------
+
+describe("forced diagnostics from the engine", () => {
+	let lines: string[] = [];
+	beforeEach(() => {
+		lines = [];
+		initRemoteLog().configure(
+			async (entries) => {
+				lines.push(...entries.map((e) => e.message));
+			},
+			"1.0.0",
+			"mobile",
+		);
+	});
+	const shipped = async () => {
+		await rlog().flush();
+		return lines;
+	};
+
+	test("a folder rename is logged with counts, never the path", async () => {
+		const { engine } = await createEngine();
+		await engine.handleRename(
+			new TFolder("Projects/New", [new TFile("Projects/New/a.md")]),
+			"Projects/Old",
+		);
+		(engine as any).folderRenames.clear();
+		expect(await shipped()).toContain(
+			"folder_renamed children=1 descendants=0 same_parent=true depth_from=2 depth_to=2",
+		);
+	});
+
+	test("a 429 on folder seeding logs the cooldown and what the server asked", async () => {
+		const { engine } = await createEngine();
+		mockApp.vault.getAllLoadedFiles = mock().mockReturnValue([new TFolder("A", [])]);
+		(mockApi.createFolder as jest.Mock).mockReset().mockRejectedValue(
+			Object.assign(new Error("Request failed, status 429"), {
+				status: 429,
+				headers: { "Retry-After": "30" },
+			}),
+		);
+		await engine.seedEmptyFolders();
+		expect(await shipped()).toContain(
+			"rate_limited reason=folder_seed streak=1 wait_s=30 retry_after_s=30",
+		);
+	});
+
+	test("a failed folder delete logs status and how many are pending", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("Gone");
+		(mockApi.deleteFolder as jest.Mock).mockReset().mockRejectedValue({ status: 504 });
+		await engine.handleFolderDelete({ path: "Gone" });
+		expect(await shipped()).toContain("folder_delete_failed pending=1 status=504");
+	});
+
+	test("gate transitions log once per change with their reason", async () => {
+		const { engine } = await createEngine();
+		engine.setSyncBlocked(true, "vault_switch");
+		engine.setSyncBlocked(true, "vault_switch"); // no change, no line
+		engine.setSyncBlocked(false, "user_accepted");
+		const gate = (await shipped()).filter((l) => l.startsWith("sync_gate_"));
+		expect(gate).toEqual([
+			"sync_gate_closed reason=vault_switch",
+			expect.stringMatching(/^sync_gate_open reason=user_accepted waited_s=\d+$/),
+		] as string[]);
+	});
+
+	test("a folder delete that stays failed logs ONCE across N pull cycles, and once when it clears", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("Gone");
+		(mockApi.deleteFolder as jest.Mock).mockReset().mockRejectedValue({ status: 504 });
+		await engine.handleFolderDelete({ path: "Gone" });
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValue(["Gone"]);
+		for (let i = 0; i < 5; i++) await engine.resyncFolders(); // retries keep failing
+		let out = (await shipped()).filter((l) => l.startsWith("folder_delete_"));
+		expect(out).toEqual(["folder_delete_failed pending=1 status=504"]);
+		(mockApi.deleteFolder as jest.Mock).mockReset().mockResolvedValue(undefined);
+		await engine.resyncFolders();
+		await engine.resyncFolders();
+		out = (await shipped()).filter((l) => l.startsWith("folder_delete_"));
+		expect(out).toEqual([
+			"folder_delete_failed pending=1 status=504",
+			"folder_delete_cleared pending=0",
+		]);
+	});
+
+	test("folder seeding logs the 429 once per streak, not once per 429", async () => {
+		const { engine } = await createEngine();
+		mockApp.vault.getAllLoadedFiles = mock().mockReturnValue([new TFolder("A", [])]);
+		(mockApi.createFolder as jest.Mock)
+			.mockReset()
+			.mockRejectedValue(
+				Object.assign(new Error("429"), { status: 429, headers: { "Retry-After": "1" } }),
+			);
+		const clock = { now: 1_000_000 };
+		(engine as any).time = { ...(engine as any).time, now: () => clock.now };
+		for (let i = 0; i < 6; i++) {
+			await engine.seedEmptyFolders();
+			clock.now += 60_000; // cooldown elapsed, 429 again
+		}
+		expect((await shipped()).filter((l) => l.startsWith("rate_limited"))).toHaveLength(1);
+		(mockApi.createFolder as jest.Mock).mockReset().mockResolvedValue({});
+		await engine.seedEmptyFolders();
+		expect((await shipped()).filter((l) => l.startsWith("rate_limit_cleared"))).toHaveLength(1);
+	});
+
+	test("destroy flushes a pending rename line and leaves no live timer", async () => {
+		const clock = new ManualTimeProvider();
+		const engine = new SyncEngine(
+			mockApp,
+			mockApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 10 },
+			mockSaveData,
+			clock,
+		);
+		engine.setReady();
+		await engine.handleRename(new TFolder("B", []), "A");
+		expect(await shipped()).toHaveLength(0); // still inside the burst window
+		engine.destroy();
+		expect((await shipped()).filter((l) => l.startsWith("folder_renamed"))).toHaveLength(1);
+		expect((clock as any).pending.size).toBe(0);
+	});
+
+	test("a vault switch flushes a pending rename line", async () => {
+		const clock = new ManualTimeProvider();
+		const engine = new SyncEngine(
+			mockApp,
+			mockApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 10 },
+			mockSaveData,
+			clock,
+		);
+		engine.setReady();
+		activeEngines.push(engine);
+		await engine.handleRename(new TFolder("B", []), "A");
+		await engine.resetForVaultChange();
+		expect((await shipped()).filter((l) => l.startsWith("folder_renamed"))).toHaveLength(1);
+	});
+
+	test("a trailing-slash delete and a clean-path re-create address the SAME failed-delete entry", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("A/b/");
+		(mockApi.deleteFolder as jest.Mock).mockReset().mockRejectedValue({ status: 504 });
+		await engine.handleFolderDelete({ path: "A/b/" });
+		expect((engine as any).failedFolderDeletes.has("A/b")).toBe(true);
+		await engine.handleFolderCreate({ path: "A/b" }); // user re-makes it
+		expect((engine as any).failedFolderDeletes.size).toBe(0);
+	});
+
+	test("a vault switch and destroy reset the join reporter", async () => {
+		const { engine } = await createEngine();
+		joinReporter.rejected("plan_limit");
+		await engine.resetForVaultChange();
+		joinReporter.rejected("plan_limit"); // same reason inside the cooldown: logs only if reset
+		engine.destroy();
+		joinReporter.rejected("plan_limit");
+		const rejected = (await shipped()).filter((l) => l.startsWith("crdt_join_rejected"));
+		expect(rejected).toHaveLength(3);
+	});
 });

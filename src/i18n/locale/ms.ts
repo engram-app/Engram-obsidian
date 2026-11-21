@@ -298,6 +298,10 @@ const ms: Dict = {
 	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
 		"Hubungkan Claude, Cursor, ChatGPT, atau sebarang aplikasi MCP supaya ia boleh membaca dan menulis nota anda ",
 	"Link Obsidian to Engram": "Sambungkan Obsidian ke Engram",
+	"Live sync did not connect in time. Try again in a moment.":
+		"Proses sync langsung tidak dapat disambungkan. Cuba lagi sebentar lagi.",
+	"Live sync was refused for this account, so the comparison can't run. Check your plan or update the plugin.":
+		"Proses sync langsung ditolak untuk akaun ini, jadi perbandingan tidak dapat dijalankan. Semak pelan anda atau kemas kini plugin.",
 	"Loading vaults…": "Memuatkan peti nota…",
 	"Love it": "Sangat suka",
 	"Make new vault": "Buat peti nota baharu",
@@ -318,6 +322,8 @@ const ms: Dict = {
 	"No results found": "Tiada hasil ditemui",
 	"No source path for this result": "Tiada laluan sumber untuk hasil ini",
 	"No sync activity this session.": "Tiada aktiviti sync pada sesi ini.",
+	"No vault is selected. Pick a vault in Engram settings.":
+		"Tiada peti nota dipilih. Pilih peti nota dalam tetapan Engram.",
 	"No vaults found — first sync will create one":
 		"Tiada peti nota ditemui — sync pertama akan mencipta satu",
 	"Node.js dependencies": "Ketergantungan Node.js",
@@ -513,6 +519,8 @@ const ms: Dict = {
 		"Pelayan telah kehilangan kandungan fail ini dan akan cuba memulihkannya. Tiada apa yang berubah pada peranti ini.",
 	"The server took too long to respond. Try again.":
 		"Pelayan mengambil masa terlalu lama untuk menjawab. Cuba lagi.",
+	"The vault changed while loading. Close this and try again.":
+		"Peti nota berubah semasa memuatkan. Tutup dan cuba lagi.",
 	"These files are fine. Each card below says why they did not sync.":
 		"Fail-fail ini adalah betul. Setiap kad di bawah menyatakan mengapa ia tidak disegerakkan.",
 	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":

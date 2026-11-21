@@ -274,6 +274,9 @@ const zh: Dict = {
 	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
 		"连接 Claude、Cursor、ChatGPT 或任何 MCP 应用，使其可以读取和写入您的笔记",
 	"Link Obsidian to Engram": "将Obsidian链接到Engram",
+	"Live sync did not connect in time. Try again in a moment.": "实时同步未及时连接。请稍后重试。",
+	"Live sync was refused for this account, so the comparison can't run. Check your plan or update the plugin.":
+		"此账号的实时同步被拒绝，因此无法进行比较。请检查您的套餐或更新插件。",
 	"Loading vaults…": "正在加载知识库…",
 	"Love it": "喜欢",
 	"Make new vault": "创建新仓库",
@@ -293,6 +296,8 @@ const zh: Dict = {
 	"No results found": "未找到结果",
 	"No source path for this result": "此结果没有源路径",
 	"No sync activity this session.": "本次会话无同步活动。",
+	"No vault is selected. Pick a vault in Engram settings.":
+		"未选择任何仓库。在 Engram 设置中选择一个仓库。",
 	"No vaults found — first sync will create one": "未找到知识库 — 首次同步会创建",
 	"Node.js dependencies": "Node.js 依赖",
 	"Not configured": "未配置",
@@ -471,6 +476,8 @@ const zh: Dict = {
 	"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.":
 		"服务器丢失了该文件的内容，正在尝试恢复。本设备未做任何更改。",
 	"The server took too long to respond. Try again.": "服务器响应时间过长。请重试。",
+	"The vault changed while loading. Close this and try again.":
+		"加载时仓库发生变化。请关闭并重试。",
 	"These files are fine. Each card below says why they did not sync.":
 		"这些文件没问题。下方卡片说明了未同步的原因。",
 	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":

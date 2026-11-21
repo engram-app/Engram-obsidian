@@ -1066,6 +1066,8 @@ describe("op-log pager — contract shared by replay + enumerate", () => {
 	function makeEnumerableEngine(): SyncEngine {
 		const e = makeEngineWithCrdt({ closeDoc: () => {} });
 		e.setCrdtLiveCheck(() => true);
+		// enumerateServerState fails fast (no_vault) without a selected vault.
+		e.updateSettings({ ...DEFAULT_SETTINGS, vaultId: "v1", debounceMs: 1 });
 		return e;
 	}
 

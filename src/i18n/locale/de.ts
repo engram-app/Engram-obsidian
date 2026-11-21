@@ -334,6 +334,10 @@ const de: Dict = {
 	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
 		"Verbinde Claude, Cursor, ChatGPT oder jede andere MCP-App, damit sie deine Notizen lesen und schreiben kann ",
 	"Link Obsidian to Engram": "Verbinde Obsidian mit Engram",
+	"Live sync did not connect in time. Try again in a moment.":
+		"Die Live-Synchronisierung konnte nicht rechtzeitig hergestellt werden. Versuche es in einem Moment erneut.",
+	"Live sync was refused for this account, so the comparison can't run. Check your plan or update the plugin.":
+		"Die Live-Synchronisierung wurde für dieses Konto abgelehnt, daher kann der Vergleich nicht ausgeführt werden. Überprüfe deinen Plan oder aktualisiere das Plugin.",
 	"Loading vaults…": "Lade Vaults…",
 	"Love it": "Gefällt mir sehr",
 	"Make new vault": "Neuen Vault erstellen",
@@ -354,6 +358,8 @@ const de: Dict = {
 	"No results found": "Keine Ergebnisse gefunden",
 	"No source path for this result": "Kein Quellpfad für dieses Ergebnis",
 	"No sync activity this session.": "Keine Synchronisierungsaktivität in dieser Sitzung.",
+	"No vault is selected. Pick a vault in Engram settings.":
+		"Es wurde kein Vault ausgewählt. Wähle einen Vault in den Engram-Einstellungen.",
 	"No vaults found — first sync will create one":
 		"Keine Vaults gefunden – die erste Synchronisierung erstellt eines",
 	"Node.js dependencies": "Node.js-Abhängigkeiten",
@@ -550,6 +556,8 @@ const de: Dict = {
 		"Der Server hat den Inhalt dieser Datei verloren und versucht, ihn wiederherzustellen. Auf diesem Gerät wurden keine Änderungen vorgenommen.",
 	"The server took too long to respond. Try again.":
 		"Der Server hat zu lange zum Antworten gebraucht. Versuche es erneut.",
+	"The vault changed while loading. Close this and try again.":
+		"Der Vault hat sich während des Ladens geändert. Schließe das Fenster und versuche es erneut.",
 	"These files are fine. Each card below says why they did not sync.":
 		"Diese Dateien sind in Ordnung. Jede Karte unten erklärt, warum sie nicht synchronisiert wurden.",
 	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":
