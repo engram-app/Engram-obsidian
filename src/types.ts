@@ -50,15 +50,15 @@ export interface EngramSyncSettings {
 	diagnosticsEnabledAt: number | null;
 	/** Minimum severity that ships while `diagnosticsEnabled` is on. Entries
 	 *  below this threshold are dropped before buffering, so they never occupy
-	 *  the ring buffer or count toward the flush threshold. This is a VOLUME
+	 *  the ring buffer or spend send budget. This is a VOLUME
 	 *  dial, orthogonal to the on/off switch above. Default "warn": info and
 	 *  debug are an explicit choice, and reset to "warn" when diagnostics
 	 *  expires. */
 	remoteLogLevel: "error" | "warn" | "info" | "debug";
-	/** Remote log lines allowed per 10 minutes (remote-log.ts
-	 *  DEFAULT_LINE_BUDGET when absent). Not in the UI: the backend e2e suite
-	 *  seeds 0 (unlimited) because its oracle reads info lines from a
-	 *  session-long device. */
+	/** 0 lifts the remote logger's send budget and circuit breaker
+	 *  (remote-log.ts LOG_LIMITS); any other value or absent keeps them. Not in
+	 *  the UI: the backend e2e suite seeds 0 because its oracle reads info
+	 *  lines from a session-long device. */
 	remoteLogBudget?: number;
 	/** Server-assigned vault ID. Populated after registration. Null until first sync. */
 	vaultId: string | null;
