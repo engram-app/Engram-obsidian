@@ -162,6 +162,28 @@ describe("discoverAnnouncedNote (e2e test_27 — announce-driven immediate empty
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
 	});
 
+	test("stale pre-move announce does NOT repoint an id already mapped to an existing moved file", async () => {
+		// A newer cursor already mapped id-a to its moved path (file exists). A late
+		// announce still carrying the OLD path must not overwrite the map: that
+		// re-created the note at the old path (duplicate / second minted note).
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		const map = new NoteIdMap();
+		map.set("Notes/moved.md", "id-a");
+		engine.setNoteIdMap(map);
+		const prev = mockApp.vault.getAbstractFileByPath;
+		mockApp.vault.getAbstractFileByPath = mock((p: string) =>
+			p === "Notes/moved.md" ? new TFile("Notes/moved.md") : null,
+		);
+		engine.setCrdtCatchupSince(async () => ({ changes: [], has_more: false, next_seq: null }));
+		try {
+			await engine.discoverAnnouncedNote("id-a", "Notes/old.md");
+		} finally {
+			mockApp.vault.getAbstractFileByPath = prev;
+		}
+		expect(map.pathForId("id-a")).toBe("Notes/moved.md");
+		expect(map.get("Notes/old.md")).toBeFalsy();
+	});
+
 	test("never throws when the delta fetch fails (failure-isolated)", async () => {
 		const crdt = {
 			hasHistory: (_id: string) => Promise.resolve(false),
