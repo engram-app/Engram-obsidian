@@ -487,6 +487,8 @@ const ko: Dict = {
 		"Engram 서버는 더 이상 이 플러그인 버전을 지원하지 않습니다 (최소 {version} 이상 필요). 따라서 노트가 전송되거나 수신되지 않습니다. 이 장치에서 변경한 내용은 업데이트할 때까지 여기에 보관됩니다.",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Engram 서버는 더 이상 이 플러그인 버전을 지원하지 않습니다. 따라서 노트가 전송되거나 수신되지 않습니다. 이 장치에서 변경한 내용은 업데이트할 때까지 여기에 보관됩니다.",
+	"The Engram server no longer accepts this plugin version. {versions} Changes made on this device stay here until you update.":
+		"Engram 서버는 더 이상 이 플러그인 버전을 지원하지 않습니다. {versions} 이 장치에서 변경한 내용은 업데이트할 때까지 여기에서 유지됩니다.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"파일 크기가 서버 제한을 초과합니다. 압축하거나 분할한 후 동기화됩니다.",
 	"The file is too large for the server.": "파일 크기가 서버 용량을 초과합니다.",
@@ -607,6 +609,8 @@ const ko: Dict = {
 	"waiting for a plugin update": "플러그인 업데이트를 기다 중입니다",
 	"waiting to retry": "재시도 대기 중",
 	"{count} attachments": "{count}개의 첨부 파일",
+	"{count} attachments skipped. See Sync Center.":
+		"{count}개의 첨부 파일은 건너뜬. 자세한 내용은 동기화 센터에서 확인하세요.",
 	"{count} attachments will be skipped: this server only accepts text files.":
 		"{count}개의 첨부 파일은 건너뜁니다: 이 서버는 텍스트 파일만 허용합니다.",
 	"{count} attempts": "{count}회 시도",
