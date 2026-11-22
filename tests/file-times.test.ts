@@ -4,8 +4,11 @@
  * the helper that is the single reader of a file's stat.
  */
 import { beforeEach, describe, expect, test } from "bun:test";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { NoteChannel } from "../src/channel";
-import { fileTimes } from "../src/file-times";
+import { encodeUpdateFrame, toB64 } from "../src/crdt/wire";
+import { fileTimes, liveEditTimes, msToSeconds } from "../src/file-times";
 
 let lastWsInstance: any = null;
 
@@ -87,8 +90,8 @@ describe("file times on the wire", () => {
 	test("crdt_msg (edit frame) carries mtime and ctime", async () => {
 		const { channel, ws } = await joined();
 		channel.setFileTimes((docId) => (docId === "d1" ? times : {}));
-		expect(channel.sendCrdt("d1", "dGVzdA==")).toBe(true);
-		expect(frameOf(ws, "crdt_msg")[4]).toEqual({ doc_id: "d1", b64: "dGVzdA==", ...times });
+		expect(channel.sendCrdt("d1", updateFrame)).toBe(true);
+		expect(frameOf(ws, "crdt_msg")[4]).toEqual({ doc_id: "d1", b64: updateFrame, ...times });
 		channel.disconnect();
 	});
 
@@ -118,5 +121,125 @@ describe("file times on the wire", () => {
 			{ doc_id: "d2", b64: "dGVzdA==" },
 		]);
 		channel.disconnect();
+	});
+});
+
+// A real y-protocols frame: messageSync (0), then the sync sub-type, then an
+// empty payload. 0 = syncStep1, 2 = update (what a keystroke sends).
+const step1Frame = toB64(new Uint8Array([0, 0, 0]));
+const updateFrame = encodeUpdateFrame(new Uint8Array([0, 0]));
+
+describe("liveEditTimes", () => {
+	const file = { stat: { mtime: 1_700_000_001_500, ctime: 1_700_000_000_000 } };
+
+	test("a live edit never carries a time older than now (Obsidian saves ~2s later)", () => {
+		const nowMs = 1_700_000_100_999;
+		expect(liveEditTimes(file, nowMs)).toEqual({ mtime: 1_700_000_100, ctime: 1_700_000_000 });
+	});
+
+	test("a file time ahead of now wins; the server only moves mtime forward", () => {
+		expect(liveEditTimes(file, 1_700_000_000_000).mtime).toBe(1_700_000_001.5);
+	});
+
+	test("a file with no stat still carries now", () => {
+		expect(liveEditTimes(null, 5_000)).toEqual({ mtime: 5 });
+	});
+});
+
+describe("msToSeconds", () => {
+	test("is the one ms to seconds conversion", () => {
+		expect(msToSeconds(1500)).toBe(1.5);
+	});
+});
+
+describe("live edit frames use the live time, queued and create frames the file's own", () => {
+	const lookup = (docId: string, _path?: string, live?: boolean) => ({
+		mtime: live ? 200 : 100,
+		...(docId ? { ctime: 50 } : {}),
+	});
+
+	test("crdt_msg update frame asks for the live time", async () => {
+		const { channel, ws } = await joined();
+		channel.setFileTimes(lookup);
+		expect(channel.sendCrdt("d1", updateFrame)).toBe(true);
+		expect(frameOf(ws, "crdt_msg")[4]).toEqual({
+			doc_id: "d1",
+			b64: updateFrame,
+			mtime: 200,
+			ctime: 50,
+		});
+		channel.disconnect();
+	});
+
+	test("crdt_doc_update and crdt_create keep the file's own mtime", async () => {
+		const { channel, ws } = await joined();
+		channel.setFileTimes(lookup);
+		void channel.crdtDocUpdate("d1", "dGVzdA==").catch(() => {});
+		void channel.crdtCreate("d2", "A.md").catch(() => {});
+		expect((frameOf(ws, "crdt_doc_update")[4] as any).mtime).toBe(100);
+		expect((frameOf(ws, "crdt_create")[4] as any).mtime).toBe(100);
+		channel.disconnect();
+	});
+
+	test("a handshake frame (syncStep1) skips the lookup and carries no times", async () => {
+		const { channel, ws } = await joined();
+		let calls = 0;
+		channel.setFileTimes(() => {
+			calls++;
+			return { mtime: 1 };
+		});
+		expect(channel.sendCrdt("d1", step1Frame)).toBe(true);
+		expect(calls).toBe(0);
+		expect(frameOf(ws, "crdt_msg")[4]).toEqual({ doc_id: "d1", b64: step1Frame });
+		channel.disconnect();
+	});
+
+	test("a throwing lookup still sends every frame, without times", async () => {
+		const { channel, ws } = await joined();
+		channel.setFileTimes(() => {
+			throw new Error("stat blew up");
+		});
+		expect(channel.sendCrdt("d1", updateFrame)).toBe(true);
+		void channel.crdtDocUpdate("d1", "dGVzdA==").catch(() => {});
+		void channel.crdtCreate("d2", "A.md").catch(() => {});
+		expect(frameOf(ws, "crdt_msg")[4]).toEqual({ doc_id: "d1", b64: updateFrame });
+		expect(frameOf(ws, "crdt_doc_update")[4]).toEqual({ doc_id: "d1", b64: "dGVzdA==" });
+		expect(frameOf(ws, "crdt_create")[4]).toEqual({ doc_id: "d2", path: "A.md" });
+		channel.disconnect();
+	});
+});
+
+describe("one ms to seconds converter", () => {
+	function sources(dir: string): string[] {
+		return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+			e.isDirectory()
+				? sources(join(dir, e.name))
+				: e.name.endsWith(".ts")
+					? [join(dir, e.name)]
+					: [],
+		);
+	}
+
+	test("no source file but file-times.ts divides a file time by 1000", () => {
+		const offenders = sources("src")
+			.filter((f) => !f.endsWith("file-times.ts"))
+			.flatMap((f) =>
+				readFileSync(f, "utf8")
+					.split("\n")
+					.map((line, i) => ({ f, i: i + 1, line }))
+					.filter(({ line }) => /\b[mc]time(Ms)?\)?\s*\/\s*1000/.test(line)),
+			)
+			.map(({ f, i }) => `${f}:${i}`);
+		expect(offenders).toEqual([]);
+	});
+});
+
+describe("main.ts wires the real lookup", () => {
+	// The wiring sits inside plugin onload (no seam to call); pin its shape.
+	test("the resolver reads the vault file and picks the live time for live edits", () => {
+		const main = readFileSync("src/main.ts", "utf8");
+		expect(main).toMatch(/channel\.setFileTimes\(\(docId, path, live\) => \{/);
+		expect(main).toContain("this.app.vault.getFileByPath(p)");
+		expect(main).toContain("live ? liveEditTimes(file) : fileTimes(file)");
 	});
 });

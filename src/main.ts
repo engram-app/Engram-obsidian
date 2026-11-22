@@ -44,7 +44,7 @@ import { type CrdtOp, CrdtOpQueue, makeDropReporter } from "./crdt-op-queue";
 import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { isMarkdownPath } from "./file-kind";
-import { fileTimes } from "./file-times";
+import { fileTimes, liveEditTimes } from "./file-times";
 import type { FolderIndexSnapshot, FolderOp } from "./folder-ops";
 import { setLogSink } from "./has-logging";
 import { noteRef } from "./note-ref";
@@ -2939,9 +2939,10 @@ export default class EngramSyncPlugin extends Plugin {
 				this.noteStream = channel;
 				this.indexChannel = channel;
 				// Every create / edit message carries the file's own stat times.
-				channel.setFileTimes((docId, path) => {
+				channel.setFileTimes((docId, path, live) => {
 					const p = path ?? this.noteIdMap.pathForId(docId);
-					return fileTimes(p ? this.app.vault.getFileByPath(p) : null);
+					const file = p ? this.app.vault.getFileByPath(p) : null;
+					return live ? liveEditTimes(file) : fileTimes(file);
 				});
 				if (this.authProvider) {
 					// setAuthProbe already wired above at construction (same channel

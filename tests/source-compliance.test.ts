@@ -407,7 +407,7 @@ describe("privacy — no content retention for export", () => {
 		// appends one. Neither loosens what is pinned: the payload object shape,
 		// the argument list and their order still have to match exactly.
 		const wireStatement =
-			/^(?:return)?this\.send\(\[this\.crdtJoinRef,[^{}]*\{\s*doc_id:\s*docId,\s*b64,\s*\.\.\.this\.fileTimes\(docId\)\s*\},?\]\);$/;
+			/^(?:return)?this\.send\(\[this\.crdtJoinRef,[^{}]*\{\s*doc_id:\s*docId,\s*b64,\s*\.\.\.this\.editTimes\(docId,b64\)\s*\},?\]\);$/;
 
 		// The per-vault index room's wire send (#362). A SECOND exact form rather
 		// than a loosened first one: it differs only by having no doc_id — there

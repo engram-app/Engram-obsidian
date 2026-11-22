@@ -1,6 +1,7 @@
 // The one home for the y-protocols wire frame codec. Shared by the transport
 // (CrdtChannel, being retired) and NoteProvider so the bytes on
 // the wire are byte-identical and there is a single source of truth.
+import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import * as syncProtocol from "y-protocols/sync";
 
@@ -25,4 +26,18 @@ export function encodeUpdateFrame(update: Uint8Array): string {
 	encoding.writeVarUint(encoder, MESSAGE_SYNC);
 	syncProtocol.writeUpdate(encoder, update);
 	return toB64(encoding.toUint8Array(encoder));
+}
+
+/** True for a messageSync UPDATE frame (what an edit sends), false for a
+ *  handshake frame (syncStep1 / syncStep2) or anything that won't decode. */
+export function isUpdateFrame(b64: string): boolean {
+	try {
+		const decoder = decoding.createDecoder(fromB64(b64));
+		return (
+			decoding.readVarUint(decoder) === MESSAGE_SYNC &&
+			decoding.readVarUint(decoder) === syncProtocol.messageYjsUpdate
+		);
+	} catch {
+		return false;
+	}
 }

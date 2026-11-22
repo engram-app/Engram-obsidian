@@ -36,7 +36,7 @@ import { ECHO_COOLDOWN_MS } from "./echo-window";
 import { errMsg, isAlreadyGone, isHttpStatus, statusOf } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
-import { fileTimes } from "./file-times";
+import { fileTimes, msToSeconds } from "./file-times";
 import {
 	type FolderChange,
 	FolderIndex,
@@ -7846,7 +7846,7 @@ export class SyncEngine {
 		);
 
 		try {
-			const mtime = file.stat.mtime / 1000; // Obsidian uses ms, Engram uses seconds
+			const mtime = msToSeconds(file.stat.mtime); // Obsidian uses ms, Engram uses seconds
 			if (isBinary) {
 				const buffer = await this.app.vault.readBinary(file);
 				// Track attachments in syncState the same way notes are. Without
@@ -7962,7 +7962,7 @@ export class SyncEngine {
 								path: file.path,
 								action: "upsert",
 								kind: "note",
-								mtime: file.stat.mtime / 1000,
+								mtime: msToSeconds(file.stat.mtime),
 								timestamp: Date.now(),
 								vaultId: this.settings.vaultId ?? undefined,
 							});
@@ -8576,7 +8576,7 @@ export class SyncEngine {
 						path: file.path,
 						action: "upsert",
 						kind: "attachment",
-						mtime: file.stat.mtime / 1000,
+						mtime: msToSeconds(file.stat.mtime),
 						timestamp: Date.now(),
 						vaultId: this.settings.vaultId ?? undefined,
 					},
@@ -8637,7 +8637,7 @@ export class SyncEngine {
 					path: file.path,
 					action: "upsert",
 					kind: isBinary ? "attachment" : "note",
-					mtime: file.stat.mtime / 1000,
+					mtime: msToSeconds(file.stat.mtime),
 					timestamp: Date.now(),
 					vaultId: this.settings.vaultId ?? undefined,
 					...(force ? { forced: true } : {}),
@@ -14256,7 +14256,7 @@ export class SyncEngine {
 			action: "upsert",
 			noteId,
 			crdt: true,
-			mtime: file.stat.mtime / 1000,
+			mtime: msToSeconds(file.stat.mtime),
 			timestamp: Date.now(),
 			kind: "note",
 			vaultId: this.settings.vaultId ?? undefined,
@@ -15533,7 +15533,7 @@ export class SyncEngine {
 				path: issue.path,
 				action: "upsert",
 				kind: issue.kind,
-				mtime: file.stat.mtime / 1000,
+				mtime: msToSeconds(file.stat.mtime),
 				timestamp: Date.now(),
 				vaultId: this.settings.vaultId ?? undefined,
 			});
@@ -15945,7 +15945,7 @@ export class SyncEngine {
 						content = () => arrayBufferToBase64(read);
 						queuedHash = fnv1aBase64(read);
 						mimeType = this.getMimeType(file);
-						mtime = file.stat.mtime / 1000;
+						mtime = msToSeconds(file.stat.mtime);
 					}
 					// This drain had NO content guard at all, so a queue entry that
 					// failed to settle re-uploaded the same bytes on every flush —
@@ -16086,7 +16086,7 @@ export class SyncEngine {
 							continue;
 						}
 						content = await this.app.vault.cachedRead(file);
-						mtime = file.stat.mtime / 1000;
+						mtime = msToSeconds(file.stat.mtime);
 						replayCtime = fileTimes(file).ctime;
 					}
 					// Mint-and-send the client id like a live push — and adopt the id
