@@ -36,6 +36,7 @@ import { ECHO_COOLDOWN_MS } from "./echo-window";
 import { errMsg, isAlreadyGone, isHttpStatus, statusOf } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
+import { fileTimes, msToSeconds } from "./file-times";
 import {
 	type FolderChange,
 	FolderIndex,
@@ -317,13 +318,6 @@ export async function reconcileColdStart(
 	// live sync until the user opens it. Enrollment is idempotent (once per
 	// session), so seeding paths pay nothing extra.
 	crdt.enroll?.(file.noteId);
-}
-
-/** File creation time in seconds (Obsidian reports ms), or undefined when the
- *  platform gives none (0/absent), so callers omit the key rather than send 0. */
-function fileCtimeSeconds(file: TFile): number | undefined {
-	const ms = file.stat?.ctime;
-	return ms !== undefined && ms > 0 ? ms / 1000 : undefined;
 }
 
 const CTIME_SWEEP_BATCH = 500;
@@ -4233,7 +4227,7 @@ export class SyncEngine {
 						this.isSyncable(f) && !this.isBinaryFile(f) && !this.shouldIgnore(f.path),
 				)
 				.flatMap((f: TFile) => {
-					const ctime = fileCtimeSeconds(f);
+					const ctime = fileTimes(f).ctime;
 					return ctime === undefined ? [] : [{ path: f.path, ctime }];
 				});
 			for (let i = 0; i < entries.length; i += CTIME_SWEEP_BATCH) {
@@ -4261,7 +4255,7 @@ export class SyncEngine {
 		const vaultId = this.settings.vaultId;
 		if (!vaultId || (this.ctimeSweepVaultId !== vaultId && !this.ctimeSweepRunning)) return;
 		const file = this.app.vault.getFileByPath(path);
-		const ctime = file ? fileCtimeSeconds(file) : undefined;
+		const ctime = file ? fileTimes(file).ctime : undefined;
 		if (ctime === undefined) return;
 		this.pendingCtimes.set(path, ctime);
 		if (this.ctimeFlushTimer !== null) return;
@@ -7852,7 +7846,7 @@ export class SyncEngine {
 		);
 
 		try {
-			const mtime = file.stat.mtime / 1000; // Obsidian uses ms, Engram uses seconds
+			const mtime = msToSeconds(file.stat.mtime); // Obsidian uses ms, Engram uses seconds
 			if (isBinary) {
 				const buffer = await this.app.vault.readBinary(file);
 				// Track attachments in syncState the same way notes are. Without
@@ -7968,7 +7962,7 @@ export class SyncEngine {
 								path: file.path,
 								action: "upsert",
 								kind: "note",
-								mtime: file.stat.mtime / 1000,
+								mtime: msToSeconds(file.stat.mtime),
 								timestamp: Date.now(),
 								vaultId: this.settings.vaultId ?? undefined,
 							});
@@ -8471,7 +8465,7 @@ export class SyncEngine {
 				}
 				let resp: Awaited<ReturnType<EngramApi["pushNote"]>>;
 				try {
-					const ctime = fileCtimeSeconds(file);
+					const ctime = fileTimes(file).ctime;
 					resp =
 						ctime === undefined
 							? await this.api.pushNote(pushedPath, content, mtime)
@@ -8582,7 +8576,7 @@ export class SyncEngine {
 						path: file.path,
 						action: "upsert",
 						kind: "attachment",
-						mtime: file.stat.mtime / 1000,
+						mtime: msToSeconds(file.stat.mtime),
 						timestamp: Date.now(),
 						vaultId: this.settings.vaultId ?? undefined,
 					},
@@ -8643,7 +8637,7 @@ export class SyncEngine {
 					path: file.path,
 					action: "upsert",
 					kind: isBinary ? "attachment" : "note",
-					mtime: file.stat.mtime / 1000,
+					mtime: msToSeconds(file.stat.mtime),
 					timestamp: Date.now(),
 					vaultId: this.settings.vaultId ?? undefined,
 					...(force ? { forced: true } : {}),
@@ -14262,7 +14256,7 @@ export class SyncEngine {
 			action: "upsert",
 			noteId,
 			crdt: true,
-			mtime: file.stat.mtime / 1000,
+			mtime: msToSeconds(file.stat.mtime),
 			timestamp: Date.now(),
 			kind: "note",
 			vaultId: this.settings.vaultId ?? undefined,
@@ -15539,7 +15533,7 @@ export class SyncEngine {
 				path: issue.path,
 				action: "upsert",
 				kind: issue.kind,
-				mtime: file.stat.mtime / 1000,
+				mtime: msToSeconds(file.stat.mtime),
 				timestamp: Date.now(),
 				vaultId: this.settings.vaultId ?? undefined,
 			});
@@ -15951,7 +15945,7 @@ export class SyncEngine {
 						content = () => arrayBufferToBase64(read);
 						queuedHash = fnv1aBase64(read);
 						mimeType = this.getMimeType(file);
-						mtime = file.stat.mtime / 1000;
+						mtime = msToSeconds(file.stat.mtime);
 					}
 					// This drain had NO content guard at all, so a queue entry that
 					// failed to settle re-uploaded the same bytes on every flush —
@@ -16092,8 +16086,8 @@ export class SyncEngine {
 							continue;
 						}
 						content = await this.app.vault.cachedRead(file);
-						mtime = file.stat.mtime / 1000;
-						replayCtime = fileCtimeSeconds(file);
+						mtime = msToSeconds(file.stat.mtime);
+						replayCtime = fileTimes(file).ctime;
 					}
 					// Mint-and-send the client id like a live push — and adopt the id
 					// the server echoes back. The replay path never adopted, so a
