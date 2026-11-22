@@ -2957,7 +2957,8 @@ export default class EngramSyncPlugin extends Plugin {
 				channel.setFileTimes((docId, path, live) => {
 					const p = path ?? this.noteIdMap.pathForId(docId);
 					const file = p ? this.app.vault.getFileByPath(p) : null;
-					return live ? liveEditTimes(file) : fileTimes(file);
+					const isLiveBound = p ? (this.crdtLiveViews?.isBound(p) ?? false) : false;
+					return live ? liveEditTimes(file, isLiveBound) : fileTimes(file);
 				});
 				if (this.authProvider) {
 					// setAuthProbe already wired above at construction (same channel

@@ -29,10 +29,11 @@ export function encodeUpdateFrame(update: Uint8Array): string {
 }
 
 /** True for a messageSync UPDATE frame (what an edit sends), false for a
- *  handshake frame (syncStep1 / syncStep2) or anything that won't decode. */
+ *  handshake frame (syncStep1 / syncStep2) or anything that won't decode.
+ *  Reads only the first 3 bytes (4 base64 chars): a frame can be megabytes. */
 export function isUpdateFrame(b64: string): boolean {
 	try {
-		const decoder = decoding.createDecoder(fromB64(b64));
+		const decoder = decoding.createDecoder(fromB64(b64.slice(0, 4)));
 		return (
 			decoding.readVarUint(decoder) === MESSAGE_SYNC &&
 			decoding.readVarUint(decoder) === syncProtocol.messageYjsUpdate
