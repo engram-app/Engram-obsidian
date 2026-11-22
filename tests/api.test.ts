@@ -1515,6 +1515,31 @@ describe("EngramApi", () => {
 			const body = JSON.parse(opts.body);
 			expect(body.logs).toEqual(entries);
 		});
+
+		test("(d) a failed log push never logs into the remote log (no self-feeding)", async () => {
+			const warn = spyOn(rlog(), "warn");
+			try {
+				mockRequestUrl.mockResolvedValueOnce({ status: 500, text: "boom" } as any);
+				await expect(api.pushLogs([])).rejects.toMatchObject({ status: 500 });
+				mockRequestUrl.mockRejectedValueOnce(new Error("net::ERR_INTERNET_DISCONNECTED"));
+				await expect(api.pushLogs([])).rejects.toThrow();
+				expect(warn).not.toHaveBeenCalled();
+			} finally {
+				warn.mockRestore();
+			}
+		});
+
+		test("returns the server's reply so the logger can honor throttled / remote_log", async () => {
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { throttled: true, retry_after_ms: 5000, remote_log: "off" },
+			} as any);
+			expect(await api.pushLogs([])).toEqual({
+				throttled: true,
+				retry_after_ms: 5000,
+				remote_log: "off",
+			});
+		});
 	});
 
 	describe("auth provider integration", () => {
