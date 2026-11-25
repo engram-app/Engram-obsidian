@@ -92,14 +92,14 @@ as a gate — see `regressions.test.ts` docblocks for the exact commits.
   from being trustworthy as a gate today — see
   `docs/context/crdt-convergence-sim-fidelity-gaps.md` for the full
   write-up:
-  - **Gap #1** — headless replicas never enroll history-full (`isBound`
-    always false with no editor), so concurrent edits on a shared note take
-    the keep-both drift path and spawn re-conflicting copies instead of
-    merging.
-  - **Gap #2** — the model never emits `note_changed`, so rename/delete only
-    converge via a later reconnect catch-up, not live.
-  - A third finding (a suspected real catch-up strand bug, seed
-    `3440604223`) is HELD pending #1/#2 landing — see the fidelity-gaps doc.
+    - **Gap #1** — headless replicas never enroll history-full (`isBound`
+      always false with no editor), so concurrent edits on a shared note take
+      the keep-both drift path and spawn re-conflicting copies instead of
+      merging.
+    - **Gap #2** — the model never emits `note_changed`, so rename/delete only
+      converge via a later reconnect catch-up, not live.
+    - A third finding (a suspected real catch-up strand bug, seed
+      `3440604223`) is HELD pending #1/#2 landing — see the fidelity-gaps doc.
 
 ## File map
 
