@@ -170,6 +170,8 @@ describe("isUpdateFrame", () => {
 		} finally {
 			globalThis.atob = real;
 		}
+		// Not vacuous: the decoder must have run through atob, on the head only.
+		expect(lengths.length).toBeGreaterThan(0);
 		expect(Math.max(...lengths)).toBeLessThanOrEqual(4);
 	});
 

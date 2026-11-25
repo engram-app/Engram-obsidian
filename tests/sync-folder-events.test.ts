@@ -18,7 +18,6 @@ import { SyncEngine } from "../src/sync";
 import { joinReporter } from "../src/sync-diagnostics";
 import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
-import { recordAnomalies } from "./helpers/record-anomalies";
 
 // --- Minimal API mock (only folder methods are exercised) ---
 const mockApi = {
@@ -686,7 +685,6 @@ describe("forced diagnostics from the engine", () => {
 	});
 
 	test("a vault switch and destroy reset the join reporter", async () => {
-		recordAnomalies((e) => lines.push(e.message));
 		const { engine } = await createEngine();
 		// min differs only so the logger's identical-line collapse does not hide a re-log.
 		joinReporter.rejected("plan_limit", 1);
