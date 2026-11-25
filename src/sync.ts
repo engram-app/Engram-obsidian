@@ -6629,13 +6629,20 @@ export class SyncEngine {
 	/** The server applied our op, so its state is ours. If the disk is not
 	 *  there (an inbound change moved the folder meanwhile), follow it back:
 	 *  our own `folder_changed` echo is dropped, so nothing else would. A no-op
-	 *  in the normal case, where the index already says `to`. */
-	private async folderOpAcked(op: FolderOp): Promise<void> {
+	 *  in the normal case, where the index already says `to`. The ack's seq
+	 *  is recorded as a folder move away from `from`, the same fence an
+	 *  inbound move sets (`predatesFolderMove`): a row fetched before the ack
+	 *  still names `from`, and after a restart (no per-note fence) and the op
+	 *  leaving the queue (no `movedFrom`) nothing else fences it (e2e test_107
+	 *  restart case, backend run 45712364296). */
+	private async folderOpAcked(op: FolderOp, seq: number | null): Promise<void> {
 		rlog().info("push", `Folder op acked: ${op.op} ${op.folder_id}`);
+		this.recordFolderMove(op.from, seq);
 		await this.followFolderMoveOnDisk({
 			id: op.folder_id,
 			parent_id: op.parent_id,
 			name: op.name,
+			seq,
 		});
 		this.onFolderOpLeft(op.to, true);
 	}
@@ -6646,7 +6653,7 @@ export class SyncEngine {
 		now: () => this.time.now(),
 		vaultId: () => this.settings.vaultId ?? null,
 		fallback: (op, why) => this.folderOpFallback(op, why),
-		acked: (op) => this.folderOpAcked(op),
+		acked: (op, seq) => this.folderOpAcked(op, seq),
 		apply: (change) => this.followFolderMoveOnDisk(change),
 		persist: () => this.persistGateJournalSoon(),
 	});
