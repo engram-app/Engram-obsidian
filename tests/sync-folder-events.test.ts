@@ -686,11 +686,12 @@ describe("forced diagnostics from the engine", () => {
 
 	test("a vault switch and destroy reset the join reporter", async () => {
 		const { engine } = await createEngine();
-		joinReporter.rejected("plan_limit");
+		// min differs only so the logger's identical-line collapse does not hide a re-log.
+		joinReporter.rejected("plan_limit", 1);
 		await engine.resetForVaultChange();
-		joinReporter.rejected("plan_limit"); // same reason inside the cooldown: logs only if reset
+		joinReporter.rejected("plan_limit", 2); // logs again only if the session was reset
 		engine.destroy();
-		joinReporter.rejected("plan_limit");
+		joinReporter.rejected("plan_limit", 3);
 		const rejected = (await shipped()).filter((l) => l.startsWith("crdt_join_rejected"));
 		expect(rejected).toHaveLength(3);
 	});

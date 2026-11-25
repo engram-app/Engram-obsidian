@@ -33,39 +33,25 @@ export function reportPlanLoadFailure(e: unknown): void {
 	rlog().anomaly("sync", "preview_failed", status === undefined ? {} : { status }, "other");
 }
 
-/** Shortest gap between two join REJECTION lines, and the most distinct
- *  reasons logged before a join succeeds. A reject/join flap is bounded by
- *  both, whatever the retry cadence. */
-const JOIN_LOG_COOLDOWN_MS = 60_000;
+/** Most distinct rejection reasons logged before a join succeeds. */
 const MAX_REJECT_REASONS = 5;
-const MAX_RECOVERY_LINES_PER_HOUR = 6;
-const MAX_REJECT_LINES_PER_HOUR = 6;
 
 /** Outcome of the `crdt:` topic join. Logs what a query needs and nothing on
  *  the steady state: each distinct rejection reason once until a join
- *  succeeds (one per cooldown window, 6 per hour), the first join of the
- *  session, and the recovery after a rejection that was actually logged (also
- *  6 per hour). Both hourly caps use the shared line budget, which emits one
- *  `log_suppressed` marker past the cap. `clear` forgets the session: register
- *  it with the owner's sweep registry so a vault switch starts clean. */
-export function createJoinReporter(now: () => number = Date.now) {
+ *  succeeds, the first join of the session, and the recovery after a logged
+ *  rejection. Volume is not limited here: every line goes through the remote
+ *  logger's device-wide send budget and identical-line collapse (remote-log.ts
+ *  `LOG_LIMITS`), the one source of truth for how much a device may send.
+ *  `clear` forgets the session: register it with the owner's sweep registry so
+ *  a vault switch starts clean. */
+export function createJoinReporter() {
 	let everJoined = false;
 	let rejections = 0;
 	let rejectionLogged = false;
-	let lastLoggedAt = Number.NEGATIVE_INFINITY;
 	const seen = new Set<string>();
-	let takeRecovery = createLineBudget(now, MAX_RECOVERY_LINES_PER_HOUR, "join_recovery");
-	let takeRejection = createLineBudget(now, MAX_REJECT_LINES_PER_HOUR, "join_rejected");
-	// A backward clock jump counts as elapsed, never as "still cooling down".
-	const due = () => {
-		const t = now();
-		if (t >= lastLoggedAt && t - lastLoggedAt < JOIN_LOG_COOLDOWN_MS) return false;
-		lastLoggedAt = t;
-		return true;
-	};
 	return {
 		joined(): void {
-			if (!everJoined || (rejectionLogged && takeRecovery())) {
+			if (!everJoined || rejectionLogged) {
 				rlog().anomaly("crdt", "crdt_joined", {
 					first: !everJoined,
 					after_rejections: rejections,
@@ -79,8 +65,7 @@ export function createJoinReporter(now: () => number = Date.now) {
 		rejected(reason: string | undefined, min?: number): void {
 			const slug = slugPart(reason);
 			rejections += 1;
-			if (seen.has(slug) || seen.size >= MAX_REJECT_REASONS || !due() || !takeRejection())
-				return;
+			if (seen.has(slug) || seen.size >= MAX_REJECT_REASONS) return;
 			seen.add(slug);
 			rejectionLogged = true;
 			const counts: AnomalyCounts = min !== undefined && Number.isFinite(min) ? { min } : {};
@@ -90,10 +75,7 @@ export function createJoinReporter(now: () => number = Date.now) {
 			everJoined = false;
 			rejections = 0;
 			rejectionLogged = false;
-			lastLoggedAt = Number.NEGATIVE_INFINITY;
 			seen.clear();
-			takeRecovery = createLineBudget(now, MAX_RECOVERY_LINES_PER_HOUR, "join_recovery");
-			takeRejection = createLineBudget(now, MAX_REJECT_LINES_PER_HOUR, "join_rejected");
 		},
 	};
 }
@@ -169,58 +151,23 @@ export function createFolderRenameReporter(clock: DiagnosticsClock) {
 	};
 }
 
-const HOUR_MS = 3_600_000;
-
-/** Hourly line budget shared by every forced diagnostic that can repeat.
- *  `take()` is true while lines remain. The first drop of a window emits one
- *  `log_suppressed` marker with the exact count so far, and the next window
- *  carries the final count, so the real ceiling is `max` plus 2 markers per
- *  hour. `scope` names the budget. `now` is the owner's injected clock; a
- *  backward jump resets the window rather than freezing it. */
-function createLineBudget(now: () => number, max: number, scope: string) {
-	let windowStart = Number.NEGATIVE_INFINITY;
-	let used = 0;
-	let dropped = 0;
-	return (): boolean => {
-		const t = now();
-		if (t < windowStart || t - windowStart >= HOUR_MS) {
-			if (dropped > 1) rlog().anomaly("push", "log_suppressed", { count: dropped }, scope);
-			windowStart = t;
-			used = 0;
-			dropped = 0;
-		}
-		if (used < max) {
-			used += 1;
-			return true;
-		}
-		dropped += 1;
-		if (dropped === 1) rlog().anomaly("push", "log_suppressed", { count: 1 }, scope);
-		return false;
-	};
+/** A 429 cooldown began. `scope` is a developer slug, `retryAfterMs` what the
+ *  server asked (absent when it sent none), `waitMs` what we will wait. Volume
+ *  is bounded by the remote logger's device-wide budget, not here. */
+export function reportRateLimited(
+	scope: string,
+	streak: number,
+	waitMs: number,
+	retryAfterMs?: number,
+): void {
+	const counts: AnomalyCounts = { streak, wait_s: Math.round(waitMs / 1000) };
+	if (retryAfterMs !== undefined) counts.retry_after_s = Math.round(retryAfterMs / 1000);
+	rlog().anomaly("push", "rate_limited", counts, scope);
 }
 
-/** Data lines allowed per hour: 6 start/clear pairs. */
-const RATE_LINES_PER_HOUR = 12;
-
-/** 429 start/clear lines, hard-capped per hour so a server that keeps
- *  answering 429 cannot turn every device into a Loki firehose. `scope` is a
- *  developer slug, `retryAfterMs` what the server asked (absent when it sent
- *  none), `waitMs` what we will wait. */
-export function createRateLimitReporter(now: () => number) {
-	const take = createLineBudget(now, RATE_LINES_PER_HOUR, "rate_limit");
-	return {
-		limited(scope: string, streak: number, waitMs: number, retryAfterMs?: number): void {
-			if (!take()) return;
-			const counts: AnomalyCounts = { streak, wait_s: Math.round(waitMs / 1000) };
-			if (retryAfterMs !== undefined) counts.retry_after_s = Math.round(retryAfterMs / 1000);
-			rlog().anomaly("push", "rate_limited", counts, scope);
-		},
-		/** The cooldown ended: the first success after `streak` rate-limited tries. */
-		cleared(scope: string, streak: number): void {
-			if (streak > 0 && take())
-				rlog().anomaly("push", "rate_limit_cleared", { streak }, scope);
-		},
-	};
+/** The cooldown ended: the first success after `streak` rate-limited tries. */
+export function reportRateLimitCleared(scope: string, streak: number): void {
+	if (streak > 0) rlog().anomaly("push", "rate_limit_cleared", { streak }, scope);
 }
 
 /** A folder delete entered the retry set. Edge-triggered by the caller: once

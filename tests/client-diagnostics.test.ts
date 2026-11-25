@@ -17,7 +17,6 @@ import {
 import {
 	createFolderRenameReporter,
 	createJoinReporter,
-	createRateLimitReporter,
 	reportPlanLoadFailure,
 } from "../src/sync-diagnostics";
 import { ManualTimeProvider } from "../src/time-provider";
@@ -63,7 +62,7 @@ describe("client context", () => {
 			{ os: "android", app_version: "1.8.10" },
 		);
 		logger.setEnabled(true);
-		logger.info("sync", "a");
+		logger.warn("sync", "a");
 		logger.anomaly("sync", "b");
 		await logger.flush();
 		expect(out.map((e) => e.context)).toEqual([
@@ -133,8 +132,7 @@ describe("preview failure", () => {
 
 describe("join outcome", () => {
 	test("rejection is forced; first join and join-after-rejection are logged, steady rejoins are not", async () => {
-		let t = 0;
-		const r = createJoinReporter(() => (t += 61_000));
+		const r = createJoinReporter();
 		r.rejected("plan_limit", 5);
 		r.rejected("plan_limit", 5); // same reason retried: one line
 		r.joined();
@@ -147,103 +145,48 @@ describe("join outcome", () => {
 	});
 
 	test("the very first join of a session is logged", async () => {
-		const r = createJoinReporter(() => 0);
+		const r = createJoinReporter();
 		r.joined();
 		expect((await captured())[0].message).toBe("crdt_joined first=true after_rejections=0");
 	});
 
 	test("alternating reasons log each reason once, not every flip", async () => {
-		let t = 0;
-		const r = createJoinReporter(() => t);
+		const r = createJoinReporter();
 		for (let i = 0; i < 20; i++) {
-			t += 61_000; // past the cooldown every time: only first-seen may gate
 			r.rejected(i % 2 ? "plan_limit" : "upgrade_required");
 		}
 		expect(await captured()).toHaveLength(2);
 	});
-
-	test("a reject/join flap logs at most one line per cooldown window", async () => {
-		let t = 0;
-		const r = createJoinReporter(() => t);
-		for (let i = 0; i < 30; i++) {
-			t += 5_000; // 30 flaps in 2.5 minutes
-			r.rejected(`reason_${i}`);
-			r.joined();
-		}
-		// 30 flaps over 150s: rejections limited to one per 60s window, each
-		// logged rejection followed by its recovery.
-		expect((await captured()).length).toBeLessThanOrEqual(8);
-	});
 });
 
-describe("join reporter lifecycle and rejection budget", () => {
+describe("join reporter lifecycle", () => {
 	test("clear() forgets the session: the next join is a first join again, seen reasons log again", async () => {
-		let t = 0;
-		const r = createJoinReporter(() => t);
-		r.rejected("plan_limit");
+		const r = createJoinReporter();
+		r.rejected("plan_limit", 1);
 		r.joined();
 		r.clear(); // vault switch or unload
-		t += 61_000;
-		r.rejected("plan_limit");
+		r.rejected("plan_limit", 2); // min differs only so the logger does not collapse the line
+		r.rejected("other_reason"); // makes the second join line differ for the same reason
 		r.joined();
 		const msgs = (await captured()).map((e) => e.message);
-		expect(msgs.filter((m) => m.startsWith("crdt_join_rejected"))).toHaveLength(2);
-		expect(msgs.filter((m) => m.startsWith("crdt_joined first=true"))).toHaveLength(2);
-	});
-
-	test("rejection lines are capped at 6 per hour, then one suppressed marker", async () => {
-		let t = 0;
-		const r = createJoinReporter(() => t);
-		for (let i = 0; i < 20; i++) {
-			t += 61_000;
-			r.rejected(`reason_${i}`);
-			r.joined(); // resets the per-reason memory so every flap is a candidate
-		}
-		const msgs = (await captured()).map((e) => e.message);
-		expect(msgs.filter((m) => m.startsWith("crdt_join_rejected"))).toHaveLength(6);
 		expect(
-			msgs.filter((m) => m.startsWith("log_suppressed reason=join_rejected")),
-		).toHaveLength(1);
+			msgs.filter((m) => m.startsWith("crdt_join_rejected reason=plan_limit")),
+		).toHaveLength(2);
+		expect(msgs.filter((m) => m.startsWith("crdt_joined first=true"))).toHaveLength(2);
 	});
 });
 
 describe("join recovery", () => {
-	test("recovery lines are capped at 6 per hour, then one suppressed marker", async () => {
-		let t = 0;
-		const r = createJoinReporter(() => t);
-		r.joined(); // first join: not a recovery
-		for (let i = 0; i < 20; i++) {
-			t += 61_000; // past the rejection cooldown each time: 20 flaps in ~20 min
-			r.rejected(`reason_${i}`);
-			r.joined();
-		}
-		const msgs = (await captured()).map((e) => e.message);
-		expect(msgs.filter((m) => m.startsWith("crdt_joined first=false"))).toHaveLength(6);
-		// Recoveries only follow a logged rejection, so the rejection budget bounds them too.
-	});
-
-	test("a recovery after a logged rejection logs even inside the cooldown", async () => {
-		let t = 0;
-		const r = createJoinReporter(() => t);
+	test("a recovery after a logged rejection logs", async () => {
+		const r = createJoinReporter();
 		r.joined(); // first join
-		t += 1_000;
 		r.rejected("plan_limit");
-		t += 1_000; // 2s later, far inside the 60s cooldown
 		r.joined();
 		expect((await captured()).map((e) => e.message)).toEqual([
 			"crdt_joined first=true after_rejections=0",
 			"crdt_join_rejected reason=plan_limit",
 			"crdt_joined first=false after_rejections=1",
 		]);
-	});
-
-	test("a backward clock jump does not freeze the cooldown", async () => {
-		let t = 1_000_000;
-		const r = createJoinReporter(() => t);
-		r.rejected("a");
-		t = 10; // clock stepped back
-		r.rejected("b");
-		expect(await captured()).toHaveLength(2);
 	});
 });
 
@@ -274,7 +217,7 @@ describe("folder rename", () => {
 	test("two unrelated renames are two lines", async () => {
 		const r = reporter();
 		r.rename("A", "B", 1);
-		r.rename("C", "D", 1);
+		r.rename("C", "D", 2); // children differ only so the logger does not collapse the line
 		r.clear();
 		expect(await captured()).toHaveLength(2);
 	});
@@ -294,39 +237,5 @@ describe("folder rename", () => {
 		expect(await captured()).toHaveLength(0);
 		clock.advance(1_001);
 		expect(await captured()).toHaveLength(1);
-	});
-});
-
-describe("rate-limit line budget", () => {
-	test("at most 12 data lines (6 pairs) per hour plus 2 markers, accurate counts, resetting hourly", async () => {
-		let t = 1_000;
-		const r = createRateLimitReporter(() => t);
-		for (let i = 0; i < 50; i++) {
-			t += 1_000;
-			r.limited("push", 1, 1_000);
-			r.cleared("push", 1);
-		}
-		let msgs = (await captured()).map((e) => e.message);
-		expect(msgs.filter((m) => /^rate_limit(ed|_cleared)/.test(m))).toHaveLength(12);
-		expect(msgs.filter((m) => m.startsWith("log_suppressed"))).toEqual([
-			"log_suppressed reason=rate_limit count=1",
-		]);
-		sent.length = 0;
-		t += 3_600_000; // next hour: budget back, final count carried
-		r.limited("push", 1, 1_000);
-		msgs = (await captured()).map((e) => e.message);
-		expect(msgs).toContain("log_suppressed reason=rate_limit count=88");
-		expect(msgs.some((m) => m.startsWith("rate_limited"))).toBe(true);
-	});
-
-	test("a backward clock jump resets the window instead of freezing it", async () => {
-		let t = 10_000_000;
-		const r = createRateLimitReporter(() => t);
-		for (let i = 0; i < 12; i++) r.limited("push", 1, 1_000);
-		t = 5; // clock stepped back
-		r.limited("push", 1, 1_000);
-		expect((await captured()).filter((e) => e.message.startsWith("rate_limited"))).toHaveLength(
-			13,
-		);
 	});
 });

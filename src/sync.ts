@@ -83,11 +83,12 @@ import { rlog } from "./remote-log";
 import { Semaphore } from "./semaphore";
 import {
 	createFolderRenameReporter,
-	createRateLimitReporter,
 	joinReporter,
 	reportFolderDeleteCleared,
 	reportFolderDeleteFailed,
 	reportGateTransition,
+	reportRateLimitCleared,
+	reportRateLimited,
 } from "./sync-diagnostics";
 import type { SyncLog } from "./sync-log";
 import { SyncedFileTable } from "./synced-file";
@@ -730,8 +731,6 @@ export class SyncEngine {
 	/** The join reporter is one per plugin load (main.ts feeds it); registering
 	 *  it here ends its session on a vault switch and on unload. */
 	private readonly joinSession = this.track(["vault", "destroy"], joinReporter);
-	/** 429 diagnostic lines, hard-capped per hour on the engine's clock. */
-	private readonly rateLimits = createRateLimitReporter(() => this.time.now());
 	private debounceTimers = this.track(["destroy"], new Map<string, number>(), (timer) =>
 		this.time.clearTimeout(timer),
 	);
@@ -7689,7 +7688,7 @@ export class SyncEngine {
 				const resp = await this.api.createFolder(path);
 				this.learnFolderChain(resp?.folders);
 				await this.explicitFolders.add(path);
-				this.rateLimits.cleared("folder_seed", this.folderSeedStreak);
+				reportRateLimitCleared("folder_seed", this.folderSeedStreak);
 				this.folderSeedStreak = 0;
 			} catch (e) {
 				devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
@@ -7714,7 +7713,7 @@ export class SyncEngine {
 					this.folderSeedNotBefore = this.time.now() + wait;
 					// Streak start only; the clear line closes it.
 					if (this.folderSeedStreak === 1) {
-						this.rateLimits.limited("folder_seed", this.folderSeedStreak, wait, asked);
+						reportRateLimited("folder_seed", this.folderSeedStreak, wait, asked);
 					}
 					return;
 				}
@@ -15500,7 +15499,7 @@ export class SyncEngine {
 		);
 		// Start of a storm only: a long one would otherwise log per entry.
 		if (this.rateLimitStreak === 1) {
-			this.rateLimits.limited("push", this.rateLimitStreak, wait, classified.retryAfterMs);
+			reportRateLimited("push", this.rateLimitStreak, wait, classified.retryAfterMs);
 		}
 		await this.queue.enqueue({
 			...entry,
@@ -16329,7 +16328,7 @@ export class SyncEngine {
 				}
 				await this.queue.dequeue(entry);
 				this.issues.clear(entry.path);
-				this.rateLimits.cleared("push", this.rateLimitStreak);
+				reportRateLimitCleared("push", this.rateLimitStreak);
 				this.rateLimitStreak = 0;
 				flushed++;
 			} catch (e) {
