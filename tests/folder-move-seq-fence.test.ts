@@ -264,3 +264,42 @@ test("restart control: a row AFTER our acked folder op naming the old folder is 
 		h.engine.destroy();
 	}
 });
+
+// Review @ 3031691ba MEDIUM-1: Proj -> X -> Proj while queued coalesces into
+// one op with from === to. The server no-ops it and acks with the vault's
+// current seq. Nothing moved away from Proj, so no fence: another device's
+// earlier-seq move of a note INTO Proj is real and must apply.
+test("a no-op folder op ack (renamed away and back) does not fence a real move into the folder", async () => {
+	const h = makeVault({ "Other/b.md": "original" });
+	const engine = makeEngine(h.app);
+	h.attach(engine);
+	try {
+		const map = new NoteIdMap();
+		map.seed({ "Other/b.md": ID });
+		engine.setNoteIdMap(map);
+		(engine as any).syncState.set("Other/b.md", { hash: fnv1a("original"), seq: 3 });
+		engine.learnFolders([{ id: "f1", parent_id: null, name: "Proj" }]);
+		await engine.setFolderOpsEnabled(true);
+		engine.setCrdtPorts({ folderOp: async () => ({ kind: "ok", seq: 9 }) });
+		engine.restoreFolderOps([
+			{
+				op: "move",
+				op_id: "op1",
+				folder_id: "f1",
+				parent_id: null,
+				name: "Proj",
+				from: "Proj",
+				to: "Proj",
+				vaultId: null,
+			},
+		]);
+		await engine.folderOps.flush();
+		expect(engine.folderOps.hasPending("f1")).toBe(false);
+		await engine.applyOp(row("Proj/b.md", 7, "original"));
+		await settle();
+		expect(map.pathForId(ID)).toBe("Proj/b.md");
+		expect(h.present.has("Proj/b.md")).toBe(true);
+	} finally {
+		engine.destroy();
+	}
+});

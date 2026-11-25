@@ -6634,10 +6634,12 @@ export class SyncEngine {
 	 *  inbound move sets (`predatesFolderMove`): a row fetched before the ack
 	 *  still names `from`, and after a restart (no per-note fence) and the op
 	 *  leaving the queue (no `movedFrom`) nothing else fences it (e2e test_107
-	 *  restart case, backend run 45712364296). */
+	 *  restart case, backend run 45712364296). Not for a no-op (renamed away
+	 *  and back while queued, from === to): the server acks it with the
+	 *  vault's current seq, and nothing left `from`. */
 	private async folderOpAcked(op: FolderOp, seq: number | null): Promise<void> {
 		rlog().info("push", `Folder op acked: ${op.op} ${op.folder_id}`);
-		this.recordFolderMove(op.from, seq);
+		if (op.from !== op.to) this.recordFolderMove(op.from, seq);
 		await this.followFolderMoveOnDisk({
 			id: op.folder_id,
 			parent_id: op.parent_id,
