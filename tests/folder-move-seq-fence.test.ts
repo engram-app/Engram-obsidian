@@ -197,3 +197,109 @@ test("several recorded moves: each ancestor's own move seq fences, at any depth"
 		engine.destroy();
 	}
 });
+
+/** e2e test_107 test_restart_with_folder_op_pending (backend run
+ *  45712364296): A renamed Proj -> Done and reloaded with the op unanswered.
+ *  After the reload the in-memory per-note fence is gone, the op is replayed
+ *  and acked at seq 6, and the persisted op (the last fence) leaves the queue.
+ *  A catch-up row fetched before the ack still names Proj/a.md. The ack's
+ *  seq must fence it, as an inbound folder move's seq does. */
+async function restartedOpAcked() {
+	const h = makeVault({ "Done/a.md": "original" });
+	const engine = makeEngine(h.app);
+	h.attach(engine);
+	const map = new NoteIdMap();
+	map.seed({ "Done/a.md": ID });
+	engine.setNoteIdMap(map);
+	(engine as any).syncState.set("Done/a.md", { hash: fnv1a("original"), seq: 3 });
+	// The persisted index already says Done (the local rename moved it).
+	engine.learnFolders([{ id: "f1", parent_id: null, name: "Done" }]);
+	await engine.setFolderOpsEnabled(true);
+	engine.setCrdtPorts({ folderOp: async () => ({ kind: "ok", seq: 6 }) });
+	engine.restoreFolderOps([
+		{
+			op: "move",
+			op_id: "op1",
+			folder_id: "f1",
+			parent_id: null,
+			name: "Done",
+			from: "Proj",
+			to: "Done",
+			vaultId: null,
+		},
+	]);
+	await engine.folderOps.flush();
+	expect(engine.folderOps.hasPending("f1")).toBe(false); // acked: the persisted fence is gone
+	h.vault.rename.mockClear();
+	h.vault.create.mockClear();
+	h.vault.createFolder.mockClear();
+	return { ...h, engine, map };
+}
+
+test("restart: a catch-up row older than our acked folder op lands at the new path", async () => {
+	const h = await restartedOpAcked();
+	try {
+		const converge = mock();
+		(h.engine as any).stageConvergence = converge;
+		await h.engine.applyOp(row("Proj/a.md", 5, "B's edit"));
+		await settle();
+		expect([...h.present.keys()]).toEqual(["Done/a.md"]);
+		expect(h.map.pathForId(ID)).toBe("Done/a.md");
+		expect(h.vault.create).not.toHaveBeenCalled();
+		expect(h.vault.rename).not.toHaveBeenCalled();
+		expect(h.folders.has("Proj")).toBe(false);
+	} finally {
+		h.engine.destroy();
+	}
+});
+
+test("restart control: a row AFTER our acked folder op naming the old folder is a real move back", async () => {
+	const h = await restartedOpAcked();
+	try {
+		await h.engine.applyOp(row("Proj/a.md", 7, "original"));
+		await settle();
+		expect(h.map.pathForId(ID)).toBe("Proj/a.md");
+		expect(h.present.has("Proj/a.md")).toBe(true);
+	} finally {
+		h.engine.destroy();
+	}
+});
+
+// Review @ 3031691ba MEDIUM-1: Proj -> X -> Proj while queued coalesces into
+// one op with from === to. The server no-ops it and acks with the vault's
+// current seq. Nothing moved away from Proj, so no fence: another device's
+// earlier-seq move of a note INTO Proj is real and must apply.
+test("a no-op folder op ack (renamed away and back) does not fence a real move into the folder", async () => {
+	const h = makeVault({ "Other/b.md": "original" });
+	const engine = makeEngine(h.app);
+	h.attach(engine);
+	try {
+		const map = new NoteIdMap();
+		map.seed({ "Other/b.md": ID });
+		engine.setNoteIdMap(map);
+		(engine as any).syncState.set("Other/b.md", { hash: fnv1a("original"), seq: 3 });
+		engine.learnFolders([{ id: "f1", parent_id: null, name: "Proj" }]);
+		await engine.setFolderOpsEnabled(true);
+		engine.setCrdtPorts({ folderOp: async () => ({ kind: "ok", seq: 9 }) });
+		engine.restoreFolderOps([
+			{
+				op: "move",
+				op_id: "op1",
+				folder_id: "f1",
+				parent_id: null,
+				name: "Proj",
+				from: "Proj",
+				to: "Proj",
+				vaultId: null,
+			},
+		]);
+		await engine.folderOps.flush();
+		expect(engine.folderOps.hasPending("f1")).toBe(false);
+		await engine.applyOp(row("Proj/b.md", 7, "original"));
+		await settle();
+		expect(map.pathForId(ID)).toBe("Proj/b.md");
+		expect(h.present.has("Proj/b.md")).toBe(true);
+	} finally {
+		engine.destroy();
+	}
+});
