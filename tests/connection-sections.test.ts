@@ -194,7 +194,8 @@ describe("renderEngramUrlSetting — no Save button", () => {
 
 		const typed = __settingCapture.texts[0];
 		const g = globalThis as any;
-		g.document = { activeElement: typed?.inputEl, hasFocus: () => true };
+		const origDocument = g.activeDocument;
+		g.activeDocument = { activeElement: typed?.inputEl, hasFocus: () => true };
 		const realProbe = (EngramApi as any).probeHealth;
 		(EngramApi as any).probeHealth = async () => ({ kind: "engram", version: "1.2.3" });
 		try {
@@ -203,7 +204,7 @@ describe("renderEngramUrlSetting — no Save button", () => {
 			await new Promise((r) => setTimeout(r, 900));
 		} finally {
 			(EngramApi as any).probeHealth = realProbe;
-			g.document = undefined;
+			g.activeDocument = origDocument;
 		}
 
 		expect(plugin.settings.apiUrl).toBe("http://127.0.0.1:4000");
@@ -246,14 +247,15 @@ describe("renderEngramUrlSetting — no Save button", () => {
 		text?.changeCb?.("http://halfway");
 
 		// No DOM in this runner, and the guard reads the real one. A blurred
-		// window is exactly `document.hasFocus() === false`.
+		// window is exactly `activeDocument.hasFocus() === false`.
 		const g = globalThis as any;
-		g.document = { hasFocus: () => false, activeElement: null };
+		const origDocument = g.activeDocument;
+		g.activeDocument = { hasFocus: () => false, activeElement: null };
 		try {
 			text?.blurCb?.();
 			await Promise.resolve();
 		} finally {
-			g.document = undefined;
+			g.activeDocument = origDocument;
 		}
 
 		expect(saved).toEqual([]);

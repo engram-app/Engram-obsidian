@@ -111,7 +111,7 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 				// commit() ends in redisplay(), which tears this input out of the
 				// DOM. If the user is still in the field, that eats their caret
 				// mid-word. Remember it so the rebuilt field takes focus back.
-				refocusUrlInput = document.activeElement === inputEl;
+				refocusUrlInput = activeDocument.activeElement === inputEl;
 				void commit();
 			}
 		});
@@ -169,7 +169,7 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 			// Alt-tabbing out of Obsidian fires blur too, and that is NOT "I meant
 			// that" — it is a half-typed address the user is coming back to.
 			// Committing it swaps the stored backend behind their back.
-			if (!document.hasFocus()) return;
+			if (!activeDocument.hasFocus()) return;
 			if (debounce !== null) window.clearTimeout(debounce);
 			void commit();
 		});
