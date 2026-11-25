@@ -33,7 +33,7 @@ import {
 import type { CrdtOp } from "./crdt-op-queue";
 import { devLog } from "./dev-log";
 import { ECHO_COOLDOWN_MS } from "./echo-window";
-import { errMsg, isAlreadyGone, isHttpStatus, statusOf } from "./error-util";
+import { errMsg, isAlreadyGone, isHttpStatus, retryAfterMs, statusOf } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
 import { fileTimes, msToSeconds } from "./file-times";
@@ -49,6 +49,7 @@ import {
 	isFolderRow,
 	parentFolder,
 } from "./folder-ops";
+import { cleanFolderPath } from "./folder-path";
 import { t } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
 import { IgnoredFiles } from "./ignored-files";
@@ -77,8 +78,18 @@ import {
 } from "./offline-queue";
 import { attachmentCapabilityGained, type PlanState, samePlanState } from "./plan-state";
 import { formatBytes } from "./plan-usage";
+import { PreviewUnavailableError } from "./preview-error";
 import { rlog } from "./remote-log";
 import { Semaphore } from "./semaphore";
+import {
+	createFolderRenameReporter,
+	joinReporter,
+	reportFolderDeleteCleared,
+	reportFolderDeleteFailed,
+	reportGateTransition,
+	reportRateLimitCleared,
+	reportRateLimited,
+} from "./sync-diagnostics";
 import type { SyncLog } from "./sync-log";
 import { SyncedFileTable } from "./synced-file";
 import { DefaultTimeProvider, type TimeProvider } from "./time-provider";
@@ -707,6 +718,19 @@ export class SyncEngine {
 		}
 	}
 
+	/** Folder-rename burst collapser. Registered so unload and a vault switch
+	 *  flush a pending line and cancel its timer (it owns a TimeProvider timer). */
+	private readonly folderRenames = this.track(
+		["vault", "destroy"],
+		createFolderRenameReporter({
+			now: () => this.time.now(),
+			setTimeout: (cb, ms) => this.time.setTimeout(cb, ms),
+			clearTimeout: (id) => this.time.clearTimeout(id),
+		}),
+	);
+	/** The join reporter is one per plugin load (main.ts feeds it); registering
+	 *  it here ends its session on a vault switch and on unload. */
+	private readonly joinSession = this.track(["vault", "destroy"], joinReporter);
 	private debounceTimers = this.track(["destroy"], new Map<string, number>(), (timer) =>
 		this.time.clearTimeout(timer),
 	);
@@ -2499,6 +2523,11 @@ export class SyncEngine {
 	 *  compatible with callers/tests that never wire it). */
 	private crdtLive: (() => boolean) | null = null;
 
+	/** Record (reason) or clear (null) a rejected crdt: topic join; see crdtJoinRejected. */
+	setCrdtJoinRejected(reason: string | null): void {
+		this.crdtJoinRejected = reason;
+	}
+
 	setCrdtLiveCheck(fn: (() => boolean) | null): void {
 		this.setCrdtPorts({ live: fn });
 	}
@@ -2523,6 +2552,10 @@ export class SyncEngine {
 	 *  the preview. Covers the startup join race and the vault-switch rebuild.
 	 *  A field so tests can shrink it. */
 	private enumerateWaitMs = 8000;
+	/** Set while the crdt: topic join is known-rejected, so the preview fails
+	 *  fast with the real reason instead of burning the wait budget. Cleared on
+	 *  the next successful join. */
+	private crdtJoinRejected: string | null = null;
 
 	/** Adopt-first seed gate input (CrdtManager.isUnchangedSynced): true when
 	 *  `content` hashes to exactly what this engine last synced for `path` —
@@ -3912,7 +3945,11 @@ export class SyncEngine {
 		}
 	}
 
-	setSyncBlocked(blocked: boolean): void {
+	setSyncBlocked(blocked: boolean, reason = "unspecified"): void {
+		if (blocked !== this.syncBlocked) {
+			const waitedMs = blocked ? null : this.blockedForMs();
+			reportGateTransition(blocked, reason, waitedMs === null ? undefined : waitedMs / 1000);
+		}
 		this.syncBlocked = blocked;
 		this.blockedSince = blocked ? (this.blockedSince ?? performance.now()) : null;
 		// Re-arm the announcement on every transition, so a LATER closure (a
@@ -4394,6 +4431,12 @@ export class SyncEngine {
 		// and wrongly short-circuit the first reconcile after a swap.
 		this.manifestSeq = 0;
 		this.lastValidatorRewind = null;
+		// A join rejection and a seed rate-limit cooldown belong to the old
+		// vault/connection; carried over they would fail the new vault's preview
+		// or delay its seeding for no reason.
+		this.crdtJoinRejected = null;
+		this.folderSeedNotBefore = 0;
+		this.folderSeedStreak = 0;
 		// The note-id map is per-vault identity state but is NOT a tracked
 		// collection: the instance is shared with main.ts + live views, so it is
 		// cleared in place rather than swept. Carrying it across vaults keys CRDT
@@ -7285,6 +7328,11 @@ export class SyncEngine {
 			devLog().log("sync-blocked", "handleRename deferred — gate closed");
 			this.reportBlockedEdit();
 		}
+		// A folder renamed onto a path whose delete failed earlier now exists.
+		if (file instanceof TFolder) {
+			this.failedFolderDeletes.delete(cleanFolderPath(file.path));
+			this.folderRenames.rename(oldPath, file.path, file.children.length);
+		}
 		if (!this.isSyncable(file)) return;
 
 		// ECHO GUARD: this rename is the engine's own, applied to follow a remote
@@ -7542,6 +7590,8 @@ export class SyncEngine {
 			return;
 		}
 		this.forgetMovedAway(path);
+		// The user (re)made the folder: a pending server delete is now wrong.
+		this.failedFolderDeletes.delete(cleanFolderPath(folder.path));
 		if (this.gateHolds()) {
 			this.journalGateEvent({ op: "folder-create", path: folder.path });
 			this.kickGateReplay();
@@ -7550,7 +7600,9 @@ export class SyncEngine {
 		await this.createFolderNow(folder.path);
 	}
 
-	private async createFolderNow(path: string): Promise<void> {
+	private async createFolderNow(rawPath: string): Promise<void> {
+		const path = cleanFolderPath(rawPath);
+		if (!path) return;
 		if (!this.explicitFolders) return;
 		if (this.shouldIgnore(path)) return;
 		if (this.explicitFolders.has(path)) return;
@@ -7578,20 +7630,36 @@ export class SyncEngine {
 		await this.deleteFolderNow(folder.path);
 	}
 
+	/** Folders the user deleted locally whose server DELETE failed. */
+	private failedFolderDeletes = this.track(["destroy", "vault"], new Set<string>());
+
 	private async deleteFolderNow(path: string): Promise<void> {
+		// The retry set is keyed by the cleaned path, like every other writer.
+		const key = cleanFolderPath(path);
 		if (this.suppressDeletes) return;
 		if (!this.explicitFolders) return;
 		if (!this.explicitFolders.has(path)) return;
 
 		try {
 			await this.api.deleteFolder(path);
+			this.failedFolderDeletes.delete(key);
 		} catch (e) {
+			// The server still lists the marker; remember it so the next pull does
+			// not recreate the folder the user just deleted (syncExplicitFolders).
+			// Edge only: re-deleting a folder already waiting must not log again.
+			const firstFailure = !this.failedFolderDeletes.has(key);
+			this.failedFolderDeletes.add(key);
+			if (firstFailure) reportFolderDeleteFailed(this.failedFolderDeletes.size, e);
 			devLog().log("push", `deleteFolder("${path}") failed: ${errMsg(e)}`);
 			rlog().warn("push", `deleteFolder("${noteRef(path)}") failed: ${errMsg(e, path)}`);
 		} finally {
 			await this.explicitFolders.delete(path);
 		}
 	}
+
+	/** Earliest time seedEmptyFolders may POST again after a rate-limited pass. */
+	private folderSeedNotBefore = 0;
+	private folderSeedStreak = 0;
 
 	/** First-sync seeding: POST an explicit marker for every local folder whose
 	 *  entire subtree holds NO syncable file. The server derives a folder only
@@ -7603,6 +7671,9 @@ export class SyncEngine {
 	 *  error is warn-logged and seeding continues (matches handleFolderCreate). */
 	async seedEmptyFolders(): Promise<void> {
 		if (!this.explicitFolders) return;
+		// Rate-limited last pass: every catch-up calls this, so without a
+		// cooldown each pass re-POSTs every untracked folder into the limiter.
+		if (this.time.now() < this.folderSeedNotBefore) return;
 
 		const loaded = this.app.vault.getAllLoadedFiles?.() ?? [];
 		for (const f of loaded) {
@@ -7617,12 +7688,35 @@ export class SyncEngine {
 				const resp = await this.api.createFolder(path);
 				this.learnFolderChain(resp?.folders);
 				await this.explicitFolders.add(path);
+				reportRateLimitCleared("folder_seed", this.folderSeedStreak);
+				this.folderSeedStreak = 0;
 			} catch (e) {
 				devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
 				rlog().warn(
 					"push",
 					`seedEmptyFolders("${noteRef(path)}") failed: ${errMsg(e, path)}`,
 				);
+				// Rate limited: the rest of the pass would only hit the same limiter.
+				// Stop and wait what the server asked (floored, as deferRateLimited).
+				if (categorizeError(e).rateLimited) {
+					this.folderSeedStreak += 1;
+					const asked = retryAfterMs(e, this.time.now());
+					const wait = Math.max(
+						RATE_LIMIT_FLOOR_MS,
+						asked ??
+							expBackoff(
+								OFFLINE_RETRY_BASE_MS,
+								this.folderSeedStreak - 1,
+								OFFLINE_RETRY_MAX_MS,
+							),
+					);
+					this.folderSeedNotBefore = this.time.now() + wait;
+					// Streak start only; the clear line closes it.
+					if (this.folderSeedStreak === 1) {
+						reportRateLimited("folder_seed", this.folderSeedStreak, wait, asked);
+					}
+					return;
+				}
 			}
 		}
 	}
@@ -9268,14 +9362,26 @@ export class SyncEngine {
 		// outright (a vault-switch/startup false-negative is worse than a short
 		// spinner). Falls through to the offline error only after the budget.
 		const deadline = Date.now() + this.enumerateWaitMs;
-		while (
-			(!this.crdtCatchupSince || !this.crdt || !(this.crdtLive?.() ?? false)) &&
-			Date.now() < deadline
-		) {
+		const socketReady = () =>
+			!!this.crdtCatchupSince && !!this.crdt && (this.crdtLive?.() ?? false);
+		// Fail fast on states no waiting can fix.
+		const hardBlock = () => {
+			if (!this.settings.vaultId) throw new PreviewUnavailableError("no_vault");
+			if (this.crdtJoinRejected !== null)
+				throw new PreviewUnavailableError("join_rejected", this.crdtJoinRejected);
+		};
+		hardBlock();
+		while (!socketReady() && Date.now() < deadline) {
 			await this.sleep(100);
+			hardBlock();
 		}
-		if (!this.crdtCatchupSince || !this.crdt || !(this.crdtLive?.() ?? false)) {
-			throw new Error("Sync preview needs the live socket (op-log enumeration)");
+		if (!socketReady()) {
+			const missing = [
+				!this.crdtCatchupSince && "catchup",
+				!this.crdt && "manager",
+				!(this.crdtLive?.() ?? false) && "live",
+			].filter(Boolean);
+			throw new PreviewUnavailableError("timeout", `missing ${missing.join(",")}`);
 		}
 		const byId = new Map<string, Extract<SyncChange, { type: "note" }>>();
 		const attachments = new Map<string, { deleted: boolean }>();
@@ -13996,7 +14102,9 @@ export class SyncEngine {
 	}
 
 	/** Recursively create folder if it doesn't exist. */
-	private async ensureFolder(path: string): Promise<void> {
+	private async ensureFolder(rawPath: string): Promise<void> {
+		const path = cleanFolderPath(rawPath);
+		if (!path) return;
 		const existing = this.app.vault.getAbstractFileByPath(path);
 		if (existing) return;
 
@@ -14085,6 +14193,22 @@ export class SyncEngine {
 			// The server lists it, so the folder exists now (a user re-made it,
 			// e.g. in the web app): no moved-away record may still cover it.
 			if (this.isMovedAway(name)) this.forgetMovedAway(name);
+			// Locally deleted, server delete failed: retry it instead of resurrecting.
+			if (this.failedFolderDeletes.has(cleanFolderPath(name))) {
+				// Never delete the marker of a folder that exists locally.
+				if (this.app.vault.getAbstractFileByPath(name)) {
+					this.failedFolderDeletes.delete(cleanFolderPath(name));
+					continue;
+				}
+				try {
+					await this.api.deleteFolder(name);
+					this.failedFolderDeletes.delete(cleanFolderPath(name));
+					reportFolderDeleteCleared(this.failedFolderDeletes.size);
+				} catch (e) {
+					devLog().log("pull", `deleteFolder retry(${name}) failed: ${errMsg(e)}`);
+				}
+				continue;
+			}
 			try {
 				await this.ensureFolder(name);
 			} catch (e) {
@@ -15373,6 +15497,10 @@ export class SyncEngine {
 			classified.retryAfterMs ??
 				expBackoff(OFFLINE_RETRY_BASE_MS, this.rateLimitStreak - 1, OFFLINE_RETRY_MAX_MS),
 		);
+		// Start of a storm only: a long one would otherwise log per entry.
+		if (this.rateLimitStreak === 1) {
+			reportRateLimited("push", this.rateLimitStreak, wait, classified.retryAfterMs);
+		}
 		await this.queue.enqueue({
 			...entry,
 			priority: entry.priority ?? this.priorityForPath(entry.path),
@@ -16200,6 +16328,7 @@ export class SyncEngine {
 				}
 				await this.queue.dequeue(entry);
 				this.issues.clear(entry.path);
+				reportRateLimitCleared("push", this.rateLimitStreak);
 				this.rateLimitStreak = 0;
 				flushed++;
 			} catch (e) {

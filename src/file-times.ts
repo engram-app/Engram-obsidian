@@ -35,18 +35,26 @@ export function fileTimes(file: Statted): FileTimes {
 }
 
 /**
- * Times for a LIVE edit frame (`crdt_msg`): mtime is `max(file mtime, now)`.
- * Obsidian writes the file ~2 s after the last keystroke, so at send time the
- * file's stat is still the PREVIOUS save's; the server only moves a note's
- * mtime forward, so a short edit would never update it. Queued offline edits
- * (`crdt_doc_update`) and creates keep the file's own stat (`fileTimes`).
+ * Times for a LIVE edit frame (`crdt_msg`) of a note `bound` in an editor:
+ * mtime is `max(file mtime, now)`. Obsidian writes the file ~2 s after the
+ * last keystroke, so at send time the file's stat is still the PREVIOUS save's;
+ * the server only moves a note's mtime forward, so a short edit would never
+ * update it. A note NOT bound in an editor changed on disk outside Obsidian:
+ * its file stat is the real time, so it keeps that (`fileTimes`), not the
+ * plugin's pickup time. Queued offline edits (`crdt_doc_update`) and creates
+ * keep the file's own stat too.
  *
  * Clock skew: the server ignores any frame time past its now + 1 day
  * (`Engram.FileTime.from_frame/2`), so a sane clock never trips it, and a
  * clock more than a day fast just loses the time (no worse than before).
  * `now` is floored to whole seconds.
  */
-export function liveEditTimes(file: Statted, nowMs: number = Date.now()): FileTimes {
+export function liveEditTimes(
+	file: Statted,
+	bound: boolean,
+	nowMs: number = Date.now(),
+): FileTimes {
 	const times = fileTimes(file);
+	if (!bound) return times;
 	return { ...times, mtime: Math.max(times.mtime ?? 0, Math.floor(msToSeconds(nowMs))) };
 }

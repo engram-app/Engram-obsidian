@@ -7,6 +7,16 @@
 
 import { scrubLogText, scrubStack } from "./error-util";
 
+/** Device facts attached once and sent on every entry. Closed enums and a
+ *  version number, so there is no free text; the backend allowlists the same
+ *  shapes (`Engram.Logs`, `@context_fields`) and re-emits them as Loki
+ *  metadata. `platform` stays mobile|desktop, which cannot tell Android from
+ *  iOS. */
+export interface ClientContext {
+	os: "android" | "ios" | "mobile_other" | "desktop";
+	app_version: string;
+}
+
 export interface RemoteLogEntry {
 	ts: string;
 	level: "error" | "warn" | "info";
@@ -20,6 +30,7 @@ export interface RemoteLogEntry {
 	vault_id?: string;
 	seq?: number;
 	diagnostic?: boolean;
+	context?: ClientContext;
 	/** This entry came from the always-on call site (`anomaly()`), which is
 	 *  EXEMPT from the diagnostics gate.
 	 *
@@ -250,6 +261,18 @@ function safeSlug(value: unknown, fallback: string): string {
 	return typeof value === "string" && ANOMALY_CODE.test(value) ? value : fallback;
 }
 
+/** Reduce an untrusted short string (a server reason code) to a slug safe to
+ *  put in an anomaly code: lowercase, digits, underscores, at most 40 chars. */
+export function slugPart(value: unknown): string {
+	if (typeof value !== "string") return "unknown";
+	const slug = value
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "_")
+		.replace(/^_+|_+$/g, "")
+		.slice(0, 40);
+	return slug || "unknown";
+}
+
 /** Render an anomaly line from a code and counts.
  *
  *  Replaces a free-text message plus a redactor. The redactor could not work:
@@ -261,13 +284,22 @@ function safeSlug(value: unknown, fallback: string): string {
  *  So the free text is gone. `code` is a literal slug and anything else becomes
  *  `invalid_code`; values are coerced to a number or a boolean and anything
  *  else is dropped. A path cannot be expressed in this type. */
-export function formatAnomaly(code: string, counts: AnomalyCounts | null = {}): string {
+export function formatAnomaly(
+	code: string,
+	counts: AnomalyCounts | null = {},
+	reason?: string,
+): string {
 	const safeCode = safeSlug(code, "invalid_code");
-	const pairs = Object.entries(counts ?? {}).flatMap(([key, value]) => {
-		if (!ANOMALY_CODE.test(key)) return [];
-		if (typeof value === "boolean") return [`${key}=${value}`];
-		return Number.isFinite(value) ? [`${key}=${value}`] : [];
-	});
+	// A runtime-chosen label (a server reason code, a gate cause) is slug-reduced
+	// here, so `code` itself can stay a greppable literal.
+	const lead = reason === undefined ? [] : [`reason=${slugPart(reason)}`];
+	const pairs = lead.concat(
+		Object.entries(counts ?? {}).flatMap(([key, value]) => {
+			if (!ANOMALY_CODE.test(key)) return [];
+			if (typeof value === "boolean") return [`${key}=${value}`];
+			return Number.isFinite(value) ? [`${key}=${value}`] : [];
+		}),
+	);
 	return pairs.length > 0 ? `${safeCode} ${pairs.join(" ")}` : safeCode;
 }
 
@@ -279,6 +311,7 @@ export class RemoteLogger {
 	private pluginVersion = "";
 	private platform = "";
 	private inflight: Promise<void> | null = null;
+	private context: ClientContext | null = null;
 	private connId: string | null = null;
 	private deviceId: string | null = null;
 	private vaultId: string | null = null;
@@ -317,7 +350,13 @@ export class RemoteLogger {
 		{ until: number; count: number; category: string; named: string; forced: boolean }
 	>();
 
-	configure(pushFn: PushFn, pluginVersion: string, platform: string): void {
+	configure(
+		pushFn: PushFn,
+		pluginVersion: string,
+		platform: string,
+		context?: ClientContext,
+	): void {
+		this.context = context ?? null;
 		this.pushFn = pushFn;
 		this.pluginVersion = pluginVersion;
 		this.platform = platform;
@@ -516,11 +555,11 @@ export class RemoteLogger {
 	 *  `TFile.basename` — no extension — survived intact. A note title is
 	 *  prose; no text filter separates it from a reason string, because there
 	 *  is nothing to separate. Removing the free text removes the problem. */
-	anomaly(category: string, code: string, counts: AnomalyCounts = {}): void {
+	anomaly(category: string, code: string, counts: AnomalyCounts = {}, reason?: string): void {
 		this.addEntry(
 			"warn",
 			safeSlug(category, "invalid_category"),
-			formatAnomaly(code, counts),
+			formatAnomaly(code, counts, reason),
 			undefined,
 			false,
 			true,
@@ -745,6 +784,7 @@ export class RemoteLogger {
 			platform: this.platform,
 			seq: this.seq++,
 		};
+		if (this.context) entry.context = this.context;
 		// Verbose mode opts sub-warn entries into Loki. The backend keeps client
 		// logs out of Loki below warn (Category: :client is absent from
 		// @info_to_loki, so a whole plugin fleet can't flood it) and offers
@@ -796,7 +836,7 @@ interface NoopLogger {
 	warn(category: string, message: string): void;
 	info(category: string, message: string): void;
 	diag(category: string, message: string): void;
-	anomaly(category: string, code: string, counts?: AnomalyCounts): void;
+	anomaly(category: string, code: string, counts?: AnomalyCounts, reason?: string): void;
 	setConnId(id: string | null): void;
 	setClientContext(deviceId: string | null, vaultId: string | null): void;
 	setLevelThreshold(level: RemoteLogLevel): void;
@@ -804,7 +844,12 @@ interface NoopLogger {
 	flush(): Promise<void>;
 	destroy(): Promise<void>;
 	setEnabled(enabled: boolean): void;
-	configure(pushFn: PushFn, pluginVersion: string, platform: string): void;
+	configure(
+		pushFn: PushFn,
+		pluginVersion: string,
+		platform: string,
+		context?: ClientContext,
+	): void;
 }
 
 const _noop: NoopLogger = {

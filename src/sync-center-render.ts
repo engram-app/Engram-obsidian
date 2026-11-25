@@ -14,6 +14,7 @@ import { type IssueDisposition, issueDisposition, remediation } from "./issue-st
 import type EngramSyncPlugin from "./main";
 import type { QueuedReason } from "./offline-queue";
 import { formatBytes, planUsageRows } from "./plan-usage";
+import { reportPlanLoadFailure } from "./sync-diagnostics";
 import { ACTION_ICONS } from "./sync-log-modal";
 import { planLoadErrorMessage, SyncPreviewModal } from "./sync-preview-modal";
 import { DEFAULT_UPGRADE_URL, SUPPORT_EMAIL } from "./tabs/urls";
@@ -235,7 +236,10 @@ function renderActions(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: (
 			void plugin.syncEngine
 				.computeSyncPlan("full")
 				.then((p) => modal.setPlan(p))
-				.catch(() => modal.setPlanError(planLoadErrorMessage(plugin.hasAuthConfigured())));
+				.catch((e) => {
+					modal.setPlanError(planLoadErrorMessage(plugin.hasAuthConfigured(), e));
+					reportPlanLoadFailure(e);
+				});
 			// Registered so auth invalidation can flip this modal to the sign-in
 			// error too, not just the first-sync command's modal.
 			plugin.trackPreviewModal(modal);

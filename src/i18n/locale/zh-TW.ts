@@ -278,6 +278,9 @@ const zhTW: Dict = {
 	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
 		"連接 Claude、Cursor、ChatGPT 或任何 MCP 應用程式，讓它們可以讀取和寫入您的筆記",
 	"Link Obsidian to Engram": "將 Obsidian 連結至 Engram",
+	"Live sync did not connect in time. Try again in a moment.": "即時同步未及時連接。請稍後再試。",
+	"Live sync was refused for this account, so the comparison can't run. Check your plan or update the plugin.":
+		"此帳戶的即時同步已拒絕，因此無法進行比較。請檢查您的方案或更新此插件。",
 	"Loading vaults…": "正在載入知識庫…",
 	"Love it": "非常喜歡",
 	"Make new vault": "建立新的儲存庫",
@@ -298,6 +301,8 @@ const zhTW: Dict = {
 	"No results found": "未找到結果",
 	"No source path for this result": "此結果沒有來源路徑",
 	"No sync activity this session.": "此階段沒有同步活動。",
+	"No vault is selected. Pick a vault in Engram settings.":
+		"尚未選擇儲存庫。在 Engram 設定中選擇一個儲存庫。",
 	"No vaults found — first sync will create one": "未找到任何知識庫 — 首次同步會建立一個",
 	"Node.js dependencies": "Node.js 依賴",
 	"Not configured": "未配置",
@@ -477,6 +482,8 @@ const zhTW: Dict = {
 	"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.":
 		"伺服器已遺失此檔案的內容，將嘗試恢復。此設備上的內容未變更。",
 	"The server took too long to respond. Try again.": "伺服器回應時間過長。請重試。",
+	"The vault changed while loading. Close this and try again.":
+		"載入期間，儲存庫發生變更。請關閉並重新嘗試。",
 	"These files are fine. Each card below says why they did not sync.":
 		"這些檔案沒有問題。下方卡片說明了為何未同步。",
 	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":

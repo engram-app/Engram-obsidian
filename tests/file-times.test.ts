@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NoteChannel } from "../src/channel";
-import { encodeUpdateFrame, toB64 } from "../src/crdt/wire";
+import { encodeUpdateFrame, isUpdateFrame, toB64 } from "../src/crdt/wire";
 import { fileTimes, liveEditTimes, msToSeconds } from "../src/file-times";
 
 let lastWsInstance: any = null;
@@ -109,16 +109,16 @@ describe("file times on the wire", () => {
 
 	test("no resolver, or a file with no stat, adds no keys", async () => {
 		const { channel, ws } = await joined();
-		expect(channel.sendCrdt("d1", "dGVzdA==")).toBe(true);
+		expect(channel.sendCrdt("d1", updateFrame)).toBe(true);
 		channel.setFileTimes(() => ({}));
-		expect(channel.sendCrdt("d2", "dGVzdA==")).toBe(true);
+		expect(channel.sendCrdt("d2", updateFrame)).toBe(true);
 		const frames = ws.sent
 			.map((s: string) => JSON.parse(s))
 			.filter((f: unknown[]) => f[3] === "crdt_msg")
 			.map((f: unknown[]) => f[4]);
 		expect(frames).toEqual([
-			{ doc_id: "d1", b64: "dGVzdA==" },
-			{ doc_id: "d2", b64: "dGVzdA==" },
+			{ doc_id: "d1", b64: updateFrame },
+			{ doc_id: "d2", b64: updateFrame },
 		]);
 		channel.disconnect();
 	});
@@ -132,17 +132,54 @@ const updateFrame = encodeUpdateFrame(new Uint8Array([0, 0]));
 describe("liveEditTimes", () => {
 	const file = { stat: { mtime: 1_700_000_001_500, ctime: 1_700_000_000_000 } };
 
-	test("a live edit never carries a time older than now (Obsidian saves ~2s later)", () => {
+	test("an editor-bound note never carries a time older than now (Obsidian saves ~2s later)", () => {
 		const nowMs = 1_700_000_100_999;
-		expect(liveEditTimes(file, nowMs)).toEqual({ mtime: 1_700_000_100, ctime: 1_700_000_000 });
+		expect(liveEditTimes(file, true, nowMs)).toEqual({
+			mtime: 1_700_000_100,
+			ctime: 1_700_000_000,
+		});
 	});
 
 	test("a file time ahead of now wins; the server only moves mtime forward", () => {
-		expect(liveEditTimes(file, 1_700_000_000_000).mtime).toBe(1_700_000_001.5);
+		expect(liveEditTimes(file, true, 1_700_000_000_000).mtime).toBe(1_700_000_001.5);
 	});
 
-	test("a file with no stat still carries now", () => {
-		expect(liveEditTimes(null, 5_000)).toEqual({ mtime: 5 });
+	test("a bound file with no stat still carries now", () => {
+		expect(liveEditTimes(null, true, 5_000)).toEqual({ mtime: 5 });
+	});
+
+	test("a note not bound in an editor (changed on disk) keeps the file's own times", () => {
+		expect(liveEditTimes(file, false, 1_700_000_100_999)).toEqual({
+			mtime: 1_700_000_001.5,
+			ctime: 1_700_000_000,
+		});
+	});
+});
+
+describe("isUpdateFrame", () => {
+	test("reads only the head of the frame, however large", () => {
+		const big = encodeUpdateFrame(new Uint8Array(2_000_000));
+		const real = globalThis.atob;
+		const lengths: number[] = [];
+		globalThis.atob = (s: string) => {
+			lengths.push(s.length);
+			return real(s);
+		};
+		try {
+			expect(isUpdateFrame(big)).toBe(true);
+		} finally {
+			globalThis.atob = real;
+		}
+		// Not vacuous: the decoder must have run through atob, on the head only.
+		expect(lengths.length).toBeGreaterThan(0);
+		expect(Math.max(...lengths)).toBeLessThanOrEqual(4);
+	});
+
+	test("is false for a handshake frame, a non-frame and garbage", () => {
+		expect(isUpdateFrame(step1Frame)).toBe(false);
+		expect(isUpdateFrame("dGVzdA==")).toBe(false);
+		expect(isUpdateFrame("")).toBe(false);
+		expect(isUpdateFrame("!!!")).toBe(false);
 	});
 });
 
@@ -209,7 +246,23 @@ describe("live edit frames use the live time, queued and create frames the file'
 	});
 });
 
+// `/ 1000`, `/ 1e3`, `/ 1_000`, `* 0.001` and `* .001` on a ctime / mtime.
+const DIVIDES_TIME = /\b[mc]time(Ms)?\)?\s*(\/\s*(1000|1e3|1_000)\b|\*\s*0?\.001\b)/;
+
 describe("one ms to seconds converter", () => {
+	test("the scan flags every spelling of the conversion", () => {
+		for (const line of [
+			"a = file.stat.mtime / 1000;",
+			"a = stat.ctime/1e3",
+			"a = f.stat.mtime / 1_000",
+			"a = (file.stat.mtime) * 0.001",
+			"a = stat.mtimeMs * .001",
+		]) {
+			expect(DIVIDES_TIME.test(line), line).toBe(true);
+		}
+		expect(DIVIDES_TIME.test("a = Date.now() / 1000")).toBe(false);
+	});
+
 	function sources(dir: string): string[] {
 		return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
 			e.isDirectory()
@@ -240,6 +293,7 @@ describe("main.ts wires the real lookup", () => {
 		const main = readFileSync("src/main.ts", "utf8");
 		expect(main).toMatch(/channel\.setFileTimes\(\(docId, path, live\) => \{/);
 		expect(main).toContain("this.app.vault.getFileByPath(p)");
-		expect(main).toContain("live ? liveEditTimes(file) : fileTimes(file)");
+		expect(main).toContain("liveEditTimes(file, isLiveBound)");
+		expect(main).toContain("this.crdtLiveViews?.isBound(p)");
 	});
 });

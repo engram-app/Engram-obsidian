@@ -357,6 +357,10 @@ const fr: Dict = {
 	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
 		"Lie Claude, Cursor, ChatGPT ou n'importe quelle application MCP pour qu'elle puisse lire et écrire tes notes ",
 	"Link Obsidian to Engram": "Associer Obsidian à Engram",
+	"Live sync did not connect in time. Try again in a moment.":
+		"La synchronisation en direct n'a pas pu se connecter à temps. Réessaie dans un moment.",
+	"Live sync was refused for this account, so the comparison can't run. Check your plan or update the plugin.":
+		"La synchronisation en direct a été refusée pour ce compte, donc la comparaison ne peut pas s'exécuter. Vérifie ton abonnement ou mets à jour le plugin.",
 	"Loading vaults…": "Chargement des coffres…",
 	"Love it": "J'adore",
 	"Make new vault": "Créer un nouveau coffre",
@@ -377,6 +381,8 @@ const fr: Dict = {
 	"No results found": "Aucun résultat trouvé",
 	"No source path for this result": "Aucun chemin de source pour ce résultat",
 	"No sync activity this session.": "Aucune activité de synchronisation pendant cette session.",
+	"No vault is selected. Pick a vault in Engram settings.":
+		"Aucun coffre n'est sélectionné. Choisis un coffre dans les paramètres de Engram.",
 	"No vaults found — first sync will create one":
 		"Aucun coffre trouvé — la première synchronisation en créera un",
 	"Node.js dependencies": "Dépendances Node.js",
@@ -576,6 +582,8 @@ const fr: Dict = {
 		"Le serveur a perdu le contenu de ce fichier et va essayer de le restaurer. Rien n'a été modifié sur cet appareil.",
 	"The server took too long to respond. Try again.":
 		"Le serveur a mis trop de temps à répondre. Réessaie.",
+	"The vault changed while loading. Close this and try again.":
+		"Le coffre a changé pendant le chargement. Ferme ceci et réessaie.",
 	"These files are fine. Each card below says why they did not sync.":
 		"Ces fichiers sont corrects. Chaque carte ci-dessous explique pourquoi ils n'ont pas été synchronisés.",
 	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":

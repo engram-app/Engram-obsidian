@@ -300,6 +300,10 @@ const id: Dict = {
 	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
 		"Hubungkan Claude, Cursor, ChatGPT, atau aplikasi MCP lainnya agar dapat membaca dan menulis catatan Anda. ",
 	"Link Obsidian to Engram": "Hubungkan Obsidian ke Engram",
+	"Live sync did not connect in time. Try again in a moment.":
+		"Sinkronisasi langsung tidak terhubung tepat waktu. Coba lagi sebentar lagi.",
+	"Live sync was refused for this account, so the comparison can't run. Check your plan or update the plugin.":
+		"Sinkronisasi langsung ditolak untuk akun ini, sehingga perbandingan tidak dapat dijalankan. Periksa paket Anda atau perbarui plugin.",
 	"Loading vaults…": "Memuat Vault…",
 	"Love it": "Suka sekali",
 	"Make new vault": "Buat Vault baru",
@@ -320,6 +324,8 @@ const id: Dict = {
 	"No results found": "Tidak ada hasil ditemukan",
 	"No source path for this result": "Tidak ada jalur sumber untuk hasil ini",
 	"No sync activity this session.": "Tidak ada aktivitas sinkronisasi pada sesi ini.",
+	"No vault is selected. Pick a vault in Engram settings.":
+		"Tidak ada Vault yang dipilih. Pilih Vault di pengaturan Engram.",
 	"No vaults found — first sync will create one":
 		"Tidak ada Vault yang ditemukan — sinkronisasi pertama akan membuatnya",
 	"Node.js dependencies": "Dependensi Node.js",
@@ -515,6 +521,8 @@ const id: Dict = {
 		"Server kehilangan konten file ini dan akan mencoba memulihkannya. Tidak ada yang berubah di perangkat ini.",
 	"The server took too long to respond. Try again.":
 		"Server membutuhkan waktu terlalu lama untuk merespons. Coba lagi.",
+	"The vault changed while loading. Close this and try again.":
+		"Vault berubah saat sedang dimuat. Tutup ini dan coba lagi.",
 	"These files are fine. Each card below says why they did not sync.":
 		"File-file ini tidak masalah. Setiap kartu di bawah menjelaskan mengapa tidak disinkronkan.",
 	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":

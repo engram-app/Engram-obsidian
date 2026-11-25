@@ -296,6 +296,10 @@ const vi: Dict = {
 	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
 		"Liên kết Claude, Cursor, ChatGPT, hoặc bất kỳ ứng dụng MCP nào để nó có thể đọc và ghi ghi chú của bạn ",
 	"Link Obsidian to Engram": "Liên kết Obsidian với Engram",
+	"Live sync did not connect in time. Try again in a moment.":
+		"Không kết nối được đồng bộ hóa trực tiếp kịp thời. Thử lại sau một lát.",
+	"Live sync was refused for this account, so the comparison can't run. Check your plan or update the plugin.":
+		"Yêu cầu đồng bộ hóa trực tiếp đã bị từ chối cho tài khoản này, vì vậy việc so sánh không thể thực hiện. Kiểm tra gói của bạn hoặc cập nhật plugin.",
 	"Loading vaults…": "Đang tải kho lưu trữ…",
 	"Love it": "Rất thích",
 	"Make new vault": "Tạo kho lưu trữ mới",
@@ -316,6 +320,8 @@ const vi: Dict = {
 	"No results found": "Không tìm thấy kết quả",
 	"No source path for this result": "Không tìm thấy đường dẫn nguồn cho kết quả này",
 	"No sync activity this session.": "Chưa có hoạt động đồng bộ hóa trong phiên này.",
+	"No vault is selected. Pick a vault in Engram settings.":
+		"Chưa chọn kho lưu trữ. Chọn một kho lưu trữ trong phần Engram.",
 	"No vaults found — first sync will create one":
 		"Không tìm thấy kho lưu trữ nào — lần đồng bộ hóa đầu tiên sẽ tạo một kho",
 	"Node.js dependencies": "Các thư viện Node.js",
@@ -509,6 +515,8 @@ const vi: Dict = {
 	"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.":
 		"Máy chủ đã mất nội dung của tệp này và sẽ cố gắng khôi phục. Không có gì thay đổi trên thiết bị này.",
 	"The server took too long to respond. Try again.": "Máy chủ phản hồi quá chậm. Thử lại.",
+	"The vault changed while loading. Close this and try again.":
+		"Kho lưu trữ đã thay đổi trong quá trình tải. Đóng lại và thử lại.",
 	"These files are fine. Each card below says why they did not sync.":
 		"Các tệp này không có vấn đề gì. Mỗi mục bên dưới giải thích lý do tại sao chúng không được đồng bộ hóa.",
 	"This account is paused, so notes are not being sent or received. Changes made on this device stay here. Contact {email} to get it restored. Syncing resumes by itself once it is.":
