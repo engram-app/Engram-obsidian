@@ -15,7 +15,7 @@ import {
 import { arrayBufferToBase64, base64ToArrayBuffer, type EngramApi } from "./api";
 import { expBackoff } from "./backoff";
 import type { BaseStore } from "./base-store";
-import type { GenesisOutcome } from "./channel";
+import type { FoldersBatch, GenesisOutcome } from "./channel";
 import { fnv1a, fnv1aBase64 } from "./content-hash";
 import { FileMetaV1Writer } from "./crdt/filemeta-v1";
 import { flushTarget, splitFrontmatter } from "./crdt/frontmatter-codec";
@@ -14145,10 +14145,20 @@ export class SyncEngine {
 
 	/** Live-sync entry for a server-side folder-marker change (folders.batch
 	 *  channel event). Re-polls /folders/explicit and materializes new empty
-	 *  folders immediately instead of waiting for the next pull. */
-	async resyncFolders(): Promise<void> {
+	 *  folders immediately instead of waiting for the next pull. A rename
+	 *  (sent only with folder_ops off, where no folder_changed follows) leaves
+	 *  its old folder the same way folder_changed does (`leaveMovedFolder`),
+	 *  else an explicit folder under it pins the emptied old path. After the
+	 *  re-poll, so the listed names cannot clear the moved-away mark. */
+	async resyncFolders(batch: FoldersBatch = {}): Promise<void> {
 		if (this.syncBlocked) return;
 		await this.syncExplicitFolders();
+		if (batch.op !== "rename" || typeof batch.from !== "string") return;
+		const from = cleanFolderPath(batch.from);
+		// Own echo: the folder already moved on this disk, nothing to leave.
+		if (!from || this.shouldIgnore(from)) return;
+		if (!(this.app.vault.getAbstractFileByPath(from) instanceof TFolder)) return;
+		await this.leaveMovedFolder(from, null);
 	}
 
 	/** Pull the server's explicit empty-folder markers, persist them, and

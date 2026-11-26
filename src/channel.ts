@@ -221,6 +221,10 @@ export type CrdtCreateResult = {
  *  pushing rather than assuming it. */
 export type GenesisOutcome = "stored" | "absent" | "occupied" | null;
 
+/** A `folders.batch` payload, unvalidated: `op` and, for a rename, the old
+ *  folder in `from`. Read only by `SyncEngine.resyncFolders`. */
+export type FoldersBatch = { op?: unknown; from?: unknown };
+
 /** Raw server reply shape for `crdt_create`, before the docId/seeded rename —
  *  same "no inline `;`" reasoning as CrdtCreateResult above. */
 type CrdtCreateReply = {
@@ -345,8 +349,9 @@ export class NoteChannel {
 	onStatusChange: ((connected: boolean) => void) | null = null;
 	onVaultDeleted: (() => void) | null = null;
 	/** Folder markers changed on the server (create/delete/move from the web
-	 *  app). Payload is advisory only — the handler re-polls /folders/explicit. */
-	onFoldersChanged: (() => void) | null = null;
+	 *  app). The handler re-polls /folders/explicit; a rename's `from` names
+	 *  the old folder to leave (`SyncEngine.resyncFolders`). */
+	onFoldersChanged: ((batch: FoldersBatch) => void) | null = null;
 	/** Surfaces the user's current plan/entitlements from the best-effort
 	 *  `user:{userId}` topic (join reply `response.plan` + `subscription_activated`
 	 *  broadcasts). Never gates the plugin's connected state. */
@@ -1592,7 +1597,7 @@ export class NoteChannel {
 
 		if (event === "folders.batch") {
 			rlog().info("channel", "Folder markers changed on server");
-			this.onFoldersChanged?.();
+			this.onFoldersChanged?.(payload ?? {});
 			return;
 		}
 
