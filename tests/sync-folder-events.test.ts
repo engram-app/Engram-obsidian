@@ -705,6 +705,29 @@ describe("forced diagnostics from the engine", () => {
 // docs/context/folder-move-follow-race-empty-old-folder.md).
 // ---------------------------------------------------------------------------
 
+/** A stateful disk: createFolder adds, trashFile removes from the parent. */
+function statefulDisk(paths: string[]): Map<string, TFolder> {
+	const disk = new Map<string, TFolder>();
+	const mk = (path: string) => {
+		const f = new TFolder(path, []);
+		disk.set(path, f);
+		const i = path.lastIndexOf("/");
+		if (i > 0) disk.get(path.slice(0, i))?.children.push(f);
+		return f;
+	};
+	for (const p of paths) mk(p);
+	mockApp.vault.getAbstractFileByPath.mockImplementation((p: string) => disk.get(p) ?? null);
+	mockApp.vault.createFolder.mockImplementation(async (p: string) => {
+		mk(p);
+	});
+	(mockApp.fileManager.trashFile as jest.Mock).mockImplementation(async (f: TFolder) => {
+		disk.delete(f.path);
+		const parent = disk.get(f.path.slice(0, f.path.lastIndexOf("/")));
+		if (parent) parent.children = parent.children.filter((c) => c !== f);
+	});
+	return disk;
+}
+
 describe("SyncEngine.resyncFolders folders.batch rename", () => {
 	test.each([
 		["implicit", false],
@@ -713,27 +736,7 @@ describe("SyncEngine.resyncFolders folders.batch rename", () => {
 		const { engine, explicit } = await createEngine();
 		if (parentExplicit) await explicit.add("AR6");
 		await explicit.add("AR6/sub");
-
-		// A stateful disk: trash removes the folder and its parent link.
-		const disk = new Map<string, TFolder>();
-		const mk = (path: string) => {
-			const f = new TFolder(path, []);
-			disk.set(path, f);
-			const i = path.lastIndexOf("/");
-			if (i > 0) disk.get(path.slice(0, i))?.children.push(f);
-			return f;
-		};
-		mk("AR6");
-		mk("AR6/sub");
-		mockApp.vault.getAbstractFileByPath.mockImplementation((p: string) => disk.get(p) ?? null);
-		mockApp.vault.createFolder.mockImplementation(async (p: string) => {
-			mk(p);
-		});
-		(mockApp.fileManager.trashFile as jest.Mock).mockImplementation(async (f: TFolder) => {
-			disk.delete(f.path);
-			const parent = disk.get(f.path.slice(0, f.path.lastIndexOf("/")));
-			if (parent) parent.children = parent.children.filter((c) => c !== f);
-		});
+		const disk = statefulDisk(["AR6", "AR6/sub"]);
 
 		const listed = parentExplicit ? ["A2R6", "A2R6/sub"] : ["A2R6/sub"];
 		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce(listed);
@@ -744,5 +747,20 @@ describe("SyncEngine.resyncFolders folders.batch rename", () => {
 		expect(disk.has("AR6/sub")).toBe(false);
 		expect(disk.has("AR6")).toBe(false);
 		expect(mockApi.deleteFolder).not.toHaveBeenCalled();
+	});
+
+	// A late or out-of-order batch (AR6 renamed to A2R6 and back): the fresh
+	// server list still names AR6/sub, so it is the authority and nothing
+	// under AR6 is left.
+	test("keeps an old folder the fresh server list still names", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("AR6/sub");
+		const disk = statefulDisk(["AR6", "AR6/sub"]);
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce(["AR6/sub"]);
+
+		await engine.resyncFolders({ op: "rename", from: "AR6", folder: "A2R6" });
+
+		expect(disk.has("AR6/sub")).toBe(true);
+		expect(explicit.has("AR6/sub")).toBe(true);
 	});
 });
