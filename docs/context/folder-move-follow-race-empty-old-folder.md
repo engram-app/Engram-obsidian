@@ -60,9 +60,21 @@ Fix: the channel hands the payload to `resyncFolders`, which after the
 re-poll calls `leaveMovedFolder(from, null)`, the same mechanism as the
 `folder_changed` path. Both paths now share it: any server folder rename ends
 in `leaveMovedFolder`. It runs AFTER the re-poll, because the re-poll clears
-moved-away marks for every listed name. It is skipped when `from` is not a
-folder on disk (this device's own rename echo), so no stale moved-away mark
-is left behind. Test: `SyncEngine.resyncFolders folders.batch rename` in
+moved-away marks for every listed name. It is skipped when:
+- `from` is not a folder on disk (this device's own rename echo);
+- the fresh server list still names `from` or a path under it. A batch has
+  no seq and no serial lane, so a late one (renamed and back) would
+  otherwise trash an explicit folder the server lists again;
+- the rename is case-only (`from` and `folder` match ignoring case), since on
+  a case-insensitive disk both names are one directory.
+
+When the old folder keeps content (a local note written into it), the
+moved-away mark stays, the same as on the `folder_changed` path. That is
+harmless: `removeEmptyFolders` never removes a folder with children, so the
+mark only lifts the explicit-folder guard once the folder is empty. It is
+cleared when the folder is removed, when the user re-makes a folder there,
+when the server lists the path again, and on vault switch.
+Tests: `SyncEngine.resyncFolders folders.batch rename` in
 `tests/sync-folder-events.test.ts`.
 
 ## Secondary bugs fixed in the same PR
