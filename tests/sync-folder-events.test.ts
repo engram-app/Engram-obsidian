@@ -763,4 +763,57 @@ describe("SyncEngine.resyncFolders folders.batch rename", () => {
 		expect(disk.has("AR6/sub")).toBe(true);
 		expect(explicit.has("AR6/sub")).toBe(true);
 	});
+
+	test("case-only rename leaves nothing", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("AR6/sub");
+		// A case-insensitive disk still answers the old name.
+		const disk = statefulDisk(["Ar6", "Ar6/sub"]);
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce(["AR6/sub"]);
+
+		await engine.resyncFolders({ op: "rename", from: "Ar6", folder: "AR6" });
+
+		expect(disk.has("Ar6")).toBe(true);
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalledWith(disk.get("Ar6"));
+	});
+
+	test("own rename echo: old folder already gone, nothing left", async () => {
+		const { engine } = await createEngine();
+		const disk = statefulDisk(["A2R6", "A2R6/sub"]);
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce(["A2R6/sub"]);
+
+		await engine.resyncFolders({ op: "rename", from: "AR6", folder: "A2R6" });
+
+		expect(disk.has("A2R6/sub")).toBe(true);
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+		// No moved-away mark for a folder that is not on disk: a later explicit
+		// AR6 would otherwise be trashed once empty.
+		expect((engine as unknown as { isMovedAway(f: string): boolean }).isMovedAway("AR6")).toBe(
+			false,
+		);
+	});
+
+	test.each(["create", "delete", "move"])("op %s leaves nothing", async (op) => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("AR6");
+		const disk = statefulDisk(["AR6"]);
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce(["AR6", "A2R6"]);
+
+		await engine.resyncFolders({ op, from: "AR6", folder: "A2R6" });
+
+		expect(disk.has("AR6")).toBe(true);
+	});
+
+	test("an old folder that still holds a note stays", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("AR6/sub");
+		const disk = statefulDisk(["AR6", "AR6/sub"]);
+		disk.get("AR6")?.children.push(new TFile("AR6/note.md"));
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce(["A2R6/sub"]);
+
+		await engine.resyncFolders({ op: "rename", from: "AR6", folder: "A2R6" });
+
+		expect(disk.has("AR6")).toBe(true);
+		expect(disk.has("A2R6/sub")).toBe(true);
+	});
 });
