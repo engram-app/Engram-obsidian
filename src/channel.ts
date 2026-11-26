@@ -222,8 +222,9 @@ export type CrdtCreateResult = {
 export type GenesisOutcome = "stored" | "absent" | "occupied" | null;
 
 /** A `folders.batch` payload, unvalidated: `op` and, for a rename, the old
- *  folder in `from`. Read only by `SyncEngine.resyncFolders`. */
-export type FoldersBatch = { op?: unknown; from?: unknown };
+ *  folder in `from` and the new one in `folder`. Read only by
+ *  `SyncEngine.resyncFolders`. */
+export type FoldersBatch = { op?: unknown; from?: unknown; folder?: unknown };
 
 /** Raw server reply shape for `crdt_create`, before the docId/seeded rename —
  *  same "no inline `;`" reasoning as CrdtCreateResult above. */
