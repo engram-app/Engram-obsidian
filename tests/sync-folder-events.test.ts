@@ -76,6 +76,7 @@ beforeEach(() => {
 	jest.clearAllMocks();
 	mockApp.vault.getAbstractFileByPath.mockReset().mockReturnValue(null);
 	mockApp.fileManager.trashFile.mockReset().mockResolvedValue(undefined);
+	mockApp.vault.createFolder.mockReset().mockResolvedValue(undefined);
 	(mockApi.createFolder as jest.Mock)
 		.mockReset()
 		.mockResolvedValue({ folder: { name: "", count: 0 } });
@@ -694,5 +695,54 @@ describe("forced diagnostics from the engine", () => {
 		joinReporter.rejected("plan_limit", 3);
 		const rejected = (await shipped()).filter((l) => l.startsWith("crdt_join_rejected"));
 		expect(rejected).toHaveLength(3);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// folders.batch rename (folder_ops off: a web or MCP folder rename). The old
+// folder's only content is an explicit empty subfolder; the batch must leave
+// no empty old folder behind (same mechanism as folder_changed,
+// docs/context/folder-move-follow-race-empty-old-folder.md).
+// ---------------------------------------------------------------------------
+
+describe("SyncEngine.resyncFolders folders.batch rename", () => {
+	test.each([
+		["implicit", false],
+		["explicit", true],
+	])("removes the emptied old folder (%s parent)", async (_label, parentExplicit) => {
+		const { engine, explicit } = await createEngine();
+		if (parentExplicit) await explicit.add("AR6");
+		await explicit.add("AR6/sub");
+
+		// A stateful disk: trash removes the folder and its parent link.
+		const disk = new Map<string, TFolder>();
+		const mk = (path: string) => {
+			const f = new TFolder(path, []);
+			disk.set(path, f);
+			const i = path.lastIndexOf("/");
+			if (i > 0) disk.get(path.slice(0, i))?.children.push(f);
+			return f;
+		};
+		mk("AR6");
+		mk("AR6/sub");
+		mockApp.vault.getAbstractFileByPath.mockImplementation((p: string) => disk.get(p) ?? null);
+		mockApp.vault.createFolder.mockImplementation(async (p: string) => {
+			mk(p);
+		});
+		(mockApp.fileManager.trashFile as jest.Mock).mockImplementation(async (f: TFolder) => {
+			disk.delete(f.path);
+			const parent = disk.get(f.path.slice(0, f.path.lastIndexOf("/")));
+			if (parent) parent.children = parent.children.filter((c) => c !== f);
+		});
+
+		const listed = parentExplicit ? ["A2R6", "A2R6/sub"] : ["A2R6/sub"];
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce(listed);
+
+		await engine.resyncFolders({ op: "rename", from: "AR6", folder: "A2R6" });
+
+		expect(disk.has("A2R6/sub")).toBe(true);
+		expect(disk.has("AR6/sub")).toBe(false);
+		expect(disk.has("AR6")).toBe(false);
+		expect(mockApi.deleteFolder).not.toHaveBeenCalled();
 	});
 });
