@@ -2918,8 +2918,8 @@ export default class EngramSyncPlugin extends Plugin {
 					this.noteStream?.disconnect();
 				};
 
-				channel.onFoldersChanged = () => {
-					this.syncEngine.resyncFolders().catch((e) => {
+				channel.onFoldersChanged = (batch) => {
+					this.syncEngine.resyncFolders(batch).catch((e) => {
 						rlog().warn("pull", `Live folder resync failed: ${errMsg(e)}`);
 					});
 				};

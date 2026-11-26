@@ -15,7 +15,7 @@ import {
 import { arrayBufferToBase64, base64ToArrayBuffer, type EngramApi } from "./api";
 import { expBackoff } from "./backoff";
 import type { BaseStore } from "./base-store";
-import type { GenesisOutcome } from "./channel";
+import type { FoldersBatch, GenesisOutcome } from "./channel";
 import { fnv1a, fnv1aBase64 } from "./content-hash";
 import { FileMetaV1Writer } from "./crdt/filemeta-v1";
 import { flushTarget, splitFrontmatter } from "./crdt/frontmatter-codec";
@@ -14145,10 +14145,28 @@ export class SyncEngine {
 
 	/** Live-sync entry for a server-side folder-marker change (folders.batch
 	 *  channel event). Re-polls /folders/explicit and materializes new empty
-	 *  folders immediately instead of waiting for the next pull. */
-	async resyncFolders(): Promise<void> {
+	 *  folders immediately instead of waiting for the next pull. A rename
+	 *  (sent only with folder_ops off, where no folder_changed follows) leaves
+	 *  its old folder the same way folder_changed does (`leaveMovedFolder`),
+	 *  else an explicit folder under it pins the emptied old path. After the
+	 *  re-poll, whose fresh list is the authority: a batch has no seq and no
+	 *  serial lane, so a late one (renamed and back) must not leave a folder
+	 *  the server lists again. */
+	async resyncFolders(batch: FoldersBatch = {}): Promise<void> {
 		if (this.syncBlocked) return;
 		await this.syncExplicitFolders();
+		if (batch.op !== "rename" || typeof batch.from !== "string") return;
+		const from = cleanFolderPath(batch.from);
+		if (!from || this.shouldIgnore(from)) return;
+		// Case-only rename: on a case-insensitive disk both names are one
+		// directory, and leaving the old one would trash the new.
+		const to = typeof batch.folder === "string" ? cleanFolderPath(batch.folder) : "";
+		if (from.toLowerCase() === to.toLowerCase()) return;
+		// Own echo: the folder already moved on this disk, nothing to leave.
+		if (!(this.app.vault.getAbstractFileByPath(from) instanceof TFolder)) return;
+		const under = `${from}/`;
+		if (this.explicitFolders?.all().some((n) => n === from || n.startsWith(under))) return;
+		await this.leaveMovedFolder(from, null);
 	}
 
 	/** Pull the server's explicit empty-folder markers, persist them, and

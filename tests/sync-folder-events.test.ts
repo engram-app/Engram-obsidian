@@ -76,6 +76,7 @@ beforeEach(() => {
 	jest.clearAllMocks();
 	mockApp.vault.getAbstractFileByPath.mockReset().mockReturnValue(null);
 	mockApp.fileManager.trashFile.mockReset().mockResolvedValue(undefined);
+	mockApp.vault.createFolder.mockReset().mockResolvedValue(undefined);
 	(mockApi.createFolder as jest.Mock)
 		.mockReset()
 		.mockResolvedValue({ folder: { name: "", count: 0 } });
@@ -694,5 +695,125 @@ describe("forced diagnostics from the engine", () => {
 		joinReporter.rejected("plan_limit", 3);
 		const rejected = (await shipped()).filter((l) => l.startsWith("crdt_join_rejected"));
 		expect(rejected).toHaveLength(3);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// folders.batch rename (folder_ops off: a web or MCP folder rename). The old
+// folder's only content is an explicit empty subfolder; the batch must leave
+// no empty old folder behind (same mechanism as folder_changed,
+// docs/context/folder-move-follow-race-empty-old-folder.md).
+// ---------------------------------------------------------------------------
+
+/** A stateful disk: createFolder adds, trashFile removes from the parent. */
+function statefulDisk(paths: string[]): Map<string, TFolder> {
+	const disk = new Map<string, TFolder>();
+	const mk = (path: string) => {
+		const f = new TFolder(path, []);
+		disk.set(path, f);
+		const i = path.lastIndexOf("/");
+		if (i > 0) disk.get(path.slice(0, i))?.children.push(f);
+		return f;
+	};
+	for (const p of paths) mk(p);
+	mockApp.vault.getAbstractFileByPath.mockImplementation((p: string) => disk.get(p) ?? null);
+	mockApp.vault.createFolder.mockImplementation(async (p: string) => {
+		mk(p);
+	});
+	(mockApp.fileManager.trashFile as jest.Mock).mockImplementation(async (f: TFolder) => {
+		disk.delete(f.path);
+		const parent = disk.get(f.path.slice(0, f.path.lastIndexOf("/")));
+		if (parent) parent.children = parent.children.filter((c) => c !== f);
+	});
+	return disk;
+}
+
+describe("SyncEngine.resyncFolders folders.batch rename", () => {
+	test.each([
+		["implicit", false],
+		["explicit", true],
+	])("removes the emptied old folder (%s parent)", async (_label, parentExplicit) => {
+		const { engine, explicit } = await createEngine();
+		if (parentExplicit) await explicit.add("AR6");
+		await explicit.add("AR6/sub");
+		const disk = statefulDisk(["AR6", "AR6/sub"]);
+
+		const listed = parentExplicit ? ["A2R6", "A2R6/sub"] : ["A2R6/sub"];
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce(listed);
+
+		await engine.resyncFolders({ op: "rename", from: "AR6", folder: "A2R6" });
+
+		expect(disk.has("A2R6/sub")).toBe(true);
+		expect(disk.has("AR6/sub")).toBe(false);
+		expect(disk.has("AR6")).toBe(false);
+		expect(mockApi.deleteFolder).not.toHaveBeenCalled();
+	});
+
+	// A late or out-of-order batch (AR6 renamed to A2R6 and back): the fresh
+	// server list still names AR6/sub, so it is the authority and nothing
+	// under AR6 is left.
+	test("keeps an old folder the fresh server list still names", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("AR6/sub");
+		const disk = statefulDisk(["AR6", "AR6/sub"]);
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce(["AR6/sub"]);
+
+		await engine.resyncFolders({ op: "rename", from: "AR6", folder: "A2R6" });
+
+		expect(disk.has("AR6/sub")).toBe(true);
+		expect(explicit.has("AR6/sub")).toBe(true);
+	});
+
+	test("case-only rename leaves nothing", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("AR6/sub");
+		// A case-insensitive disk still answers the old name.
+		const disk = statefulDisk(["Ar6", "Ar6/sub"]);
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce(["AR6/sub"]);
+
+		await engine.resyncFolders({ op: "rename", from: "Ar6", folder: "AR6" });
+
+		expect(disk.has("Ar6")).toBe(true);
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalledWith(disk.get("Ar6"));
+	});
+
+	test("own rename echo: old folder already gone, nothing left", async () => {
+		const { engine } = await createEngine();
+		const disk = statefulDisk(["A2R6", "A2R6/sub"]);
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce(["A2R6/sub"]);
+
+		await engine.resyncFolders({ op: "rename", from: "AR6", folder: "A2R6" });
+
+		expect(disk.has("A2R6/sub")).toBe(true);
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+		// No moved-away mark for a folder that is not on disk: a later explicit
+		// AR6 would otherwise be trashed once empty.
+		expect((engine as unknown as { isMovedAway(f: string): boolean }).isMovedAway("AR6")).toBe(
+			false,
+		);
+	});
+
+	test.each(["create", "delete", "move"])("op %s leaves nothing", async (op) => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("AR6");
+		const disk = statefulDisk(["AR6"]);
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce(["AR6", "A2R6"]);
+
+		await engine.resyncFolders({ op, from: "AR6", folder: "A2R6" });
+
+		expect(disk.has("AR6")).toBe(true);
+	});
+
+	test("an old folder that still holds a note stays", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("AR6/sub");
+		const disk = statefulDisk(["AR6", "AR6/sub"]);
+		disk.get("AR6")?.children.push(new TFile("AR6/note.md"));
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce(["A2R6/sub"]);
+
+		await engine.resyncFolders({ op: "rename", from: "AR6", folder: "A2R6" });
+
+		expect(disk.has("AR6")).toBe(true);
+		expect(disk.has("A2R6/sub")).toBe(true);
 	});
 });

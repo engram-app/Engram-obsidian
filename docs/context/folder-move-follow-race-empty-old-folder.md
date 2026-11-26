@@ -1,6 +1,6 @@
 # Context Doc: Folder move follow race leaves an empty old folder
 
-_Last verified: 2026-11-19_
+_Last verified: 2026-11-26_
 
 ## Status
 Fixed in PR #708 (root cause plus two secondary bugs). The catch path was
@@ -44,6 +44,38 @@ which adds the old folder to `movedAwayFolders` and removes what is empty. The
 invariant this doc protects is unchanged: every way the folder rename can fail
 must end in `leaveMovedFolder`. Why the bookkeeping is not restored is in
 `remote-index-rekey-silent.md`.
+
+## The folders.batch rename path (folder_ops off)
+With `folder_ops` off, a web-app or MCP folder rename sends no
+`folder_changed`. The server broadcasts `folders.batch` with
+`op: "rename"` and `from: <old folder>` instead, after the notes leg. The
+plugin used to ignore the payload and only re-poll `/folders/explicit`
+(`resyncFolders` -> `syncExplicitFolders`). That trash pass checks each
+dropped name once, so an old folder whose only content was an explicit empty
+subfolder stayed on disk: the parent still had the child when it was checked,
+or it was never explicit and so never listed (staging: MCP rename of AR6 to
+A2R6 kept AR6/).
+
+Fix: the channel hands the payload to `resyncFolders`, which after the
+re-poll calls `leaveMovedFolder(from, null)`, the same mechanism as the
+`folder_changed` path. Both paths now share it: any server folder rename ends
+in `leaveMovedFolder`. It runs AFTER the re-poll, because the re-poll clears
+moved-away marks for every listed name. It is skipped when:
+- `from` is not a folder on disk (this device's own rename echo);
+- the fresh server list still names `from` or a path under it. A batch has
+  no seq and no serial lane, so a late one (renamed and back) would
+  otherwise trash an explicit folder the server lists again;
+- the rename is case-only (`from` and `folder` match ignoring case), since on
+  a case-insensitive disk both names are one directory.
+
+When the old folder keeps content (a local note written into it), the
+moved-away mark stays, the same as on the `folder_changed` path. That is
+harmless: `removeEmptyFolders` never removes a folder with children, so the
+mark only lifts the explicit-folder guard once the folder is empty. It is
+cleared when the folder is removed, when the user re-makes a folder there,
+when the server lists the path again, and on vault switch.
+Tests: `SyncEngine.resyncFolders folders.batch rename` in
+`tests/sync-folder-events.test.ts`.
 
 ## Secondary bugs fixed in the same PR
 - **Engine-created folders.** A folder the engine created (to hold a moved
