@@ -53,3 +53,14 @@ test("omits plugin_version when unset", async () => {
 
 	expect(FakeWS.lastUrl).not.toContain("plugin_version");
 });
+
+// The server replies `id_conflict` for a taken name only to a client that
+// says it parks it (name-taken-terminal.md). Released plugins (1.36-1.40)
+// drop an `id_conflict` create silently, so they keep the old reply.
+test("advertises the name_taken capability on the socket URL", async () => {
+	const ch = new NoteChannel("http://x", "key-123", "user-1", "vault-9", "dev-1");
+
+	await ch.connect();
+
+	expect(new URL(FakeWS.lastUrl).searchParams.get("caps")).toBe("name_taken");
+});
