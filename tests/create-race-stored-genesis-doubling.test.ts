@@ -61,7 +61,7 @@ function deferred() {
 	return { promise, resolve };
 }
 
-test("create race: a text-matched :stored genesis must not leave a rival lineage on this device", async () => {
+test("create race: a create racing a discovery write routes as server-known and holds the body once", async () => {
 	// The server row, created by the API writer: lineage S.
 	const server = new Y.Doc();
 	seedContentInto(server, server.getText("content"), API_BODY, false);
@@ -118,9 +118,13 @@ test("create race: a text-matched :stored genesis must not leave a rival lineage
 				await folderGate.promise;
 				folders.add(p);
 			}),
+			rename: mock().mockResolvedValue(undefined),
 			getName: mock().mockReturnValue("Test Vault"),
 		},
-		fileManager: { trashFile: mock().mockResolvedValue(undefined) },
+		fileManager: {
+			trashFile: mock().mockResolvedValue(undefined),
+			renameFile: mock().mockResolvedValue(undefined),
+		},
 		workspace: { getActiveViewOfType: mock().mockReturnValue(null) },
 	} as any;
 	e = new SyncEngine(
@@ -177,12 +181,16 @@ test("create race: a text-matched :stored genesis must not leave a rival lineage
 	folderGate.resolve();
 	while (!pullFallbackWritten) await new Promise((r) => setTimeout(r, 1));
 	expect(disk.get(PATH)).toBe(API_BODY);
-	expect(e.hasServerNote(SERVER_ID)).toBe(false); // the window
 
-	// 3. The user's push (push_file_now: pushFile(file, true)).
-	await (e as any).pushFile(new TFile(PATH), true);
+	// 3. The user's push (push_file_now: pushFile(file, true)), routed while the
+	// pull is still inside its write. Before the fix it saw no head here and sent
+	// a genesis crdt_create under the server's id (the create port above then
+	// resumes the pull); now it must route as a server-known note.
+	const push = (e as any).pushFile(new TFile(PATH), true);
+	await new Promise((r) => setTimeout(r, 10));
+	afterFallback.resolve();
+	await push;
 	await pull;
-	expect(creates).toEqual([SERVER_ID]);
 
 	// 6. The API write's fan-out delivers the server's own lineage.
 	await e.applyPushedNoteUpdate(SERVER_ID, Y.encodeStateAsUpdate(server), "h2");
@@ -192,4 +200,11 @@ test("create race: a text-matched :stored genesis must not leave a rival lineage
 	expect(count(textOf(server))).toBe(1);
 	const local = textOf(await mgr.getDoc(SERVER_ID));
 	expect({ doc: count(local), disk: count(disk.get(PATH) ?? "") }).toEqual({ doc: 1, disk: 1 });
+	// No conflict copy, no rename, nothing trashed.
+	expect([...disk.keys()]).toEqual([PATH]);
+	expect(app.vault.rename).not.toHaveBeenCalled();
+	expect(app.fileManager.renameFile).not.toHaveBeenCalled();
+	expect(app.fileManager.trashFile).not.toHaveBeenCalled();
+	// A server-known note: no genesis create at all.
+	expect(creates).toEqual([]);
 });
