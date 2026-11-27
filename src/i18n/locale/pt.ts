@@ -19,8 +19,10 @@ const pt: Dict = {
 	"50 GB attachments": "50 GB de anexos",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"Uma janela do navegador foi aberta. Inicie sessão e insira este código para ligar o seu cofre.",
+	"A folder with that name already exists: {path}": "Já existe uma pasta com esse nome: {path}",
 	"A frontmatter key could not be parsed as YAML.":
 		"Uma chave de frontmatter não pôde ser interpretada como YAML.",
+	"A note with that name already exists: {path}": "Já existe uma nota com esse nome: {path}",
 	"A temporary server problem — retrying automatically.":
 		"Um problema temporário no servidor — a tentar novamente automaticamente.",
 	"AI / MCP setup guide": "Guia de configuração de IA / MCP",
@@ -45,6 +47,8 @@ const pt: Dict = {
 		"Já está atualizado. Não é necessário sincronizar nada.",
 	"An unexpected error — retrying automatically.":
 		"Um erro inesperado — a tentar novamente automaticamente.",
+	"Another note on the server already has this name. Rename this note and it will sync.":
+		"Outra nota no servidor já tem este nome. Renomeie esta nota e ela será sincronizada.",
 	"Attachment not accepted": "Anexo não aceite",
 	"Attachment storage full": "Armazenamento de anexos cheio",
 	"Attachment storage is full — upgrade for more.":
@@ -369,6 +373,7 @@ const pt: Dict = {
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
 		"Nível de gravidade mínimo enviado quando os diagnósticos estão ativos. Níveis mais altos enviam menos linhas. Valor padrão: Avisos e erros.",
 	"Missing on the server": "Faltante no servidor",
+	"Name already taken": "Nome já utilizado",
 	"Needs attention ({count})": "Requer atenção ({count})",
 	"Network unavailable": "Rede indisponível",
 	"New here? Watch the setup video": "Novo por aqui? Veja o vídeo de configuração",

@@ -262,6 +262,7 @@ export function issueDisposition(
 		case "unsupported":
 		case "auth":
 		case "conflict":
+		case "name_taken":
 		case "frontmatter":
 		case "blob_missing":
 			return "actionable";
@@ -335,6 +336,13 @@ export function remediation(
 			return {
 				title: t("Unresolved conflict"),
 				hint: t("Open the file to resolve the conflict, then sync again."),
+			};
+		case "name_taken":
+			return {
+				title: t("Name already taken"),
+				hint: t(
+					"Another note on the server already has this name. Rename this note and it will sync.",
+				),
 			};
 		case "frontmatter":
 			return {

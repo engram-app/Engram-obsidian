@@ -21,7 +21,8 @@
  *  - TERMINAL reject                 → "ok" to REMOVE it (retrying cannot help)
  *      BUT routed through onTerminal so it is logged/surfaced, never silently
  *      vanished: id_conflict, version_conflict, bad_doc_id,
- *      implausible_state_vector.
+ *      implausible_state_vector. A name conflict (`isNameTaken`) is also
+ *      parked by the caller so it is not re-sent until the file changes.
  *
  * A truly-stuck retryable/limit op is still bounded: the queue drops it after
  * MAX_ATTEMPTS (onDrop "max-attempts") or OP_TTL_MS, so nothing retries forever.
@@ -42,6 +43,19 @@ export const TERMINAL_REASONS: ReadonlySet<string> = new Set([
 	"implausible_state_vector",
 	"recently_deleted",
 ]);
+
+/** Server reasons meaning another note or folder already holds the NAME:
+ *  `id_conflict` (crdt_create of a known id onto a taken path: a note rename,
+ *  or a deleted note's id coming back at a taken path) and `conflict`
+ *  (folder_op: a different live folder holds the target). The one classifier
+ *  every create, note rename and folder rename goes through. Terminal, and
+ *  never a create backoff: the server is fine, only this name is taken. The
+ *  caller parks the file until the user changes it (`SyncEngine.parkNameTaken`). */
+const NAME_TAKEN_REASONS: ReadonlySet<string> = new Set(["id_conflict", "conflict"]);
+
+export function isNameTaken(reason: string | null | undefined): boolean {
+	return !!reason && NAME_TAKEN_REASONS.has(reason);
+}
 
 /** Server reasons that are TRANSIENT plan limits: the user can clear them (free
  *  a note, upgrade). Retry (bounded) AND surface to the user, never drop after

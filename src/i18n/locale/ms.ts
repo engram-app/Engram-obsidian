@@ -15,8 +15,10 @@ const ms: Dict = {
 	"50 GB attachments": "50 GB lampiran",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"Tetingkap penyemak imbas telah dibuka. Log masuk dan masukkan kod ini untuk menyambungkan peti nota anda.",
+	"A folder with that name already exists: {path}": "Folder dengan nama itu sudah wujud: {path}",
 	"A frontmatter key could not be parsed as YAML.":
 		"Kunci frontmatter tidak dapat ditafsir sebagai YAML.",
+	"A note with that name already exists: {path}": "Nota dengan nama itu sudah wujud: {path}",
 	"A temporary server problem — retrying automatically.":
 		"Masalah pelayan sementara — cuba semula secara automatik.",
 	"AI / MCP setup guide": "Panduan persediaan AI / MCP",
@@ -41,6 +43,8 @@ const ms: Dict = {
 		"Sudah terkini. Tiada apa yang perlu disinkronkan.",
 	"An unexpected error — retrying automatically.":
 		"Ralat yang tidak dijangka — cuba semula secara automatik.",
+	"Another note on the server already has this name. Rename this note and it will sync.":
+		"Nota lain di server sudah menggunakan nama ini. Tukar nama nota ini dan ia akan disegerakkan.",
 	"Attachment not accepted": "Lampiran tidak diterima",
 	"Attachment storage full": "Ruang simpan lampiran penuh",
 	"Attachment storage is full — upgrade for more.":
@@ -309,6 +313,7 @@ const ms: Dict = {
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
 		"Tahap keparuhan minimum semasa diagnostik diaktifkan. Tahap yang lebih tinggi menghantar lebih sedikit baris. Lalai: Amaran dan ralat.",
 	"Missing on the server": "Tidak ditemui di pelayan",
+	"Name already taken": "Nama sudah digunakan",
 	"Needs attention ({count})": "Perlu perhatian ({count})",
 	"Network unavailable": "Rangkaian tidak tersedia",
 	"New here? Watch the setup video": "Baru di sini? Tonton video panduan",

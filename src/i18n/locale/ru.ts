@@ -20,8 +20,10 @@ const ru: Dict = {
 	"50 GB attachments": "50 ГБ вложений",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"Открыто окно браузера. Войдите и введите этот код, чтобы связать ваше хранилище.",
+	"A folder with that name already exists: {path}": "Папка с таким именем уже существует: {path}",
 	"A frontmatter key could not be parsed as YAML.":
 		"Ключ в заголовке не удалось обработать как YAML.",
+	"A note with that name already exists: {path}": "Заметка с таким именем уже существует: {path}",
 	"A temporary server problem — retrying automatically.":
 		"Временная проблема с сервером — повторная попытка.",
 	"AI / MCP setup guide": "Руководство по настройке ИИ / MCP",
@@ -46,6 +48,8 @@ const ru: Dict = {
 	"Already in sync. Nothing is deleted.": "Уже синхронизировано. Ничего не будет удалено.",
 	"Already up to date. Nothing needed syncing.": "Уже актуально. Синхронизация не требуется.",
 	"An unexpected error — retrying automatically.": "Неожиданная ошибка — повторная попытка.",
+	"Another note on the server already has this name. Rename this note and it will sync.":
+		"В другой заметке на сервере уже есть такое имя. Переименуйте эту заметку, и она синхронизируется.",
 	"Attachment not accepted": "Вложение не принято",
 	"Attachment storage full": "Место для хранения вложений заполнено",
 	"Attachment storage is full — upgrade for more.":
@@ -386,6 +390,7 @@ const ru: Dict = {
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
 		"Минимальный уровень серьёзности, который передаётся, когда включена диагностика. Более высокие уровни передают меньше информации. По умолчанию: предупреждения и ошибки.",
 	"Missing on the server": "Отсутствует на сервере",
+	"Name already taken": "Имя уже занято",
 	"Needs attention ({count})": "Требует внимания ({count})",
 	"Network unavailable": "Сеть недоступна",
 	"New here? Watch the setup video": "Вы здесь впервые? Посмотрите видеоинструкцию",

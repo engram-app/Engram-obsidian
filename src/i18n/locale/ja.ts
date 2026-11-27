@@ -15,8 +15,10 @@ const ja: Dict = {
 	"50 GB attachments": "50 GB 添付ファイル",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"ブラウザウィンドウが開きました。サインインし、このコードを入力して保管庫を連携してください。",
+	"A folder with that name already exists: {path}": "同じ名前のフォルダが既に存在します: {path}",
 	"A frontmatter key could not be parsed as YAML.":
 		"YAML として解析できない Frontmatter キーがあります。",
+	"A note with that name already exists: {path}": "同じ名前のノートが既に存在します: {path}",
 	"A temporary server problem — retrying automatically.":
 		"一時的なサーバーの問題です。自動的に再試行します。",
 	"AI / MCP setup guide": "AI / MCP 設定ガイド",
@@ -42,6 +44,8 @@ const ja: Dict = {
 		"すでに最新の状態です。同期する必要はありません。",
 	"An unexpected error — retrying automatically.":
 		"予期しないエラーが発生しました。自動的に再試行します。",
+	"Another note on the server already has this name. Rename this note and it will sync.":
+		"サーバー上の別のノートに同じ名前が登録されています。ノートの名前を変更すると同期されます。",
 	"Attachment not accepted": "添付ファイルは受け付けられません",
 	"Attachment storage full": "添付ファイルの保存容量上限",
 	"Attachment storage is full — upgrade for more.":
@@ -310,6 +314,7 @@ const ja: Dict = {
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
 		"診断が有効な場合の、最低限の重要度。より高いレベルでは、送信される行数が少なくなります。デフォルト：警告とエラー。",
 	"Missing on the server": "サーバーに存在しません",
+	"Name already taken": "その名前は既に使用されています",
 	"Needs attention ({count})": "注意が必要です ({count})",
 	"Network unavailable": "ネットワークに接続できません",
 	"New here? Watch the setup video": "初めての方はこちら。セットアップ動画をご覧ください",

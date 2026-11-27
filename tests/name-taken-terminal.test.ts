@@ -189,7 +189,14 @@ describe("a create refused because the name is taken", () => {
 	test("a queued create for a DIFFERENT note than the file at the path parks nothing", () => {
 		const h = setup({ "A.md": ID }, "id_conflict");
 		h.engine.onCrdtOpTerminal(
-			{ id: "o", kind: "create", docId: "other", payload: { path: "A.md" }, enqueuedAt: 0, attempts: 0 },
+			{
+				id: "o",
+				kind: "create",
+				docId: "other",
+				payload: { path: "A.md" },
+				enqueuedAt: 0,
+				attempts: 0,
+			},
 			"id_conflict",
 		);
 		expect(notices()).toEqual([]);

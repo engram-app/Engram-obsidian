@@ -19,8 +19,10 @@ const fr: Dict = {
 	"50 GB attachments": "50 Go de pièces jointes",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"Une fenêtre de navigateur s'est ouverte. Connecte-toi et entre ce code pour associer ton coffre.",
+	"A folder with that name already exists: {path}": "Un dossier avec ce nom existe déjà : {path}",
 	"A frontmatter key could not be parsed as YAML.":
 		"Une clé du frontmatter n'a pas pu être interprétée comme du YAML.",
+	"A note with that name already exists: {path}": "Une note avec ce nom existe déjà : {path}",
 	"A temporary server problem — retrying automatically.":
 		"Un problème temporaire du serveur — nouvelle tentative automatique.",
 	"AI / MCP setup guide": "Guide de configuration IA / MCP",
@@ -44,6 +46,8 @@ const fr: Dict = {
 	"Already up to date. Nothing needed syncing.": "Déjà à jour. Rien à synchroniser.",
 	"An unexpected error — retrying automatically.":
 		"Une erreur inattendue — nouvelle tentative automatique.",
+	"Another note on the server already has this name. Rename this note and it will sync.":
+		"Une autre note sur le serveur a déjà ce nom. Renomme cette note et elle sera synchronisée.",
 	"Attachment not accepted": "Pièce jointe non acceptée",
 	"Attachment storage full": "Espace de stockage des pièces jointes saturé",
 	"Attachment storage is full — upgrade for more.":
@@ -368,6 +372,7 @@ const fr: Dict = {
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
 		"Niveau de gravité minimum lorsque les diagnostics sont activés. Les niveaux supérieurs envoient moins de lignes. Par défaut : Avertissements et erreurs.",
 	"Missing on the server": "Manquant sur le serveur",
+	"Name already taken": "Ce nom est déjà utilisé",
 	"Needs attention ({count})": "Nécessite ton attention ({count})",
 	"Network unavailable": "Réseau indisponible",
 	"New here? Watch the setup video": "Nouveau ici ? Regarde la vidéo d'installation",

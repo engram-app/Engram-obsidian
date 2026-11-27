@@ -15,8 +15,12 @@ const id: Dict = {
 	"50 GB attachments": "50 GB lampiran",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"Jendela peramban telah terbuka. Masuk dan masukkan kode ini untuk menghubungkan Vault Anda.",
+	"A folder with that name already exists: {path}":
+		"Folder dengan nama tersebut sudah ada: {path}",
 	"A frontmatter key could not be parsed as YAML.":
 		"Kunci frontmatter tidak dapat diuraikan sebagai YAML.",
+	"A note with that name already exists: {path}":
+		"Catatan dengan nama tersebut sudah ada: {path}",
 	"A temporary server problem — retrying automatically.":
 		"Masalah server sementara — mencoba lagi secara otomatis.",
 	"AI / MCP setup guide": "Panduan pengaturan AI / MCP",
@@ -42,6 +46,8 @@ const id: Dict = {
 		"Sudah terbaru. Tidak ada yang perlu disinkronkan.",
 	"An unexpected error — retrying automatically.":
 		"Terjadi kesalahan tak terduga — mencoba lagi secara otomatis.",
+	"Another note on the server already has this name. Rename this note and it will sync.":
+		"Catatan lain di server sudah memiliki nama ini. Ganti nama catatan ini agar sinkron.",
 	"Attachment not accepted": "Lampiran tidak diterima",
 	"Attachment storage full": "Ruang penyimpanan lampiran penuh",
 	"Attachment storage is full — upgrade for more.":
@@ -311,6 +317,7 @@ const id: Dict = {
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
 		"Tingkat keparahan minimum saat diagnostik aktif. Tingkat yang lebih tinggi mengirim lebih sedikit baris. Default: Peringatan dan kesalahan.",
 	"Missing on the server": "Tidak ada di server",
+	"Name already taken": "Nama sudah digunakan",
 	"Needs attention ({count})": "Membutuhkan perhatian ({count})",
 	"Network unavailable": "Jaringan tidak tersedia",
 	"New here? Watch the setup video": "Baru di sini? Tonton video pengaturan",

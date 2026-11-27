@@ -15,7 +15,9 @@ const zhTW: Dict = {
 	"50 GB attachments": "50 GB 附件",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"已開啟瀏覽器視窗。登入並輸入此碼以連結您的儲存庫。",
+	"A folder with that name already exists: {path}": "已存在同名的資料夾：{path}",
 	"A frontmatter key could not be parsed as YAML.": "無法將前置區塊中的鍵解析為 YAML。",
+	"A note with that name already exists: {path}": "已存在同名的筆記：{path}",
 	"A temporary server problem — retrying automatically.": "暫時的伺服器問題，正在自動重試。",
 	"AI / MCP setup guide": "AI / MCP 設定指南",
 	"AI searches": "AI 搜尋",
@@ -36,6 +38,8 @@ const zhTW: Dict = {
 	"Already in sync. Nothing is deleted.": "已同步。不會刪除任何內容。",
 	"Already up to date. Nothing needed syncing.": "已是最新的。無需同步任何內容。",
 	"An unexpected error — retrying automatically.": "發生未預期的錯誤，正在自動重試。",
+	"Another note on the server already has this name. Rename this note and it will sync.":
+		"伺服器上已有同名的筆記。重新命名此筆記即可同步。",
 	"Attachment not accepted": "附件未被接受",
 	"Attachment storage full": "附件儲存空間已滿",
 	"Attachment storage is full — upgrade for more.": "儲存空間已滿，升級以獲得更多空間。",
@@ -288,6 +292,7 @@ const zhTW: Dict = {
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
 		"診斷功能啟用時，顯示的最低嚴重程度。較高的等級會傳送較少的資訊。預設：警告和錯誤。",
 	"Missing on the server": "伺服器上遺失",
+	"Name already taken": "名稱已被使用",
 	"Needs attention ({count})": "需要注意 ({count})",
 	"Network unavailable": "無法連線網路",
 	"New here? Watch the setup video": "第一次使用？觀看設定影片",
