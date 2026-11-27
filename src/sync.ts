@@ -7311,39 +7311,63 @@ export class SyncEngine {
 		return true;
 	}
 
-	/** `resolveStuckMove` for an attachment. Bytes cannot be merged, so a
-	 *  taken target with other bytes, or the retry cap, keeps the old file as
-	 *  a conflict copy by renaming it beside the target. */
+	/** `resolveStuckMove` for an attachment. Bytes cannot be merged: a target
+	 *  holding the same bytes (compared in full, read fresh) means the old copy
+	 *  goes; anything else at the target keeps the old file as a conflict copy
+	 *  beside it. Every failed attempt counts toward the cap, and past the cap
+	 *  the old file is kept as a conflict copy, or, when even that rename
+	 *  fails, raised as a Sync Center issue: the record stays (so the file is
+	 *  never uploaded at the old path) and the retries go on. */
 	private async resolveStuckAttachment(
 		from: string,
 		file: TFile,
 		rec: StuckRecord,
 	): Promise<boolean> {
+		const done = () => {
+			if (this.issues.get(from)?.category === "conflict") this.issues.clear(from);
+			return true;
+		};
 		const to = rec.to;
 		// The row is gone (deleted on the server): the normal path handles it.
-		if (!to || to === from || !this.syncState.has(to)) return true;
-		const hash = fnv1aBase64(await this.app.vault.readBinary(file));
-		if (rec.restored && hash !== rec.hash) return true; // replaced while off
+		if (!to || to === from || !this.syncState.has(to)) return done();
+		const bytes = await this.app.vault.readBinary(file);
+		if (rec.restored && fnv1aBase64(bytes) !== rec.hash) return done(); // replaced while off
 		rec.restored = false;
 		const at = this.app.vault.getAbstractFileByPath(to);
-		if (!at) {
-			if (await this.renameFollowingIdentity(from, to)) return true;
-			rec.tries++;
-			const capped =
-				rec.tries >= STUCK_MAX_TRIES || this.time.now() - rec.since >= STUCK_MAX_AGE_MS;
-			if (!capped) return false;
-			rlog().warn(
-				"pull",
-				`Stuck move gave up after ${rec.tries} tries: ${noteRef(from)} -> ${noteRef(to)}, keeping it as a conflict copy`,
-			);
-			return this.renameFollowingIdentity(from, conflictCopyPath(to));
+		if (
+			at instanceof TFile &&
+			this.arrayBuffersEqual(await this.app.vault.readBinary(at), bytes)
+		) {
+			// Re-read right before the trash: bytes written into the old file
+			// meanwhile are not the target's, and fall through to a copy.
+			if (this.arrayBuffersEqual(await this.app.vault.readBinary(file), bytes)) {
+				await this.trashRemotelyDeleted(file);
+				await this.removeEmptyFolders(from);
+				return done();
+			}
 		}
-		if (at instanceof TFile && fnv1aBase64(await this.app.vault.readBinary(at)) === hash) {
-			await this.trashRemotelyDeleted(file);
-			await this.removeEmptyFolders(from);
-			return true;
-		}
-		return this.renameFollowingIdentity(from, conflictCopyPath(to));
+		const copy = conflictCopyPath(to);
+		if (await this.renameFollowingIdentity(from, at ? copy : to)) return done();
+		rec.tries++;
+		const capped =
+			rec.tries >= STUCK_MAX_TRIES || this.time.now() - rec.since >= STUCK_MAX_AGE_MS;
+		if (!capped) return false;
+		rlog().warn(
+			"pull",
+			`Stuck move gave up after ${rec.tries} tries: ${noteRef(from)} -> ${noteRef(to)}, keeping it as a conflict copy`,
+		);
+		if (!at && (await this.renameFollowingIdentity(from, copy))) return done();
+		const now = Date.now();
+		this.issues.record({
+			path: from,
+			kind: "attachment",
+			category: "conflict",
+			message: `Could not move to ${to} after a folder move`,
+			firstFailedAt: now,
+			lastFailedAt: now,
+			attempts: 1,
+		});
+		return false;
 	}
 
 	/** Trash the old copy of a stuck move, unless it changed since `text` was
@@ -16516,12 +16540,16 @@ export class SyncEngine {
 /** A dated `<name> (conflict <stamp>).<ext>` path beside `normalized`.
  *  Millisecond-precision stamp (not date-only): two copies of the SAME note
  *  within one day would otherwise collide, and a collision degrades to an
- *  in-place modify that silently clobbers the first copy. Keeps the note's own
- *  extension (.md or .canvas) so a canvas copy stays a canvas file. */
+ *  in-place modify that silently clobbers the first copy. Keeps the file's own
+ *  extension, whatever it is: a canvas copy stays a canvas, and an
+ *  attachment copy stays an image (a `.md` suffix made Obsidian read the
+ *  only copy of the bytes as a note). A name with no extension gets `.md`. */
 function conflictCopyPath(normalized: string): string {
 	const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-	const ext = canvasPath(normalized) ? "canvas" : "md";
-	const base = normalized.replace(/\.(md|canvas)$/, "");
+	const dot = normalized.lastIndexOf(".");
+	const hasExt = dot > normalized.lastIndexOf("/") + 1;
+	const base = hasExt ? normalized.slice(0, dot) : normalized;
+	const ext = hasExt ? normalized.slice(dot + 1) : "md";
 	return `${base} (conflict ${stamp}).${ext}`;
 }
 
