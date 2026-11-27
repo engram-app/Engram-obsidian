@@ -39,8 +39,8 @@ export interface MarkerClock {
  * Why a path is currently being ignored by an event handler.
  *
  * - `pushed` — we just pushed it; suppress the WebSocket echo.
- * - `flushed` — we just wrote it from a CRDT merge; suppress the resulting
- *   vault modify/create event. Deliberately distinct from `pushed`: reusing one
+ * - `flushed`: we just wrote it from a CRDT merge or an attachment download;
+ *   suppress the resulting vault modify/create event. Deliberately distinct from `pushed`: reusing one
  *   marker for both made `handleModify` drop real user edits inside the window.
  * - `remotelyDeleted` — deleted by a remote peer; suppress the local delete echo.
  * - `renamedAway` — the path is being trashed as the OLD leg of a remote

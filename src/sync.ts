@@ -9032,9 +9032,14 @@ export class SyncEngine {
 		return this.files.has(path, "pushed");
 	}
 
-	/** Suppress the handleModify echo of a flushFromCrdt disk write for
-	 *  ECHO_COOLDOWN_MS. Separate from recentlyPushed so a post-push cooldown
-	 *  never swallows a genuine local edit. */
+	/** Suppress the handleModify echo of the engine's own disk write (a
+	 *  flushFromCrdt write or an attachment download) for ECHO_COOLDOWN_MS.
+	 *  Marked BEFORE the write: Obsidian dispatches `create`/`modify` inside it.
+	 *  For a download this is what stops the bytes going straight back up: the
+	 *  armed echo push used to rely on the row's hash alone, and a server folder
+	 *  move re-keys that row away before the disk rename lands (e2e test_108).
+	 *  Separate from recentlyPushed so a post-push cooldown never swallows a
+	 *  genuine local edit. */
 	private markRecentlyFlushed(path: string): void {
 		this.files.mark(path, "flushed", ECHO_COOLDOWN_MS);
 	}
@@ -13565,6 +13570,7 @@ export class SyncEngine {
 					return false;
 				}
 			}
+			this.markRecentlyFlushed(normalized);
 			await this.app.vault.modifyBinary(existing, buffer);
 			settle();
 			rlog().info(
@@ -14060,6 +14066,7 @@ export class SyncEngine {
 	): Promise<void> {
 		const moved = this.fileMovedByPendingOp(normalized);
 		if (moved) {
+			this.markRecentlyFlushed(moved.path);
 			await this.app.vault.modifyBinary(moved, data);
 			return;
 		}
@@ -14069,6 +14076,7 @@ export class SyncEngine {
 		if (folder) {
 			await this.ensureFolder(folder);
 		}
+		this.markRecentlyFlushed(normalized);
 		await this.app.vault.createBinary(normalized, data);
 	}
 
