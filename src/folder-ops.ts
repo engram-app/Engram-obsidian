@@ -78,9 +78,17 @@ export function parentFolder(path: string): string {
 export type FolderRow = { id: string; parent_id: string | null; name: string };
 
 /** A file a followed folder move could not carry: its bytes are still at
- *  `from`, its note `id` lives wherever the id map says now. `hash` is the
+ *  `from`, its note `id` lives wherever the id map says now. An attachment
+ *  has no id (`null`): `to` is its sync row's path instead. `hash` is the
  *  file's content when recorded; `tries` and `since` bound the retries. */
-export type StuckMove = { from: string; id: string; hash: number; tries: number; since: number };
+export type StuckMove = {
+	from: string;
+	id: string | null;
+	to?: string;
+	hash: number;
+	tries: number;
+	since: number;
+};
 
 /** The folder index as last applied to disk, for plugin data. */
 export type FolderIndexSnapshot = {

@@ -41,6 +41,8 @@ interface Opts {
 	seed?: Record<string, string>;
 	/** File contents overriding the defaults (path -> text). */
 	bodies?: Record<string, string>;
+	/** Extra files at the old paths (path -> content), e.g. an attachment. */
+	extra?: Record<string, string>;
 }
 
 async function setup(opts: Opts = {}) {
@@ -48,6 +50,7 @@ async function setup(opts: Opts = {}) {
 	const bodies = new Map<string, string>([
 		[`${OLD}/a.md`, "alpha"],
 		[`${OLD}/sub/b.md`, "beta"],
+		...Object.entries(opts.extra ?? {}),
 		...Object.entries(opts.bodies ?? {}),
 	]);
 	const parentOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
@@ -64,6 +67,7 @@ async function setup(opts: Opts = {}) {
 	for (const p of ["E2E", OLD, `${OLD}/sub`]) attach(new TFolder(p, []));
 	attach(new TFile(`${OLD}/a.md`));
 	attach(new TFile(`${OLD}/sub/b.md`));
+	for (const p of Object.keys(opts.extra ?? {})) attach(new TFile(p));
 	if (opts.before) {
 		attach(new TFolder(NEW, []));
 		for (const p of Object.keys(opts.before)) {
@@ -94,6 +98,9 @@ async function setup(opts: Opts = {}) {
 				attach(f);
 			},
 			read: async (f: TFile) => bodies.get(f.path) ?? "",
+			readBinary: async (f: TFile) =>
+				new TextEncoder().encode(bodies.get(f.path) ?? "").buffer,
+			getFiles: () => [...tree.values()].filter((f): f is TFile => f instanceof TFile),
 			cachedRead: async (f: TFile) => bodies.get(f.path) ?? "",
 			create: async (p: string, text: string) => {
 				if (tree.has(p)) throw new Error("File already exists.");
@@ -121,6 +128,7 @@ async function setup(opts: Opts = {}) {
 	const api = {
 		createNote: mock().mockResolvedValue({}),
 		pushNote: mock().mockResolvedValue({}),
+		pushAttachment: mock().mockResolvedValue({}),
 	};
 	const engine = new SyncEngine(
 		app,
@@ -364,4 +372,27 @@ test("a restored record is dropped when the old file was replaced", async () => 
 	expect(second.tree.has(`${OLD}/sub/b.md`)).toBe(true);
 	expect(second.tree.has(`${NEW}/sub/b.md`)).toBe(false);
 	expect(second.engine.exportFolderIndex().stuck).toEqual([]);
+});
+
+// Review @ 271b37ef MEDIUM: an attachment (no note id) stranded at the old
+// path by a failed move keeps its row at the new path only. Untracked at the
+// old path, a push sweep uploaded it there: the same duplicate as e2e test_108.
+// It must be recorded as stuck, never pushed, and follow on retry.
+test("an attachment stranded by a failed move is not uploaded at the old path, and follows on retry", async () => {
+	const IMG = `${OLD}/sub/img.png`;
+	const failing = [IMG];
+	const { engine, tree, api } = await setup({ before: {}, failing, extra: { [IMG]: "PNG" } });
+	const { fnv1aBase64 } = await import("../src/content-hash");
+	(engine as any).syncState.set(IMG, {
+		hash: fnv1aBase64(new TextEncoder().encode("PNG").buffer),
+	});
+	await engine.onFolderChanged(move);
+	expect(tree.has(IMG)).toBe(true);
+	await (engine as any).pushModifiedFiles();
+	expect(api.pushAttachment).not.toHaveBeenCalled();
+	failing.length = 0;
+	await (engine as any).retryStuckMoves();
+	expect(tree.has(`${NEW}/sub/img.png`)).toBe(true);
+	expect(tree.has(IMG)).toBe(false);
+	expect(engine.exportFolderIndex().stuck).toEqual([]);
 });
