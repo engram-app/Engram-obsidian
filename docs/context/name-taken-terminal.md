@@ -36,6 +36,11 @@ since 1.36 already treats `id_conflict` as terminal, so old plugins stop the
 8 retries and the pause the day the backend ships.
 
 ## The fix (plugin)
+- The plugin advertises `caps=name_taken` on the socket URL
+  (`src/channel.ts`). The server sends the new `id_conflict` replies only to
+  a client that does: released plugins (1.36 to 1.40) drop an `id_conflict`
+  create with only a log line, which is worse than the old retry loop, so
+  they keep today's reply.
 - ONE classifier, `isNameTaken(reason)` in `src/crdt-op-dispatch.ts`
   (`id_conflict`, `conflict`). The direct push (`pushFile` catch), the queue's
   terminal hook (`main.ts onTerminal` -> `SyncEngine.onCrdtOpTerminal`) and
