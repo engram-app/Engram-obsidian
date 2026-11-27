@@ -25,6 +25,7 @@ const api = {
 	pushNote: mock().mockResolvedValue({ note: { id: ID }, chunks_indexed: 1 }),
 	deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
 	getRateLimit: mock().mockResolvedValue(0),
+	ping: mock().mockResolvedValue({ ok: true }),
 } as unknown as EngramApi;
 
 const refusal = (reason: string) =>
@@ -85,8 +86,10 @@ function setup(files: Record<string, string>, reason: string, synced = false) {
 	const map = new NoteIdMap();
 	map.seed(files);
 	engine.setNoteIdMap(map);
-	const create = mock(async (_docId: string, _path: string) => {
-		throw refusal(reason);
+	const server = { reason: reason as string | null };
+	const create = mock(async (docId: string, _path: string) => {
+		if (server.reason) throw refusal(server.reason);
+		return { docId, seeded: false, genesisOutcome: "occupied" };
 	});
 	const enqueue = mock(() => {});
 	const gate = new NotesCapGate(() => Date.now());
@@ -113,7 +116,7 @@ function setup(files: Record<string, string>, reason: string, synced = false) {
 		(engine as unknown as { pushFile(f: TFile): Promise<boolean> }).pushFile(
 			h.present.get(path) as TFile,
 		);
-	return { ...h, engine, map, create, enqueue, gate, push };
+	return { ...h, engine, map, create, enqueue, gate, push, server };
 }
 
 const settle = () => new Promise((r) => setTimeout(r, 60));
@@ -268,7 +271,9 @@ describe("a folder rename refused because the name is taken", () => {
 			},
 			"conflict",
 		);
-		expect(notices()).toEqual(["A folder with that name already exists: B"]);
+		expect(notices()).toEqual([
+			"A folder named B already exists on the server, so this folder's notes were moved into it",
+		]);
 	});
 
 	test("a refusal that is not a name conflict shows no such notice", async () => {
@@ -291,5 +296,37 @@ describe("a folder rename refused because the name is taken", () => {
 			"max-attempts",
 		);
 		expect(notices()).toEqual([]);
+	});
+});
+
+describe("a parked name is re-checked against the server", () => {
+	test("each full sync re-sends it once; a name the server freed syncs and clears the issue", async () => {
+		const h = setup({ "A.md": ID }, "id_conflict");
+		await h.push("A.md");
+		expect(h.create).toHaveBeenCalledTimes(1);
+
+		// Still taken: one re-check per full sync, re-parked without a second notice.
+		await h.engine.fullSync();
+		expect(h.create).toHaveBeenCalledTimes(2);
+		expect(h.engine.issues.get("A.md")?.category).toBe("name_taken");
+		expect(notices()).toHaveLength(1);
+
+		// The server's holder of the name is gone: the next full sync delivers it.
+		h.server.reason = null;
+		await h.engine.fullSync();
+		expect(h.create).toHaveBeenCalledTimes(3);
+		expect(h.engine.issues.get("A.md")).toBeUndefined();
+	});
+
+	test("an edit while still parked re-sends but does not show another notice", async () => {
+		const h = setup({ "A.md": ID }, "id_conflict");
+		await h.push("A.md");
+		const f = h.present.get("A.md") as TFile;
+		f.stat = { ...f.stat, mtime: 2_000, size: 101 };
+		await h.push("A.md");
+		expect(h.create).toHaveBeenCalledTimes(2);
+		expect(notices()).toHaveLength(1);
+		await h.push("A.md"); // parked again at the new stamp
+		expect(h.create).toHaveBeenCalledTimes(2);
 	});
 });
