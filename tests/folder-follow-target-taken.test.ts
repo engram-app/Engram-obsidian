@@ -498,3 +498,43 @@ test("stuck attachment: a later move of its row carries the record's target", as
 	expect(tree.has(LATER)).toBe(true);
 	expect(tree.has(IMG)).toBe(false);
 });
+
+// Review delta 2 LOW: the "could not move" card must not outlive its stuck
+// file. A user delete or rename of the old file drops the record, and the
+// card with it; so does a retry that finds the file gone.
+async function capStuckImage() {
+	const env = await strandImage();
+	await env.app.vault.create(IMG_NEW, "OTHER");
+	for (let i = 0; i < 6; i++) await (env.engine as any).retryStuckMoves();
+	expect(env.engine.issues.get(IMG)?.category).toBe("conflict");
+	return env;
+}
+
+test("stuck attachment: a user delete of the old file clears its Sync Center card", async () => {
+	const { engine, tree, app } = await capStuckImage();
+	const file = tree.get(IMG) as TFile;
+	await app.fileManager.trashFile(file);
+	await engine.handleDelete(file);
+	expect(engine.issues.get(IMG)).toBeUndefined();
+	expect(engine.exportFolderIndex().stuck).toEqual([]);
+});
+
+test("stuck attachment: a user rename of the old file clears its Sync Center card", async () => {
+	const { engine, tree, failing } = await capStuckImage();
+	const file = tree.get(IMG) as TFile;
+	failing.length = 0;
+	const elsewhere = `${NEW}/kept.png`;
+	await (engine as any).app.vault.rename(file, elsewhere);
+	await engine.handleRename(file, IMG);
+	expect(engine.issues.get(IMG)).toBeUndefined();
+	expect(engine.exportFolderIndex().stuck).toEqual([]);
+});
+
+test("stuck attachment: a retry that finds the old file gone clears its Sync Center card", async () => {
+	const { engine, tree, app } = await capStuckImage();
+	// Gone without a delete event reaching the engine (removed while off).
+	await app.fileManager.trashFile(tree.get(IMG) as TFile);
+	await (engine as any).retryStuckMoves();
+	expect(engine.issues.get(IMG)).toBeUndefined();
+	expect(engine.exportFolderIndex().stuck).toEqual([]);
+});

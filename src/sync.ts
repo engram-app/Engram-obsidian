@@ -7241,7 +7241,16 @@ export class SyncEngine {
 
 	/** The file left the old path (deleted or moved by the user or by us). */
 	private forgetStuckMove(path: string): void {
+		this.clearStuckIssue(path);
 		if (this.stuckMoves.delete(normalizePath(path))) this.persistGateJournalSoon();
+	}
+
+	/** Drop the "could not move" Sync Center card a stuck attachment raised at
+	 *  the retry cap (`resolveStuckAttachment`), once its record is done with:
+	 *  it must not outlive the file. Only stuck moves record `conflict`. */
+	private clearStuckIssue(path: string): void {
+		const p = normalizePath(path);
+		if (this.issues.get(p)?.category === "conflict") this.issues.clear(p);
 	}
 
 	private stuckRetry: Promise<void> | null = null;
@@ -7275,7 +7284,10 @@ export class SyncEngine {
 	 *  of the old file beside it, never a claim on it. */
 	private async resolveStuckMove(from: string, rec: StuckRecord): Promise<boolean> {
 		const file = this.app.vault.getFileByPath?.(from);
-		if (!file) return true;
+		if (!file) {
+			this.clearStuckIssue(from);
+			return true;
+		}
 		if (rec.id === null) return this.resolveStuckAttachment(from, file, rec);
 		const text = await this.app.vault.read(file);
 		if (rec.restored && fnv1a(text) !== rec.hash) return true; // replaced while off
@@ -7324,7 +7336,7 @@ export class SyncEngine {
 		rec: StuckRecord,
 	): Promise<boolean> {
 		const done = () => {
-			if (this.issues.get(from)?.category === "conflict") this.issues.clear(from);
+			this.clearStuckIssue(from);
 			return true;
 		};
 		const to = rec.to;
