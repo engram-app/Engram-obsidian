@@ -15,7 +15,8 @@ const ko: Dict = {
 	"50 GB attachments": "50GB 첨부 파일",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"브라우저 창이 열렸습니다. 로그인 후 이 코드를 입력하여 보관함을 연결하세요.",
-	"A folder with that name already exists: {path}": "해당 이름의 폴더가 이미 존재합니다: {path}",
+	"A folder named {path} already exists on the server, so this folder's notes were moved into it":
+		"서버에 {path}이라는 이름의 폴더가 이미 존재하므로, 해당 폴더의 노트는 그 폴더 안으로 이동되었습니다",
 	"A frontmatter key could not be parsed as YAML.": "Frontmatter 키를 YAML로 파싱할 수 없습니다.",
 	"A note with that name already exists: {path}": "해당 이름의 노트가 이미 존재합니다: {path}",
 	"A temporary server problem — retrying automatically.":
@@ -498,6 +499,8 @@ const ko: Dict = {
 		"Engram 서버는 더 이상 이 플러그인 버전을 지원하지 않습니다 (최소 {version} 이상 필요). 따라서 노트가 전송되거나 수신되지 않습니다. 이 장치에서 변경한 내용은 업데이트할 때까지 여기에 보관됩니다.",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Engram 서버는 더 이상 이 플러그인 버전을 지원하지 않습니다. 따라서 노트가 전송되거나 수신되지 않습니다. 이 장치에서 변경한 내용은 업데이트할 때까지 여기에 보관됩니다.",
+	"The Engram server no longer accepts this plugin version. {versions} Changes made on this device stay here until you update.":
+		"Engram 서버는 더 이상 이 플러그인 버전을 지원하지 않습니다. {versions} 이 장치에서 변경한 내용은 업데이트할 때까지 여기에서 유지됩니다.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"파일 크기가 서버 제한을 초과합니다. 압축하거나 분할한 후 동기화됩니다.",
 	"The file is too large for the server.": "파일 크기가 서버 용량을 초과합니다.",

@@ -15,7 +15,8 @@ const ja: Dict = {
 	"50 GB attachments": "50 GB 添付ファイル",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"ブラウザウィンドウが開きました。サインインし、このコードを入力して保管庫を連携してください。",
-	"A folder with that name already exists: {path}": "同じ名前のフォルダが既に存在します: {path}",
+	"A folder named {path} already exists on the server, so this folder's notes were moved into it":
+		"サーバー上に{path}という名前のフォルダが既に存在するため、このフォルダ内のノートは、そのフォルダ内に移動されました",
 	"A frontmatter key could not be parsed as YAML.":
 		"YAML として解析できない Frontmatter キーがあります。",
 	"A note with that name already exists: {path}": "同じ名前のノートが既に存在します: {path}",

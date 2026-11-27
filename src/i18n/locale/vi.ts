@@ -15,7 +15,8 @@ const vi: Dict = {
 	"50 GB attachments": "50 GB tệp đính kèm",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"Một cửa sổ trình duyệt đã mở. Đăng nhập và nhập mã này để liên kết kho lưu trữ của bạn.",
-	"A folder with that name already exists: {path}": "Một thư mục với tên đó đã tồn tại: {path}",
+	"A folder named {path} already exists on the server, so this folder's notes were moved into it":
+		"Một thư mục có tên {path} đã tồn tại trên máy chủ, vì vậy các ghi chú của thư mục này đã được chuyển vào đó",
 	"A frontmatter key could not be parsed as YAML.":
 		"Không thể phân tích một khóa frontmatter thành YAML.",
 	"A note with that name already exists: {path}": "Một ghi chú với tên đó đã tồn tại: {path}",

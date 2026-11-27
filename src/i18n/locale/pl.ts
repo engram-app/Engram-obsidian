@@ -20,7 +20,8 @@ const pl: Dict = {
 	"50 GB attachments": "50 GB załączników",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"Otwarto okno przeglądarki. Zaloguj się i wprowadź ten kod, aby połączyć swój sejf.",
-	"A folder with that name already exists: {path}": "Folder o tej nazwie już istnieje: {path}",
+	"A folder named {path} already exists on the server, so this folder's notes were moved into it":
+		"Folder o nazwie {path} już istnieje na serwerze, więc notatki z tego folderu zostały do niego przeniesione",
 	"A frontmatter key could not be parsed as YAML.":
 		"Nie można zinterpretować klucza nagłówka jako YAML.",
 	"A note with that name already exists: {path}": "Notatka o tej nazwie już istnieje: {path}",

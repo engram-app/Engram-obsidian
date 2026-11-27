@@ -15,7 +15,8 @@ const ms: Dict = {
 	"50 GB attachments": "50 GB lampiran",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"Tetingkap penyemak imbas telah dibuka. Log masuk dan masukkan kod ini untuk menyambungkan peti nota anda.",
-	"A folder with that name already exists: {path}": "Folder dengan nama itu sudah wujud: {path}",
+	"A folder named {path} already exists on the server, so this folder's notes were moved into it":
+		"Folder bernama {path} sudah wujud di pelayan, jadi nota folder ini telah dipindahkan ke dalamnya",
 	"A frontmatter key could not be parsed as YAML.":
 		"Kunci frontmatter tidak dapat ditafsir sebagai YAML.",
 	"A note with that name already exists: {path}": "Nota dengan nama itu sudah wujud: {path}",

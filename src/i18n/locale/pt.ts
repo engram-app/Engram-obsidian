@@ -19,7 +19,8 @@ const pt: Dict = {
 	"50 GB attachments": "50 GB de anexos",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"Uma janela do navegador foi aberta. Inicie sessão e insira este código para ligar o seu cofre.",
-	"A folder with that name already exists: {path}": "Já existe uma pasta com esse nome: {path}",
+	"A folder named {path} already exists on the server, so this folder's notes were moved into it":
+		"Uma pasta com o nome {path} já existe no servidor, pelo que as notas desta pasta foram movidas para dentro dela",
 	"A frontmatter key could not be parsed as YAML.":
 		"Uma chave de frontmatter não pôde ser interpretada como YAML.",
 	"A note with that name already exists: {path}": "Já existe uma nota com esse nome: {path}",

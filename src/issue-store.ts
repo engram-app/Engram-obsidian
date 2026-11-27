@@ -44,6 +44,12 @@ export class IssueStore {
 		return this.issues.get(path);
 	}
 
+	/** Keep the issue but let the file be sent again (a re-check). */
+	unpark(path: string): void {
+		const issue = this.issues.get(path);
+		if (issue) this.issues.set(path, { ...issue, parkedAt: undefined });
+	}
+
 	/** Remove the issue for `path` (called on successful push/pull). */
 	clear(path: string): void {
 		this.issues.delete(path);

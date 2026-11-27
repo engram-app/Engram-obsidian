@@ -20,7 +20,8 @@ const ru: Dict = {
 	"50 GB attachments": "50 ГБ вложений",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"Открыто окно браузера. Войдите и введите этот код, чтобы связать ваше хранилище.",
-	"A folder with that name already exists: {path}": "Папка с таким именем уже существует: {path}",
+	"A folder named {path} already exists on the server, so this folder's notes were moved into it":
+		"Папка с именем {path} уже существует на сервере, поэтому заметки из этой папки были перемещены в неё",
 	"A frontmatter key could not be parsed as YAML.":
 		"Ключ в заголовке не удалось обработать как YAML.",
 	"A note with that name already exists: {path}": "Заметка с таким именем уже существует: {path}",

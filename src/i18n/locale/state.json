@@ -416,7 +416,6 @@
 			"{count} retrying": "Sync Center badge: how many files are being retried after an error."
 		},
 		"failed": {
-			"The Engram server no longer accepts this plugin version. {versions} Changes made on this device stay here until you update.": "2026-11-19",
 			"{count} attachments skipped. See Sync Center.": "2026-11-12"
 		},
 		"glossary": {

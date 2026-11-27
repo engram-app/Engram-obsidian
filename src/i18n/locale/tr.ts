@@ -15,7 +15,8 @@ const tr: Dict = {
 	"50 GB attachments": "50 GB ek",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"Bir tarayıcı penceresi açıldı. Giriş yapın ve bu kodu girerek kasanızı bağlayın.",
-	"A folder with that name already exists: {path}": "Aynı isimde bir klasör zaten var: {path}",
+	"A folder named {path} already exists on the server, so this folder's notes were moved into it":
+		"Sunucuda {path} adlı bir klasör zaten mevcut, bu nedenle bu klasördeki notlar, bu klasöre taşındı",
 	"A frontmatter key could not be parsed as YAML.":
 		"Bir ön bilgi anahtarı YAML olarak çözülemedi.",
 	"A note with that name already exists: {path}": "Aynı isimde bir not zaten var: {path}",

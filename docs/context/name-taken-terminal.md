@@ -46,9 +46,12 @@ since 1.36 already treats `id_conflict` as terminal, so old plugins stop the
   already exists: <path>"), and leaves the file on disk untouched.
   `isParked` (the attachment park that already existed) now also covers
   `name_taken`, so every push path skips the file while it is unchanged.
-- A folder op refused `conflict` shows "A folder with that name already
-  exists: <path>". The per-file fallback still runs (the notes move into the
-  server's folder); any note whose name is taken there is parked on its own.
+- A folder op refused `conflict` shows "A folder named <path> already exists
+  on the server, so this folder's notes were moved into it". The per-file
+  fallback (which predates this fix) moves the notes into the server's
+  folder; any note whose name is taken there is parked on its own.
+- Told once per park: an edit or re-check refused again refreshes the stamp
+  without a second Notice.
 
 ## Clearing events (hiding layers must expire)
 The park hides a file from every push, so per
@@ -58,12 +61,16 @@ The park hides a file from every push, so per
    sent again (a success clears the issue).
 2. A rename or delete of the file: `clearNameTaken(oldPath)` in
    `handleRenameNow` / `handleDelete`.
-3. The user dismisses the issue in the Sync Center.
-4. A vault switch (issues are cleared with the vault).
+3. The server freeing the name: every full sync re-sends each parked note
+   once (`recheckNameTaken`). A success clears the issue (`clearNameTaken`
+   on the create ack); a refusal re-parks it silently. Cost: one
+   `crdt_create` per parked note per full sync.
+4. The user dismisses the issue in the Sync Center.
+5. A vault switch (issues are cleared with the vault).
 
-If none fires, the note stays unsynced and listed in the Sync Center. That is
-intended: only the user can pick another name. It does not auto-retry when
-the server's holder of the name goes away; an edit or rename does.
+Backend contract this relies on: `id_conflict` only when a LIVE note holds
+the path. A target held only by a just-deleted note's stale index entry
+clears on retry, so it must not come back as `id_conflict`.
 
 ## Product note
 The web app REFUSES a rename onto a taken name with a toast ("A note with

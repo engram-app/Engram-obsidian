@@ -15,7 +15,8 @@ const zh: Dict = {
 	"50 GB attachments": "50 GB 附件",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"已打开浏览器窗口。登录并输入此代码以链接您的仓库。",
-	"A folder with that name already exists: {path}": "已存在同名文件夹：{path}",
+	"A folder named {path} already exists on the server, so this folder's notes were moved into it":
+		"服务器上已存在名为 {path} 的文件夹，因此该文件夹中的笔记已移动到其中",
 	"A frontmatter key could not be parsed as YAML.": "无法将 YAML 格式解析为键值对。",
 	"A note with that name already exists: {path}": "已存在同名笔记：{path}",
 	"A temporary server problem — retrying automatically.": "临时服务器问题，正在自动重试。",
