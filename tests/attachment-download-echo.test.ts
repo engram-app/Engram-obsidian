@@ -2,11 +2,12 @@
  * A downloaded attachment is never uploaded back (e2e test_108 rename chain).
  *
  * The download's own vault `create` event used to arm a debounced push. That
- * push is normally an echo skip (the row records the bytes), but a server
- * folder move re-keys the row to the new path before the disk rename lands.
- * A push reading the file in that window found no row at the old path and
- * uploaded the downloaded bytes there: a duplicate at the moved folder's old
- * path, about 500 ms (the e2e debounce) after the download.
+ * push is normally an echo skip (the row records the bytes). A server folder
+ * move cancels a push still armed, but one already in flight reads the path
+ * after `await readBinary`: if the move re-keys the row to the new path in
+ * that await, there is no row at the old path and the downloaded bytes went
+ * up there, a duplicate at the moved folder's old path about 500 ms (the e2e
+ * debounce) after the download.
  */
 import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
@@ -44,6 +45,8 @@ function makeEngine() {
 				engine.handleModify(f);
 				return f;
 			}),
+			// ...and `modify` from inside modifyBinary.
+			modifyBinary: mock(async (f: TFile) => engine.handleModify(f)),
 			// The server folder move is handled while the push reads the file:
 			// the bookkeeping moves first, the disk rename has not landed yet.
 			readBinary: mock(async () => {
@@ -63,7 +66,7 @@ function makeEngine() {
 	);
 	engine.setReady();
 	engine.setNoteIdMap(new NoteIdMap());
-	return { engine, pushAttachment };
+	return { engine, pushAttachment, files, app };
 }
 
 describe("attachment download echo", () => {
@@ -76,6 +79,55 @@ describe("attachment download echo", () => {
 			BYTES,
 		);
 		await new Promise((r) => setTimeout(r, 30));
+
+		expect(pushAttachment).not.toHaveBeenCalled();
+	});
+
+	test("an overwrite of an existing attachment is not uploaded back either", async () => {
+		const { engine, pushAttachment, files } = makeEngine();
+		// Different size from the download: no read, straight to modifyBinary.
+		files.set(OLD, new TFile(OLD, 1, 1));
+
+		await engine.applyAttachmentChange(
+			{ path: OLD, content_hash: "server-hash", mtime: 1 } as any,
+			undefined,
+			BYTES,
+		);
+		await new Promise((r) => setTimeout(r, 30));
+
+		expect(pushAttachment).not.toHaveBeenCalled();
+	});
+
+	test("a write landing on the file a pending folder op moved is not uploaded back", async () => {
+		const { engine, pushAttachment, app } = makeEngine();
+		const moved = new TFile(NEW, 1, 1);
+		// The row is stamped at the server's path, the bytes land at the moved
+		// file: only the marker stands between this write and an upload.
+		app.vault.readBinary = mock(async () => BYTES);
+		(engine as any).fileMovedByPendingOp = (p: string) => (p === OLD ? moved : null);
+
+		await engine.applyAttachmentChange(
+			{ path: OLD, content_hash: "server-hash", mtime: 1 } as any,
+			undefined,
+			BYTES,
+		);
+		await new Promise((r) => setTimeout(r, 30));
+
+		expect(pushAttachment).not.toHaveBeenCalled();
+	});
+
+	test("a download during a pull is not queued for the post-pull push", async () => {
+		const { engine, pushAttachment } = makeEngine();
+		(engine as any).pulling = true;
+
+		await engine.applyAttachmentChange(
+			{ path: OLD, content_hash: "server-hash", mtime: 1 } as any,
+			undefined,
+			BYTES,
+		);
+		(engine as any).pulling = false;
+		// The drain reads the file while a folder move re-keys its row away.
+		await (engine as any).flushPostPullPushes();
 
 		expect(pushAttachment).not.toHaveBeenCalled();
 	});

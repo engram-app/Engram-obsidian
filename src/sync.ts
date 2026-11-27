@@ -5940,13 +5940,6 @@ export class SyncEngine {
 		}
 		if (!this.isSyncable(file)) return;
 		if (this.shouldIgnore(file.path)) return;
-		// During pull, vault events are usually echoes from sync writes.
-		// But real user edits can happen too — queue them for post-pull push.
-		if (this.pulling) {
-			this.pendingPostPullPushes.add(file.path);
-			this.schedulePostPullDrain();
-			return;
-		}
 		// Suppress echoes from flushFromCrdt (remote CRDT update → disk write).
 		// Must NOT key off recentlyPushed: that set is also populated after every
 		// legacy push, so checking it here would drop real user edits made within
@@ -5967,6 +5960,17 @@ export class SyncEngine {
 				"sync",
 				`Modify echo skip (recently flushed from CRDT): ${noteRef(file.path)}`,
 			);
+			return;
+		}
+		// During pull, vault events are usually echoes from sync writes.
+		// But real user edits can happen too: queue them for post-pull push.
+		// AFTER the flushed check: the drain trusts the row's hash alone, and a
+		// folder move can re-key that row away before it runs (e2e test_108). A
+		// no-op for notes: the check above only applies off the CRDT path, and
+		// only CRDT flushes mark notes.
+		if (this.pulling) {
+			this.pendingPostPullPushes.add(file.path);
+			this.schedulePostPullDrain();
 			return;
 		}
 
@@ -9088,9 +9092,12 @@ export class SyncEngine {
 	/** Suppress the handleModify echo of the engine's own disk write (a
 	 *  flushFromCrdt write or an attachment download) for ECHO_COOLDOWN_MS.
 	 *  Marked BEFORE the write: Obsidian dispatches `create`/`modify` inside it.
-	 *  For a download this is what stops the bytes going straight back up: the
-	 *  armed echo push used to rely on the row's hash alone, and a server folder
-	 *  move re-keys that row away before the disk rename lands (e2e test_108).
+	 *  For a download this is what stops the bytes going straight back up. The
+	 *  echo push used to rely on the row's hash alone. `rekeyMoved` cancels a
+	 *  push still armed, but not one already in flight: pushFile reads
+	 *  `file.path` after `await readBinary`, so a server folder move that
+	 *  re-keys the row in that await leaves no row at the old path, and the
+	 *  bytes went up there (e2e test_108).
 	 *  Separate from recentlyPushed so a post-push cooldown never swallows a
 	 *  genuine local edit. */
 	private markRecentlyFlushed(path: string): void {
