@@ -48,8 +48,14 @@ import {
 	HOLD_MAX_MS,
 	isFolderRow,
 	parentFolder,
+	type StuckMove,
 } from "./folder-ops";
 import { cleanFolderPath } from "./folder-path";
+
+/** A `stuckMoves` entry: the persisted shape keyed by `from`, plus whether it
+ *  was restored from disk (checked against the file at its first retry). */
+type StuckRecord = Omit<StuckMove, "from"> & { restored?: boolean };
+
 import { t } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
 import { IgnoredFiles } from "./ignored-files";
@@ -3155,6 +3161,8 @@ export class SyncEngine {
 		this.syncState.delete(from);
 		this.rowWrittenAt.delete(from);
 		if (!row) return;
+		// An attachment's stuck record follows its row (see `noteStuck`).
+		for (const rec of this.stuckMoves.values()) if (rec.to === from) rec.to = to;
 		// Do not clobber a row already at the destination. A rename-over means
 		// SOME note's bookkeeping at `to` is stale, but we cannot tell "the same
 		// note materialized twice" from "an unrelated note we are about to
@@ -5932,13 +5940,6 @@ export class SyncEngine {
 		}
 		if (!this.isSyncable(file)) return;
 		if (this.shouldIgnore(file.path)) return;
-		// During pull, vault events are usually echoes from sync writes.
-		// But real user edits can happen too — queue them for post-pull push.
-		if (this.pulling) {
-			this.pendingPostPullPushes.add(file.path);
-			this.schedulePostPullDrain();
-			return;
-		}
 		// Suppress echoes from flushFromCrdt (remote CRDT update → disk write).
 		// Must NOT key off recentlyPushed: that set is also populated after every
 		// legacy push, so checking it here would drop real user edits made within
@@ -5959,6 +5960,17 @@ export class SyncEngine {
 				"sync",
 				`Modify echo skip (recently flushed from CRDT): ${noteRef(file.path)}`,
 			);
+			return;
+		}
+		// During pull, vault events are usually echoes from sync writes.
+		// But real user edits can happen too: queue them for post-pull push.
+		// AFTER the flushed check: the drain trusts the row's hash alone, and a
+		// folder move can re-key that row away before it runs (e2e test_108). A
+		// no-op for notes: the check above only applies off the CRDT path, and
+		// only CRDT flushes mark notes.
+		if (this.pulling) {
+			this.pendingPostPullPushes.add(file.path);
+			this.schedulePostPullDrain();
 			return;
 		}
 
@@ -6993,7 +7005,7 @@ export class SyncEngine {
 			// one; one that cannot is recorded so its next write moves it.
 			for (const [o, n] of free) {
 				if (!(await this.renameFollowingIdentity(o, n)))
-					await this.noteStuck(o, ids?.get(n) ?? null);
+					await this.noteStuck(o, ids?.get(n) ?? null, n);
 			}
 			await this.leaveMovedFolder(from, change.seq);
 			return;
@@ -7006,11 +7018,11 @@ export class SyncEngine {
 		// already holds the id there): the file catches up through its stuck
 		// record.
 		const done: [string, string][] = [];
-		const stuck: [string, string | null][] = [];
+		const stuck: [string, string | null, string][] = [];
 		for (const [o, n] of free) {
 			const id = ids?.get(o) ?? ids?.get(n) ?? null;
 			if (!(await this.renameFollowingIdentity(o, n)) && this.app.vault.getFileByPath?.(o)) {
-				stuck.push([o, id]);
+				stuck.push([o, id, n]);
 			}
 			done.push([o, n]);
 		}
@@ -7020,7 +7032,7 @@ export class SyncEngine {
 			if (await this.renameFollowingIdentity(o, copy)) done.push([o, copy]);
 		}
 		this.rekeyMoved(done, false);
-		for (const [o, id] of stuck) await this.noteStuck(o, id);
+		for (const [o, id, n] of stuck) await this.noteStuck(o, id, n);
 		await this.leaveMovedFolder(from, change.seq);
 	}
 
@@ -7146,6 +7158,7 @@ export class SyncEngine {
 			stuck: [...this.stuckMoves].map(([from, m]) => ({
 				from,
 				id: m.id,
+				...(m.to !== undefined ? { to: m.to } : {}),
 				hash: m.hash,
 				tries: m.tries,
 				since: m.since,
@@ -7157,12 +7170,16 @@ export class SyncEngine {
 		if (saved && saved.vaultId === (this.settings.vaultId ?? null)) {
 			this.folderOps.index.load(saved.rows);
 			for (const m of saved.stuck ?? []) {
-				if (typeof m?.from !== "string" || typeof m.id !== "string") continue;
+				if (typeof m?.from !== "string") continue;
+				// A note by its id, an attachment by its row's path.
+				const id = typeof m.id === "string" ? m.id : null;
+				if (id === null && typeof m.to !== "string") continue;
 				if (typeof m.hash !== "number") continue;
 				// Verified against the file at the first retry: contents are not
 				// readable this early in load.
 				this.stuckMoves.set(m.from, {
-					id: m.id,
+					id,
+					...(id === null ? { to: m.to } : {}),
 					hash: m.hash,
 					tries: m.tries ?? 0,
 					since: m.since ?? this.time.now(),
@@ -7186,23 +7203,22 @@ export class SyncEngine {
 	 *  more, after `STUCK_MAX_TRIES` / `STUCK_MAX_AGE_MS` (conflict copy), and
 	 *  on vault switch. A restored record whose file no longer matches `hash`
 	 *  is dropped (the user replaced the file). */
-	private stuckMoves = this.track(
-		["vault", "destroy"],
-		new Map<
-			string,
-			{ id: string; hash: number; tries: number; since: number; restored?: boolean }
-		>(),
-	);
+	private stuckMoves = this.track(["vault", "destroy"], new Map<string, StuckRecord>());
 
-	/** Record a stuck move. Notes only: a file with no note id (an attachment)
-	 *  has nothing to follow and takes the normal path. */
-	private async noteStuck(from: string, id: string | null): Promise<void> {
+	/** Record a stuck move. A note is found again by its id. An attachment has
+	 *  none: it is found by its sync row's path `to`, which `renamePath` (every
+	 *  row move goes through it) keeps current across later server moves.
+	 *  Without the record the old file is untracked and a push sweep uploads
+	 *  it at the old path (a duplicate, the e2e test_108 class). A NOTE with no
+	 *  id has nothing to follow and takes the normal path. */
+	private async noteStuck(from: string, id: string | null, to: string): Promise<void> {
 		const file = this.app.vault.getFileByPath?.(from);
-		if (!id || !file) return;
+		if (!file || (!id && !this.isBinaryFile(file))) return;
 		try {
-			const hash = fnv1a(await this.app.vault.read(file));
+			const hash = await this.stuckHash(file);
 			this.stuckMoves.set(normalizePath(from), {
 				id,
+				...(id === null ? { to: normalizePath(to) } : {}),
 				hash,
 				tries: 0,
 				since: this.time.now(),
@@ -7215,9 +7231,26 @@ export class SyncEngine {
 		}
 	}
 
+	/** Content hash a stuck record is checked against (the same one the
+	 *  sync row holds for that kind of file). */
+	private async stuckHash(file: TFile): Promise<number> {
+		return this.isBinaryFile(file)
+			? fnv1aBase64(await this.app.vault.readBinary(file))
+			: fnv1a(await this.app.vault.read(file));
+	}
+
 	/** The file left the old path (deleted or moved by the user or by us). */
 	private forgetStuckMove(path: string): void {
+		this.clearStuckIssue(path);
 		if (this.stuckMoves.delete(normalizePath(path))) this.persistGateJournalSoon();
+	}
+
+	/** Drop the "could not move" Sync Center card a stuck attachment raised at
+	 *  the retry cap (`resolveStuckAttachment`), once its record is done with:
+	 *  it must not outlive the file. Only stuck moves record `conflict`. */
+	private clearStuckIssue(path: string): void {
+		const p = normalizePath(path);
+		if (this.issues.get(p)?.category === "conflict") this.issues.clear(p);
 	}
 
 	private stuckRetry: Promise<void> | null = null;
@@ -7249,12 +7282,13 @@ export class SyncEngine {
 	 *  same note already there with the same bytes: the old copy goes.
 	 *  Anything else at the target, or the retry cap reached: a conflict copy
 	 *  of the old file beside it, never a claim on it. */
-	private async resolveStuckMove(
-		from: string,
-		rec: { id: string; hash: number; tries: number; since: number; restored?: boolean },
-	): Promise<boolean> {
+	private async resolveStuckMove(from: string, rec: StuckRecord): Promise<boolean> {
 		const file = this.app.vault.getFileByPath?.(from);
-		if (!file) return true;
+		if (!file) {
+			this.clearStuckIssue(from);
+			return true;
+		}
+		if (rec.id === null) return this.resolveStuckAttachment(from, file, rec);
 		const text = await this.app.vault.read(file);
 		if (rec.restored && fnv1a(text) !== rec.hash) return true; // replaced while off
 		rec.restored = false;
@@ -7287,6 +7321,65 @@ export class SyncEngine {
 		}
 		await this.trashKeeping(file, text, to);
 		return true;
+	}
+
+	/** `resolveStuckMove` for an attachment. Bytes cannot be merged: a target
+	 *  holding the same bytes (compared in full, read fresh) means the old copy
+	 *  goes; anything else at the target keeps the old file as a conflict copy
+	 *  beside it. Every failed attempt counts toward the cap, and past the cap
+	 *  the old file is kept as a conflict copy, or, when even that rename
+	 *  fails, raised as a Sync Center issue: the record stays (so the file is
+	 *  never uploaded at the old path) and the retries go on. */
+	private async resolveStuckAttachment(
+		from: string,
+		file: TFile,
+		rec: StuckRecord,
+	): Promise<boolean> {
+		const done = () => {
+			this.clearStuckIssue(from);
+			return true;
+		};
+		const to = rec.to;
+		// The row is gone (deleted on the server): the normal path handles it.
+		if (!to || to === from || !this.syncState.has(to)) return done();
+		const bytes = await this.app.vault.readBinary(file);
+		if (rec.restored && fnv1aBase64(bytes) !== rec.hash) return done(); // replaced while off
+		rec.restored = false;
+		const at = this.app.vault.getAbstractFileByPath(to);
+		if (
+			at instanceof TFile &&
+			this.arrayBuffersEqual(await this.app.vault.readBinary(at), bytes)
+		) {
+			// Re-read right before the trash: bytes written into the old file
+			// meanwhile are not the target's, and fall through to a copy.
+			if (this.arrayBuffersEqual(await this.app.vault.readBinary(file), bytes)) {
+				await this.trashRemotelyDeleted(file);
+				await this.removeEmptyFolders(from);
+				return done();
+			}
+		}
+		const copy = conflictCopyPath(to);
+		if (await this.renameFollowingIdentity(from, at ? copy : to)) return done();
+		rec.tries++;
+		const capped =
+			rec.tries >= STUCK_MAX_TRIES || this.time.now() - rec.since >= STUCK_MAX_AGE_MS;
+		if (!capped) return false;
+		rlog().warn(
+			"pull",
+			`Stuck move gave up after ${rec.tries} tries: ${noteRef(from)} -> ${noteRef(to)}, keeping it as a conflict copy`,
+		);
+		if (!at && (await this.renameFollowingIdentity(from, copy))) return done();
+		const now = Date.now();
+		this.issues.record({
+			path: from,
+			kind: "attachment",
+			category: "conflict",
+			message: `Could not move to ${to} after a folder move`,
+			firstFailedAt: now,
+			lastFailedAt: now,
+			attempts: 1,
+		});
+		return false;
 	}
 
 	/** Trash the old copy of a stuck move, unless it changed since `text` was
@@ -9032,9 +9125,17 @@ export class SyncEngine {
 		return this.files.has(path, "pushed");
 	}
 
-	/** Suppress the handleModify echo of a flushFromCrdt disk write for
-	 *  ECHO_COOLDOWN_MS. Separate from recentlyPushed so a post-push cooldown
-	 *  never swallows a genuine local edit. */
+	/** Suppress the handleModify echo of the engine's own disk write (a
+	 *  flushFromCrdt write or an attachment download) for ECHO_COOLDOWN_MS.
+	 *  Marked BEFORE the write: Obsidian dispatches `create`/`modify` inside it.
+	 *  For a download this is what stops the bytes going straight back up. The
+	 *  echo push used to rely on the row's hash alone. `rekeyMoved` cancels a
+	 *  push still armed, but not one already in flight: pushFile reads
+	 *  `file.path` after `await readBinary`, so a server folder move that
+	 *  re-keys the row in that await leaves no row at the old path, and the
+	 *  bytes went up there (e2e test_108).
+	 *  Separate from recentlyPushed so a post-push cooldown never swallows a
+	 *  genuine local edit. */
 	private markRecentlyFlushed(path: string): void {
 		this.files.mark(path, "flushed", ECHO_COOLDOWN_MS);
 	}
@@ -13565,6 +13666,7 @@ export class SyncEngine {
 					return false;
 				}
 			}
+			this.markRecentlyFlushed(normalized);
 			await this.app.vault.modifyBinary(existing, buffer);
 			settle();
 			rlog().info(
@@ -14060,6 +14162,7 @@ export class SyncEngine {
 	): Promise<void> {
 		const moved = this.fileMovedByPendingOp(normalized);
 		if (moved) {
+			this.markRecentlyFlushed(moved.path);
 			await this.app.vault.modifyBinary(moved, data);
 			return;
 		}
@@ -14069,6 +14172,7 @@ export class SyncEngine {
 		if (folder) {
 			await this.ensureFolder(folder);
 		}
+		this.markRecentlyFlushed(normalized);
 		await this.app.vault.createBinary(normalized, data);
 	}
 
@@ -16448,12 +16552,16 @@ export class SyncEngine {
 /** A dated `<name> (conflict <stamp>).<ext>` path beside `normalized`.
  *  Millisecond-precision stamp (not date-only): two copies of the SAME note
  *  within one day would otherwise collide, and a collision degrades to an
- *  in-place modify that silently clobbers the first copy. Keeps the note's own
- *  extension (.md or .canvas) so a canvas copy stays a canvas file. */
+ *  in-place modify that silently clobbers the first copy. Keeps the file's own
+ *  extension, whatever it is: a canvas copy stays a canvas, and an
+ *  attachment copy stays an image (a `.md` suffix made Obsidian read the
+ *  only copy of the bytes as a note). A name with no extension gets `.md`. */
 function conflictCopyPath(normalized: string): string {
 	const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-	const ext = canvasPath(normalized) ? "canvas" : "md";
-	const base = normalized.replace(/\.(md|canvas)$/, "");
+	const dot = normalized.lastIndexOf(".");
+	const hasExt = dot > normalized.lastIndexOf("/") + 1;
+	const base = hasExt ? normalized.slice(0, dot) : normalized;
+	const ext = hasExt ? normalized.slice(dot + 1) : "md";
 	return `${base} (conflict ${stamp}).${ext}`;
 }
 

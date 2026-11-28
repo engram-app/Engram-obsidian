@@ -30,6 +30,10 @@ interface Opts {
 	before?: Record<string, string>;
 	/** File renames that throw. */
 	failing?: string[];
+	/** Sync rows present at load (path -> hash), as data.json restores them. */
+	rows?: Record<string, number>;
+	/** Rename targets that throw (any source). */
+	failingTo?: string[];
 	/** The race lands a FILE (same note, this content) at the new a.md, not
 	 *  just the folder (review @ b09792ed MEDIUM). */
 	raceFile?: string;
@@ -41,6 +45,8 @@ interface Opts {
 	seed?: Record<string, string>;
 	/** File contents overriding the defaults (path -> text). */
 	bodies?: Record<string, string>;
+	/** Extra files at the old paths (path -> content), e.g. an attachment. */
+	extra?: Record<string, string>;
 }
 
 async function setup(opts: Opts = {}) {
@@ -48,6 +54,7 @@ async function setup(opts: Opts = {}) {
 	const bodies = new Map<string, string>([
 		[`${OLD}/a.md`, "alpha"],
 		[`${OLD}/sub/b.md`, "beta"],
+		...Object.entries(opts.extra ?? {}),
 		...Object.entries(opts.bodies ?? {}),
 	]);
 	const parentOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
@@ -64,6 +71,7 @@ async function setup(opts: Opts = {}) {
 	for (const p of ["E2E", OLD, `${OLD}/sub`]) attach(new TFolder(p, []));
 	attach(new TFile(`${OLD}/a.md`));
 	attach(new TFile(`${OLD}/sub/b.md`));
+	for (const p of Object.keys(opts.extra ?? {})) attach(new TFile(p));
 	if (opts.before) {
 		attach(new TFolder(NEW, []));
 		for (const p of Object.keys(opts.before)) {
@@ -87,6 +95,7 @@ async function setup(opts: Opts = {}) {
 					throw new Error("Destination file already exists!");
 				}
 				if (opts.failing?.includes(f.path)) throw new Error("EBUSY");
+				if (opts.failingTo?.includes(to)) throw new Error("EBUSY");
 				detach(f.path);
 				bodies.set(to, bodies.get(f.path) ?? "");
 				bodies.delete(f.path);
@@ -94,6 +103,9 @@ async function setup(opts: Opts = {}) {
 				attach(f);
 			},
 			read: async (f: TFile) => bodies.get(f.path) ?? "",
+			readBinary: async (f: TFile) =>
+				new TextEncoder().encode(bodies.get(f.path) ?? "").buffer,
+			getFiles: () => [...tree.values()].filter((f): f is TFile => f instanceof TFile),
 			cachedRead: async (f: TFile) => bodies.get(f.path) ?? "",
 			create: async (p: string, text: string) => {
 				if (tree.has(p)) throw new Error("File already exists.");
@@ -121,6 +133,7 @@ async function setup(opts: Opts = {}) {
 	const api = {
 		createNote: mock().mockResolvedValue({}),
 		pushNote: mock().mockResolvedValue({}),
+		pushAttachment: mock().mockResolvedValue({}),
 	};
 	const engine = new SyncEngine(
 		app,
@@ -129,6 +142,8 @@ async function setup(opts: Opts = {}) {
 		mock().mockResolvedValue(undefined),
 	);
 	engines.push(engine);
+	for (const [p, hash] of Object.entries(opts.rows ?? {}))
+		(engine as any).syncState.set(p, { hash });
 	engine.setReady();
 	const ids = new NoteIdMap();
 	for (const [p, id] of Object.entries(
@@ -364,4 +379,162 @@ test("a restored record is dropped when the old file was replaced", async () => 
 	expect(second.tree.has(`${OLD}/sub/b.md`)).toBe(true);
 	expect(second.tree.has(`${NEW}/sub/b.md`)).toBe(false);
 	expect(second.engine.exportFolderIndex().stuck).toEqual([]);
+});
+
+// Review @ 271b37ef MEDIUM: an attachment (no note id) stranded at the old
+// path by a failed move keeps its row at the new path only. Untracked at the
+// old path, a push sweep uploaded it there: the same duplicate as e2e test_108.
+// It must be recorded as stuck, never pushed, and follow on retry.
+test("an attachment stranded by a failed move is not uploaded at the old path, and follows on retry", async () => {
+	const IMG = `${OLD}/sub/img.png`;
+	const failing = [IMG];
+	const { engine, tree, api } = await setup({ before: {}, failing, extra: { [IMG]: "PNG" } });
+	const { fnv1aBase64 } = await import("../src/content-hash");
+	(engine as any).syncState.set(IMG, {
+		hash: fnv1aBase64(new TextEncoder().encode("PNG").buffer),
+	});
+	await engine.onFolderChanged(move);
+	expect(tree.has(IMG)).toBe(true);
+	await (engine as any).pushModifiedFiles();
+	expect(api.pushAttachment).not.toHaveBeenCalled();
+	failing.length = 0;
+	await (engine as any).retryStuckMoves();
+	expect(tree.has(`${NEW}/sub/img.png`)).toBe(true);
+	expect(tree.has(IMG)).toBe(false);
+	expect(engine.exportFolderIndex().stuck).toEqual([]);
+});
+
+// Review @ d03d54c0: the stuck-attachment branches. IMG is stranded at the old
+// path (its move throws), its row is at the new path.
+const IMG = `${OLD}/sub/img.png`;
+const IMG_NEW = `${NEW}/sub/img.png`;
+const isCopy = (p: string) => /^E2E\/Edit107-done\/sub\/img \(conflict .+\)\.png$/.test(p);
+
+async function strandImage(opts: Opts = {}) {
+	const failing = opts.failing ?? [IMG];
+	const env = await setup({ before: {}, ...opts, failing, extra: { [IMG]: "PNG" } });
+	const { fnv1aBase64 } = await import("../src/content-hash");
+	(env.engine as any).syncState.set(IMG, {
+		hash: fnv1aBase64(new TextEncoder().encode("PNG").buffer),
+	});
+	await env.engine.onFolderChanged(move);
+	expect(env.tree.has(IMG)).toBe(true);
+	return { ...env, failing };
+}
+
+test("stuck attachment: the same bytes already at the target delete the old copy", async () => {
+	const { engine, tree, bodies, app, failing } = await strandImage();
+	await app.vault.create(IMG_NEW, "PNG");
+	failing.length = 0;
+	await (engine as any).retryStuckMoves();
+	expect(tree.has(IMG)).toBe(false);
+	expect(bodies.get(IMG_NEW)).toBe("PNG");
+	expect([...tree.keys()].some(isCopy)).toBe(false);
+	expect(engine.exportFolderIndex().stuck).toEqual([]);
+});
+
+test("stuck attachment: other bytes at the target keep the old copy as an image conflict copy", async () => {
+	const { engine, tree, bodies, app, failing } = await strandImage();
+	await app.vault.create(IMG_NEW, "OTHER");
+	failing.length = 0;
+	await (engine as any).retryStuckMoves();
+	expect(tree.has(IMG)).toBe(false);
+	expect(bodies.get(IMG_NEW)).toBe("OTHER");
+	const copies = [...tree.keys()].filter((p) => p.startsWith(`${NEW}/sub/img (conflict `));
+	expect(copies.length).toBe(1);
+	expect(isCopy(copies[0])).toBe(true);
+	expect(bodies.get(copies[0])).toBe("PNG");
+	expect(engine.exportFolderIndex().stuck).toEqual([]);
+});
+
+test("stuck attachment: at the retry cap the old copy becomes an image conflict copy", async () => {
+	const { engine, tree, bodies } = await strandImage({ failing: [], failingTo: [IMG_NEW] });
+	for (let i = 0; i < 6; i++) await (engine as any).retryStuckMoves();
+	expect(tree.has(IMG)).toBe(false);
+	const copies = [...tree.keys()].filter(isCopy);
+	expect(copies.map((p) => bodies.get(p))).toEqual(["PNG"]);
+	expect(engine.exportFolderIndex().stuck).toEqual([]);
+});
+
+test("stuck attachment: a rename that keeps throwing advances tries and raises a Sync Center issue, never an upload", async () => {
+	const { engine, tree, app, api } = await strandImage();
+	await app.vault.create(IMG_NEW, "OTHER");
+	for (let i = 0; i < 6; i++) await (engine as any).retryStuckMoves();
+	expect(tree.has(IMG)).toBe(true);
+	expect(engine.issues.get(IMG)?.category).toBe("conflict");
+	expect(engine.exportFolderIndex().stuck?.[0]?.tries).toBeGreaterThanOrEqual(5);
+	await (engine as any).pushModifiedFiles();
+	// The user's other file at the new path may sync; the old path never does.
+	const sent = api.pushAttachment.mock.calls.map((c: unknown[]) => c[0]);
+	expect(sent).not.toContain(IMG);
+});
+
+test("stuck attachment: the record survives a restart with no id and its row path", async () => {
+	const first = await strandImage();
+	const saved = JSON.parse(JSON.stringify(first.engine.exportFolderIndex()));
+	expect(saved.stuck).toEqual([expect.objectContaining({ from: IMG, id: null, to: IMG_NEW })]);
+	const second = await setup({
+		restore: saved,
+		ids: { [`${NEW}/a.md`]: "na", [`${NEW}/sub/b.md`]: "nb" },
+		extra: { [IMG]: "PNG" },
+		rows: { [IMG_NEW]: 1 },
+	});
+	(second.engine as any).ensureFolder = async (p: string) => {
+		if (!second.tree.has(p)) await second.app.vault.createFolder(p);
+	};
+	await (second.engine as any).retryStuckMoves();
+	expect(second.tree.has(IMG_NEW)).toBe(true);
+	expect(second.tree.has(IMG)).toBe(false);
+	expect(second.engine.exportFolderIndex().stuck).toEqual([]);
+});
+
+test("stuck attachment: a later move of its row carries the record's target", async () => {
+	const { engine, tree, failing } = await strandImage();
+	const LATER = "E2E/Later/sub/img.png";
+	(engine as any).renamePath(IMG_NEW, LATER, "remote");
+	expect(engine.exportFolderIndex().stuck?.[0]?.to).toBe(LATER);
+	failing.length = 0;
+	await (engine as any).retryStuckMoves();
+	expect(tree.has(LATER)).toBe(true);
+	expect(tree.has(IMG)).toBe(false);
+});
+
+// Review delta 2 LOW: the "could not move" card must not outlive its stuck
+// file. A user delete or rename of the old file drops the record, and the
+// card with it; so does a retry that finds the file gone.
+async function capStuckImage() {
+	const env = await strandImage();
+	await env.app.vault.create(IMG_NEW, "OTHER");
+	for (let i = 0; i < 6; i++) await (env.engine as any).retryStuckMoves();
+	expect(env.engine.issues.get(IMG)?.category).toBe("conflict");
+	return env;
+}
+
+test("stuck attachment: a user delete of the old file clears its Sync Center card", async () => {
+	const { engine, tree, app } = await capStuckImage();
+	const file = tree.get(IMG) as TFile;
+	await app.fileManager.trashFile(file);
+	await engine.handleDelete(file);
+	expect(engine.issues.get(IMG)).toBeUndefined();
+	expect(engine.exportFolderIndex().stuck).toEqual([]);
+});
+
+test("stuck attachment: a user rename of the old file clears its Sync Center card", async () => {
+	const { engine, tree, failing } = await capStuckImage();
+	const file = tree.get(IMG) as TFile;
+	failing.length = 0;
+	const elsewhere = `${NEW}/kept.png`;
+	await (engine as any).app.vault.rename(file, elsewhere);
+	await engine.handleRename(file, IMG);
+	expect(engine.issues.get(IMG)).toBeUndefined();
+	expect(engine.exportFolderIndex().stuck).toEqual([]);
+});
+
+test("stuck attachment: a retry that finds the old file gone clears its Sync Center card", async () => {
+	const { engine, tree, app } = await capStuckImage();
+	// Gone without a delete event reaching the engine (removed while off).
+	await app.fileManager.trashFile(tree.get(IMG) as TFile);
+	await (engine as any).retryStuckMoves();
+	expect(engine.issues.get(IMG)).toBeUndefined();
+	expect(engine.exportFolderIndex().stuck).toEqual([]);
 });
