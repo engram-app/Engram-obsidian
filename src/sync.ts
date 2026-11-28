@@ -4600,8 +4600,10 @@ export class SyncEngine {
 	 *  makes `currentDocText` hydrate a Y.Doc per discovered note. A local
 	 *  create of the same path racing that write used to see no head and send
 	 *  a genesis `crdt_create` under the server's id, whose frame is a rival
-	 *  lineage of the row. Cleared when the write ends, whatever its outcome. */
-	private readonly discoveryWrites = new Set<string>();
+	 *  lineage of the row. Cleared when the write ends, whatever its outcome,
+	 *  and swept with the vault: a path from the old vault must not mark the
+	 *  new vault's note server-known. */
+	private readonly discoveryWrites = this.track(["vault", "destroy"], new Set<string>());
 
 	/** Import legacy hash-only format (migration from old plugin versions). */
 	importHashes(data: Record<string, number>): void {
