@@ -8,7 +8,7 @@
 
 **[Empieza gratis en engram.page →](https://engram.page)** · Sin tarjeta de crédito, listo en minutos.
 
-[Instalación](#instalación) · [Conecta tu IA](#conecta-tu-ia) · [API](https://engram.page/docs/api) · [Guía de uso](../user-guide.md) · [Autoalojamiento](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
+[Instalación](#instalación) · [Conecta tu IA](#conecta-tu-ia) · [API](https://engram.page/docs/api) · [Guía de uso](../user-guide.md) · [Discord](https://discord.gg/NKWcU2mm7N)
 
 [English](../../README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · **Español** · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)
 
@@ -43,9 +43,9 @@ Nunca se sobrescribe nada en silencio. Los cambios hechos sin conexión se sincr
 
 ## Instalación
 
-**1. Consigue una cuenta de Engram.** Alojada en **[engram.page](https://engram.page)** (plan gratuito, nada que instalar), o aloja tú mismo el [backend de código disponible](https://github.com/engram-app/engram) para que tus notas no salgan nunca de tu propio equipo.
+**1. Consigue una cuenta de Engram.** Alojada en **[engram.page](https://engram.page)** (plan gratuito, nada que instalar).
 
-**2. Conéctate.** Abre *Settings → Engram Vault Sync* y ve a la pestaña **Conexión**. **Alojado:** elige **Engram Cloud** y pulsa **Iniciar sesión**. **Autoalojado:** elige **Autoalojado** e indica la dirección de tu servidor y tu clave. En ambos casos el plugin te guía por la primera sincronización; no se envía nada hasta que lo confirmas.
+**2. Conéctate.** Abre *Settings → Engram Vault Sync* y ve a la pestaña **Conexión**. Pulsa **Iniciar sesión**. El plugin te guía por la primera sincronización; no se envía nada hasta que lo confirmas.
 
 A partir de ahí, la sincronización ocurre sola mientras trabajas.
 
@@ -61,9 +61,9 @@ Apunta tu cliente al servidor MCP de Engram (`https://mcp.engram.page` en el ser
 
 ## Privacidad
 
-- **Uso de la red y cuentas.** El plugin habla solo con tu servidor de Engram, con nada más, sin intermediarios. Te conectas con tu cuenta de Engram mediante OAuth, y eso funciona en todos los planes. También se admiten claves de API, pero en Engram Cloud requieren el plan Pro; los servidores autoalojados no tienen ese límite.
+- **Uso de la red y cuentas.** El plugin habla solo con tu servidor de Engram, con nada más, sin intermediarios. Te conectas con tu cuenta de Engram mediante OAuth, y eso funciona en todos los planes. En el plan Pro también se admiten claves de API.
 - **Sin telemetría.** El registro remoto opcional (desactivado por defecto) envía solo eventos de error y de ciclo de vida, y únicamente a tu servidor.
-- **Privacidad del servicio alojado.** Consulta [engram.page/privacy](https://engram.page/privacy). Los planes de pago amplían los límites de almacenamiento y búsqueda; autoalojarse es gratis.
+- **Privacidad del servicio alojado.** Consulta [engram.page/privacy](https://engram.page/privacy). Los planes de pago amplían los límites de almacenamiento y búsqueda.
 
 ## Más
 

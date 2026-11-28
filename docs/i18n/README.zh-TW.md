@@ -8,7 +8,7 @@
 
 **[在 engram.page 免費開始 →](https://engram.page)** · 無需信用卡，幾分鐘即可就緒。
 
-[安裝設定](#安裝設定) · [連接你的 AI](#連接你的-ai) · [API](https://engram.page/docs/api) · [使用手冊](../user-guide.md) · [自行架設](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
+[安裝設定](#安裝設定) · [連接你的 AI](#連接你的-ai) · [API](https://engram.page/docs/api) · [使用手冊](../user-guide.md) · [Discord](https://discord.gg/NKWcU2mm7N)
 
 [English](../../README.md) · [简体中文](README.zh-CN.md) · **繁體中文** · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)
 
@@ -42,9 +42,9 @@ Claude   📝  已建立「Henderson：續約風險」  ✓
 
 ## 安裝設定
 
-**1. 取得一個 Engram 帳號。** 使用託管版 **[engram.page](https://engram.page)**（含免費額度，無需安裝任何東西），或自行架設[原始碼可得的後端](https://github.com/engram-app/engram)，這樣筆記永遠不會離開你自己的硬體。
+**1. 取得一個 Engram 帳號。** 使用託管版 **[engram.page](https://engram.page)**（含免費額度，無需安裝任何東西）。
 
-**2. 連接。** 開啟 *Settings → Engram Vault Sync*，進入 **連線** 分頁。**託管版：** 選擇 **Engram Cloud**，點擊 **登入**。**自行架設：** 選擇 **自行架設**，填入伺服器網址與金鑰。兩種方式外掛都會帶你走完第一次同步；在你確認之前不會傳送任何內容。
+**2. 連接。** 開啟 *Settings → Engram Vault Sync*，進入 **連線** 分頁。點擊 **登入**。外掛會帶你走完第一次同步；在你確認之前不會傳送任何內容。
 
 之後，同步就會隨著你的工作自動進行。
 
@@ -60,9 +60,9 @@ Engram 使用 **MCP（Model Context Protocol，模型上下文協定）**：這�
 
 ## 隱私
 
-- **網路存取與帳號。** 外掛只與你的 Engram 伺服器通訊，不聯繫別處，沒有中間方。你透過 OAuth 登入 Engram 帳號，所有方案皆可使用。也支援 API 金鑰，但在 Engram Cloud 上需要 Pro 方案；自行架設的伺服器沒有此限制。
+- **網路存取與帳號。** 外掛只與你的 Engram 伺服器通訊，不聯繫別處，沒有中間方。你透過 OAuth 登入 Engram 帳號，所有方案皆可使用。Pro 方案也支援 API 金鑰。
 - **沒有遙測。** 選用的遠端記錄（預設關閉）只會把錯誤與生命週期事件傳送到你自己的伺服器。
-- **託管版隱私政策。** 請見 [engram.page/privacy](https://engram.page/privacy)。付費方案會提高儲存與搜尋額度；自行架設免費。
+- **託管版隱私政策。** 請見 [engram.page/privacy](https://engram.page/privacy)。付費方案會提高儲存與搜尋額度。
 
 ## 更多
 

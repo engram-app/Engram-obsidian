@@ -8,7 +8,7 @@
 
 **[Comece de graça em engram.page →](https://engram.page)** · Sem cartão de crédito, pronto em minutos.
 
-[Instalação](#instalação) · [Conecte sua IA](#conecte-sua-ia) · [API](https://engram.page/docs/api) · [Guia do usuário](../user-guide.md) · [Hospedar por conta própria](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
+[Instalação](#instalação) · [Conecte sua IA](#conecte-sua-ia) · [API](https://engram.page/docs/api) · [Guia do usuário](../user-guide.md) · [Discord](https://discord.gg/NKWcU2mm7N)
 
 [English](../../README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · **Português** · [Русский](README.ru.md) · [Italiano](README.it.md)
 
@@ -42,9 +42,9 @@ Nada é sobrescrito em silêncio. As edições feitas sem conexão sincronizam q
 
 ## Instalação
 
-**1. Crie uma conta no Engram.** Hospedada em **[engram.page](https://engram.page)** (plano gratuito, nada para instalar), ou hospede por conta própria o [backend de código disponível](https://github.com/engram-app/engram) para que suas notas nunca saiam do seu equipamento.
+**1. Crie uma conta no Engram.** Hospedada em **[engram.page](https://engram.page)** (plano gratuito, nada para instalar).
 
-**2. Conecte.** Abra *Settings → Engram Vault Sync* e vá para a aba **Conexão**. **Hospedado:** escolha **Engram Cloud** e clique em **Entrar**. **Por conta própria:** escolha **Auto-hospedado** e informe o endereço do seu servidor e a chave. Nos dois casos o plugin conduz a primeira sincronização; nada é enviado antes da sua confirmação.
+**2. Conecte.** Abra *Settings → Engram Vault Sync* e vá para a aba **Conexão**. Clique em **Entrar**. O plugin conduz a primeira sincronização; nada é enviado antes da sua confirmação.
 
 Depois disso, a sincronização acontece sozinha enquanto você trabalha.
 
@@ -60,9 +60,9 @@ Aponte seu cliente para o servidor MCP do Engram (`https://mcp.engram.page` no s
 
 ## Privacidade
 
-- **Uso de rede e contas.** O plugin conversa apenas com o seu servidor Engram, com mais nada, sem intermediários. Você se conecta à sua conta Engram por login OAuth, o que funciona em todos os planos. Chaves de API também são aceitas, mas no Engram Cloud exigem o plano Pro; servidores hospedados por você não têm esse limite.
+- **Uso de rede e contas.** O plugin conversa apenas com o seu servidor Engram, com mais nada, sem intermediários. Você se conecta à sua conta Engram por login OAuth, o que funciona em todos os planos. No plano Pro, chaves de API também são aceitas.
 - **Sem telemetria.** O registro remoto opcional (desligado por padrão) envia apenas eventos de erro e de ciclo de vida, e só para o seu servidor.
-- **Privacidade do serviço hospedado.** Veja [engram.page/privacy](https://engram.page/privacy). Os planos pagos aumentam os limites de armazenamento e de busca; hospedar por conta própria é gratuito.
+- **Privacidade do serviço hospedado.** Veja [engram.page/privacy](https://engram.page/privacy). Os planos pagos aumentam os limites de armazenamento e de busca.
 
 ## Mais
 

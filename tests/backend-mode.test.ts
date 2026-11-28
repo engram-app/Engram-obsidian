@@ -6,6 +6,7 @@ import {
 	connectionState,
 	migrateBackendMode,
 	modeForUrl,
+	offersSelfHost,
 	offersUpgrades,
 	switchMode,
 } from "../src/backend-mode";
@@ -263,5 +264,33 @@ describe("offersUpgrades", () => {
 
 	test("an unknown mode stays quiet rather than advertising billing", () => {
 		expect(offersUpgrades({})).toBe(false);
+	});
+});
+
+describe("offersSelfHost", () => {
+	test("a new or cloud-only install does not see the self-hosted option", () => {
+		expect(offersSelfHost({})).toBe(false);
+		expect(offersSelfHost({ backendMode: "cloud" })).toBe(false);
+		expect(
+			offersSelfHost({
+				backendMode: "cloud",
+				inactiveBackend: { apiUrl: "" } as EngramSyncSettings["inactiveBackend"],
+			}),
+		).toBe(false);
+	});
+
+	test("an install already on a self-hosted server keeps it", () => {
+		expect(offersSelfHost({ backendMode: "selfhost" })).toBe(true);
+	});
+
+	test("a self-hosted server parked in the inactive slot stays reachable", () => {
+		expect(
+			offersSelfHost({
+				backendMode: "cloud",
+				inactiveBackend: {
+					apiUrl: "http://nas.local:4000",
+				} as EngramSyncSettings["inactiveBackend"],
+			}),
+		).toBe(true);
 	});
 });

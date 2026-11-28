@@ -49,6 +49,16 @@ describe("connection tab disclosure", () => {
 		expect(names()).not.toMatch(/Authentication/i);
 	});
 
+	// Self-hosting is temporarily hidden: a cloud install gets no backend picker,
+	// while an install already on a self-hosted server keeps it.
+	test("cloud hides the sync server picker; self-host keeps it", () => {
+		renderConnectionTab(ctxFor({ backendMode: "cloud", apiUrl: "" }).ctx);
+		expect(names()).not.toMatch(/Sync server/i);
+		__settingCapture.names.length = 0;
+		renderConnectionTab(ctxFor({ backendMode: "selfhost", apiUrl: "" }).ctx);
+		expect(names()).toMatch(/Sync server/i);
+	});
+
 	// Cloud has no URL step — the address is fixed — so it must disclose
 	// immediately or a cloud user sees an empty tab.
 	test("cloud discloses immediately", () => {

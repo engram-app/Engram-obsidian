@@ -51,6 +51,20 @@ export function offersUpgrades(settings: Pick<EngramSyncSettings, "backendMode">
 	return settings.backendMode === "cloud";
 }
 
+/** Should the Connection tab offer the Self-hosted backend at all? Self-hosting
+ *  is temporarily withdrawn from public view, so new installs see Cloud only.
+ *  Anyone already on a self-hosted server, or holding one in the stashed slot
+ *  (the inactive slot is the self-hosted one while Cloud is active), keeps the
+ *  picker so they can still reach and switch back to it. Return `true`
+ *  unconditionally to bring the option back for everyone. */
+export function offersSelfHost(
+	settings: Pick<EngramSyncSettings, "backendMode" | "inactiveBackend">,
+): boolean {
+	if (settings.backendMode === "selfhost") return true;
+	const stashed = settings.inactiveBackend?.apiUrl;
+	return typeof stashed === "string" && stashed.length > 0;
+}
+
 /** A backend that has never been configured. */
 function emptySlot(apiUrl: string): BackendSlot {
 	return {

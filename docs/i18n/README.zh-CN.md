@@ -8,7 +8,7 @@
 
 **[在 engram.page 免费开始 →](https://engram.page)** · 无需信用卡，几分钟即可就绪。
 
-[安装配置](#安装配置) · [连接你的 AI](#连接你的-ai) · [API](https://engram.page/docs/api) · [使用手册](../user-guide.md) · [自托管](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
+[安装配置](#安装配置) · [连接你的 AI](#连接你的-ai) · [API](https://engram.page/docs/api) · [使用手册](../user-guide.md) · [Discord](https://discord.gg/NKWcU2mm7N)
 
 [English](../../README.md) · **简体中文** · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)
 
@@ -42,9 +42,9 @@ Claude   📝  已创建“Henderson：续约风险”  ✓
 
 ## 安装配置
 
-**1. 获取一个 Engram 账号。** 使用托管版 **[engram.page](https://engram.page)**（含免费额度，无需安装任何东西），或者自行部署[源码可得的后端](https://github.com/engram-app/engram)，这样笔记永远不会离开你自己的硬件。
+**1. 获取一个 Engram 账号。** 使用托管版 **[engram.page](https://engram.page)**（含免费额度，无需安装任何东西）。
 
-**2. 连接。** 打开 *Settings → Engram Vault Sync*，进入 **连接** 标签页。**托管版：** 选择 **Engram Cloud**，点击 **登录**。**自托管：** 选择 **自托管**，填入服务器地址和密钥。两种方式插件都会带你走完首次同步；在你确认之前不会发送任何内容。
+**2. 连接。** 打开 *Settings → Engram Vault Sync*，进入 **连接** 标签页。点击 **登录**。插件会带你走完首次同步；在你确认之前不会发送任何内容。
 
 之后，同步会随着你的工作自动进行。
 
@@ -60,9 +60,9 @@ Engram 使用 **MCP（Model Context Protocol，模型上下文协议）**：这�
 
 ## 隐私
 
-- **网络访问与账号。** 插件只与你的 Engram 服务器通信，不联系别处，没有中间方。你通过 OAuth 登录 Engram 账号，所有套餐均可使用。也支持 API 密钥，但在 Engram Cloud 上需要 Pro 套餐；自托管服务器没有此限制。
+- **网络访问与账号。** 插件只与你的 Engram 服务器通信，不联系别处，没有中间方。你通过 OAuth 登录 Engram 账号，所有套餐均可使用。Pro 套餐也支持 API 密钥。
 - **无遥测。** 可选的远程日志（默认关闭）只会把错误和生命周期事件发送到你自己的服务器。
-- **托管版隐私政策。** 见 [engram.page/privacy](https://engram.page/privacy)。付费套餐会提升存储与搜索额度；自托管免费。
+- **托管版隐私政策。** 见 [engram.page/privacy](https://engram.page/privacy)。付费套餐会提升存储与搜索额度。
 
 ## 更多
 
