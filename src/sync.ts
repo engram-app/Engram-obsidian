@@ -4590,7 +4590,37 @@ export class SyncEngine {
 		// A local rename not yet relocated server-side: the server holds the note
 		// at its OLD path, so the push must be the relocating create (renamePath).
 		if (row?.relocating) return false;
-		return row?.crdtHead != null;
+		return row?.crdtHead != null || this.discoveryWriteInFlight(path);
+	}
+
+	/** Paths a discovery pull is materializing from a server row (e2e test_84).
+	 *  The row came off the server's feed, so the server holds the note from
+	 *  the moment the pull starts writing, but `markServerKnown` can only run
+	 *  after the write: it creates a sync row, and a row before the write
+	 *  makes `currentDocText` hydrate a Y.Doc per discovered note. A local
+	 *  create of the same path racing that write used to see no head and send
+	 *  a genesis `crdt_create` under the server's id, whose frame is a rival
+	 *  lineage of the row. Cleared when the write ends, whatever its outcome,
+	 *  and swept with the vault: a path from the old vault must not mark the
+	 *  new vault's note server-known. A count per path, not a flag: two
+	 *  discovery writes of one path can overlap (several entry points reach
+	 *  applyChange), and the first to end must not reopen the window. */
+	private readonly discoveryWrites = this.track(["vault", "destroy"], new Map<string, number>());
+
+	private beginDiscoveryWrite(path: string): void {
+		const key = normalizePath(path);
+		this.discoveryWrites.set(key, (this.discoveryWrites.get(key) ?? 0) + 1);
+	}
+
+	private endDiscoveryWrite(path: string): void {
+		const key = normalizePath(path);
+		const left = (this.discoveryWrites.get(key) ?? 0) - 1;
+		if (left > 0) this.discoveryWrites.set(key, left);
+		else this.discoveryWrites.delete(key);
+	}
+
+	private discoveryWriteInFlight(path: string): boolean {
+		return this.discoveryWrites.has(normalizePath(path));
 	}
 
 	/** Import legacy hash-only format (migration from old plugin versions). */
@@ -13049,7 +13079,14 @@ export class SyncEngine {
 				// no later fan-out disk stayed at k.
 				// writeCrdtNote writes the doc's text when the doc has history: branch
 				// on what it actually wrote, not on a snapshot taken before it.
-				const body = await this.writeCrdtNote(normalized, content);
+				this.beginDiscoveryWrite(normalized);
+				let body: string | null;
+				try {
+					body = await this.writeCrdtNote(normalized, content);
+				} finally {
+					// No await between here and `markServerKnown` below, so no gap.
+					this.endDiscoveryWrite(normalized);
+				}
 				if (body === null) return false;
 				if (body === content) this.rememberDiscoveryBase(normalized, content);
 				// The doc can trail the row (its fan-out was lost). This note is idle
