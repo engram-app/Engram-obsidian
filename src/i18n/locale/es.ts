@@ -19,8 +19,11 @@ const es: Dict = {
 	"50 GB attachments": "50 GB de adjuntos",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"Se ha abierto una ventana del navegador. Inicia sesión e introduce este código para conectar tu bóveda.",
+	"A folder named {path} already exists on the server, so this folder's notes were moved into it":
+		"Ya existe una carpeta llamada {path} en el servidor, así que las notas de esta carpeta se movieron a ella",
 	"A frontmatter key could not be parsed as YAML.":
 		"No se pudo analizar una clave del frontmatter como YAML.",
+	"A note with that name already exists: {path}": "Ya existe una nota con ese nombre: {path}",
 	"A temporary server problem — retrying automatically.":
 		"Un problema temporal del servidor, se está reintentando automáticamente.",
 	"AI / MCP setup guide": "Guía de configuración de IA / MCP",
@@ -45,6 +48,8 @@ const es: Dict = {
 		"Ya está actualizado. No es necesario sincronizar nada.",
 	"An unexpected error — retrying automatically.":
 		"Un error inesperado, se está reintentando automáticamente.",
+	"Another note on the server already has this name. Rename this note and it will sync.":
+		"Otra nota en el servidor ya tiene este nombre. Cambia el nombre de esta nota y se sincronizará.",
 	"Attachment not accepted": "Archivo no aceptado",
 	"Attachment storage full": "Almacenamiento de adjuntos lleno",
 	"Attachment storage is full — upgrade for more.":
@@ -370,6 +375,7 @@ const es: Dict = {
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
 		"Nivel de severidad mínimo cuando los diagnósticos están activados. Los niveles más altos envían menos líneas. Predeterminado: Advertencias y errores.",
 	"Missing on the server": "No encontrado en el servidor",
+	"Name already taken": "El nombre ya está en uso",
 	"Needs attention ({count})": "Requiere atención ({count})",
 	"Network unavailable": "Red no disponible",
 	"New here? Watch the setup video": "¿Eres nuevo aquí? Mira el video de configuración",

@@ -15,8 +15,11 @@ const tr: Dict = {
 	"50 GB attachments": "50 GB ek",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"Bir tarayıcı penceresi açıldı. Giriş yapın ve bu kodu girerek kasanızı bağlayın.",
+	"A folder named {path} already exists on the server, so this folder's notes were moved into it":
+		"Sunucuda {path} adlı bir klasör zaten mevcut, bu nedenle bu klasördeki notlar, bu klasöre taşındı",
 	"A frontmatter key could not be parsed as YAML.":
 		"Bir ön bilgi anahtarı YAML olarak çözülemedi.",
+	"A note with that name already exists: {path}": "Aynı isimde bir not zaten var: {path}",
 	"A temporary server problem — retrying automatically.":
 		"Geçici bir sunucu sorunu — otomatik olarak tekrar deneniyor.",
 	"AI / MCP setup guide": "Yapay zeka / MCP kurulum kılavuzu",
@@ -40,6 +43,8 @@ const tr: Dict = {
 	"Already up to date. Nothing needed syncing.": "Zaten güncel. Senkronize edilecek bir şey yok.",
 	"An unexpected error — retrying automatically.":
 		"Beklenmeyen bir hata — otomatik olarak tekrar deneniyor.",
+	"Another note on the server already has this name. Rename this note and it will sync.":
+		"Sunucudaki başka bir notta bu isim zaten var. Bu notun adını değiştirin, böylece senkronize olur.",
 	"Attachment not accepted": "Ek kabul edilmedi",
 	"Attachment storage full": "Ek depolama alanı doldu",
 	"Attachment storage is full — upgrade for more.":
@@ -344,6 +349,7 @@ const tr: Dict = {
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
 		"Tanılamalar açıkken gönderilen minimum önem düzeyi. Daha yüksek seviyeler daha az satır gönderir. Varsayılan: Uyarılar ve hatalar.",
 	"Missing on the server": "Sunucuda eksik",
+	"Name already taken": "İsim zaten kullanılıyor",
 	"Needs attention ({count})": "Dikkat gerektiriyor ({count})",
 	"Network unavailable": "Ağ bağlantısı yok",
 	"New here? Watch the setup video": "Yeni misiniz? Kurulum videosunu izleyin",

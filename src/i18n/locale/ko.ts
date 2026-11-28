@@ -15,7 +15,10 @@ const ko: Dict = {
 	"50 GB attachments": "50GB 첨부 파일",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"브라우저 창이 열렸습니다. 로그인 후 이 코드를 입력하여 보관함을 연결하세요.",
+	"A folder named {path} already exists on the server, so this folder's notes were moved into it":
+		"서버에 {path}이라는 이름의 폴더가 이미 존재하므로, 해당 폴더의 노트는 그 폴더 안으로 이동되었습니다",
 	"A frontmatter key could not be parsed as YAML.": "Frontmatter 키를 YAML로 파싱할 수 없습니다.",
+	"A note with that name already exists: {path}": "해당 이름의 노트가 이미 존재합니다: {path}",
 	"A temporary server problem — retrying automatically.":
 		"일시적인 서버 문제 - 자동으로 재시도 중입니다.",
 	"AI / MCP setup guide": "AI / MCP 설정 가이드",
@@ -39,6 +42,8 @@ const ko: Dict = {
 	"Already up to date. Nothing needed syncing.":
 		"이미 최신 상태입니다. 동기화할 필요가 없습니다.",
 	"An unexpected error — retrying automatically.": "예상치 못한 오류 - 자동으로 재시도 중입니다.",
+	"Another note on the server already has this name. Rename this note and it will sync.":
+		"서버에 동일한 이름의 노트가 이미 있습니다. 이 노트의 이름을 변경하면 동기화됩니다.",
 	"Attachment not accepted": "첨부 파일이 허용되지 않습니다",
 	"Attachment storage full": "첨부 파일 저장 공간 부족",
 	"Attachment storage is full — upgrade for more.":
@@ -305,6 +310,7 @@ const ko: Dict = {
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
 		"진단 기능이 활성화된 상태에서 기본적으로 표시되는 심각도 수준입니다. 높은 수준일수록 전송되는 정보가 줄어듭니다. 기본값: 경고 및 오류.",
 	"Missing on the server": "서버에서 찾을 수 없음",
+	"Name already taken": "이름이 이미 사용되었습니다",
 	"Needs attention ({count})": "확인 필요 ({count})",
 	"Network unavailable": "네트워크 연결 안됨",
 	"New here? Watch the setup video": "처음이신가요? 설정 안내 영상을 보세요",
@@ -493,6 +499,8 @@ const ko: Dict = {
 		"Engram 서버는 더 이상 이 플러그인 버전을 지원하지 않습니다 (최소 {version} 이상 필요). 따라서 노트가 전송되거나 수신되지 않습니다. 이 장치에서 변경한 내용은 업데이트할 때까지 여기에 보관됩니다.",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Engram 서버는 더 이상 이 플러그인 버전을 지원하지 않습니다. 따라서 노트가 전송되거나 수신되지 않습니다. 이 장치에서 변경한 내용은 업데이트할 때까지 여기에 보관됩니다.",
+	"The Engram server no longer accepts this plugin version. {versions} Changes made on this device stay here until you update.":
+		"Engram 서버는 더 이상 이 플러그인 버전을 지원하지 않습니다. {versions} 이 장치에서 변경한 내용은 업데이트할 때까지 여기에서 유지됩니다.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"파일 크기가 서버 제한을 초과합니다. 압축하거나 분할한 후 동기화됩니다.",
 	"The file is too large for the server.": "파일 크기가 서버 용량을 초과합니다.",

@@ -26,6 +26,7 @@ import { encodeUpdateFrame, fromB64 } from "./crdt/wire";
 import {
 	crdtOpFailureReason,
 	type GenesisFrame,
+	isNameTaken,
 	LIMIT_REASONS,
 	type NotesCapGate,
 	TERMINAL_REASONS,
@@ -6154,6 +6155,7 @@ export class SyncEngine {
 	async handleDelete(file: TAbstractFile): Promise<void> {
 		// The user deleted a file a folder move left behind: nothing to resolve.
 		this.forgetStuckMove(file.path);
+		this.clearNameTaken(file.path);
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "handleDelete deferred — gate closed");
 			// Same reasoning as handleModify: a delete the user believes synced
@@ -6659,6 +6661,18 @@ export class SyncEngine {
 			"push",
 			`Folder op refused (${why}): ${noteRef(from)} -> ${noteRef(to)}, renaming per file`,
 		);
+		// The server keeps its own folder at `to`. Say what happens: the
+		// per-file fallback below moves the notes into it, and any whose name
+		// is taken there is parked by `parkNameTaken` with its own notice.
+		if (isNameTaken(why)) {
+			new Notice(
+				t(
+					"A folder named {path} already exists on the server, so this folder's notes were moved into it",
+					{ path: to },
+				),
+				10_000,
+			);
+		}
 		const moved = this.descendantMoves(from, to);
 		this.rekeyMoved(moved.map(([o, n]): [string, string] => [n, o]));
 		for (const [o, n] of moved) {
@@ -7442,6 +7456,7 @@ export class SyncEngine {
 	}
 
 	private async handleRenameNow(file: TAbstractFile, oldPath: string): Promise<void> {
+		this.clearNameTaken(oldPath);
 		// Relay echo rule (Relay SharedFolder.ts notifyVaultRename): a child whose
 		// bookkeeping a folder op already moved to its new path has nothing left
 		// to send. A state check, not a marker: it reads the truth, so it needs
@@ -7922,12 +7937,12 @@ export class SyncEngine {
 			report?.({ kind: "refused" });
 			return false;
 		}
-		// Same for an attachment the server refused for good (413, 402
-		// file_too_large, 415 file type): re-sending it unchanged can only be
-		// refused again, after uploading megabytes (2026-10-19: retried every
-		// few seconds, forever). Eligible again once its size/mtime or the plan
-		// changes.
-		if (this.isBinaryFile(file) && this.isParked(file)) {
+		// Same for a file the server refused for good: an attachment (413, 402
+		// file_too_large, 415 file type), or a note whose name another note
+		// holds. Re-sending it unchanged can only be refused again (2026-10-19:
+		// retried every few seconds, forever). Eligible again once its
+		// size/mtime or the plan changes.
+		if (this.isParked(file)) {
 			devLog().log("push", `skip (parked): ${file.path}`);
 			report?.({ kind: "refused" });
 			return false;
@@ -8570,6 +8585,7 @@ export class SyncEngine {
 								"push",
 								`CRDT create ok: ${noteRef(pushedPath)} | id=${effectiveId}`,
 							);
+							this.clearNameTaken(pushedPath);
 							return true;
 						} catch (seedErr) {
 							// crdtCreate already RESOLVED — the row exists server-side
@@ -8588,6 +8604,7 @@ export class SyncEngine {
 							// leaves the echo-cooldown window closed conservatively (an
 							// unsuppressed self-echo is absorbed by the hash-skip dedupe).
 							await this.adoptCreateAck(effectiveId, pushedPath, null);
+							this.clearNameTaken(pushedPath);
 							return true;
 						}
 					} catch (err) {
@@ -8605,6 +8622,13 @@ export class SyncEngine {
 							);
 							await this.trashRemotelyDeleted(file);
 							this.logEntry("push", pushedPath, "skipped", "recently_deleted");
+							return false;
+						}
+						// Another note holds this name. Retrying cannot help and the
+						// server is healthy: park it, tell the user, no backoff, no queue.
+						if (isNameTaken(createReason)) {
+							this.parkNameTaken(file);
+							report?.({ kind: "refused" });
 							return false;
 						}
 						// Plan note cap: close the shared gate so no other create is
@@ -8921,13 +8945,83 @@ export class SyncEngine {
 	}
 
 	/** True iff `file` is parked under a permanent refusal (too_large,
-	 *  unsupported) recorded for its current size, mtime and plan. */
+	 *  unsupported, name_taken) recorded for its current size, mtime and plan. */
 	private isParked(file: TFile): boolean {
 		const issue = this.issues.get(file.path);
 		return (
-			(issue?.category === "too_large" || issue?.category === "unsupported") &&
+			(issue?.category === "too_large" ||
+				issue?.category === "unsupported" ||
+				issue?.category === "name_taken") &&
 			issue.parkedAt === this.parkStamp(file)
 		);
+	}
+
+	/** The server refused `file`'s create or rename because another note holds
+	 *  its name. Retrying the same name can only be refused again, so it is
+	 *  parked: kept on disk untouched, shown in the Sync Center, and not sent
+	 *  again while unchanged (`isParked`). Clearing events: an edit (the park
+	 *  stamp moves), a rename or delete of the file (`clearNameTaken`), the
+	 *  user dismissing the issue, a vault switch, and the server freeing the
+	 *  name: every full sync re-sends each parked note once
+	 *  (`recheckNameTaken`), bounded by the number of parked notes. Told once
+	 *  per park: a re-send refused again (an edit, the full-sync re-check)
+	 *  only refreshes the stamp. */
+	private parkNameTaken(file: TFile): void {
+		const stamp = this.parkStamp(file);
+		const standing = this.issues.get(file.path);
+		if (standing?.category === "name_taken" && standing.parkedAt === stamp) return;
+		const told = standing?.category === "name_taken";
+		const message = t("A note with that name already exists: {path}", { path: file.path });
+		const now = Date.now();
+		this.issues.record({
+			path: file.path,
+			kind: "note",
+			category: "name_taken",
+			message,
+			parkedAt: stamp,
+			firstFailedAt: now,
+			lastFailedAt: now,
+			attempts: 1,
+		});
+		if (!told) new Notice(message, 10_000);
+		rlog().warn("push", `Name taken on server, parked until changed: ${noteRef(file.path)}`);
+		this.logEntry("push", file.path, "error", "name_taken", "name_taken");
+		this.emitStatus();
+	}
+
+	/** Server-side clearing event for `parkNameTaken`: re-send every parked
+	 *  note once. The server is the only one who knows whether the name is
+	 *  still held; a success clears the issue, a refusal re-parks it silently. */
+	private async recheckNameTaken(): Promise<void> {
+		for (const issue of this.issues.all()) {
+			if (issue.category !== "name_taken") continue;
+			const file = this.app.vault.getFileByPath(normalizePath(issue.path));
+			if (!file) {
+				this.issues.clear(issue.path);
+				continue;
+			}
+			this.issues.unpark(issue.path);
+			await this.pushFile(file);
+		}
+	}
+
+	/** The file left `path` (renamed or deleted): its name-taken park is moot. */
+	private clearNameTaken(path: string): void {
+		if (this.issues.get(path)?.category === "name_taken") this.issues.clear(path);
+	}
+
+	/** The CRDT op queue dropped a terminally refused op (main.ts `onTerminal`).
+	 *  A queued create refused for its name parks the file the same way a
+	 *  direct push does, but only when that file is still this note: the path
+	 *  may hold another note by now. */
+	onCrdtOpTerminal(op: CrdtOp, reason: string): void {
+		if (op.kind !== "create" || !isNameTaken(reason)) return;
+		const path = (op.payload as { path?: string } | undefined)?.path;
+		if (!path) return;
+		const mapped = this.noteIdMap?.get(normalizePath(path));
+		if (mapped && mapped !== op.docId) return;
+		const file = this.app.vault.getFileByPath(normalizePath(path));
+		if (file) this.parkNameTaken(file);
 	}
 
 	/** What a permanent attachment refusal depends on: the file's content
@@ -14458,6 +14552,7 @@ export class SyncEngine {
 		const pulled = pull.files;
 		const push = await this.pushModifiedFiles(prePullSync);
 		const pushed = push.pushed;
+		await this.recheckNameTaken();
 
 		// Close out the progress UI (mirrors pushAll's terminal "complete").
 		// The recap's "N synced" reads `current`, so it must count BOTH legs —

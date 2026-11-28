@@ -15,7 +15,10 @@ const zh: Dict = {
 	"50 GB attachments": "50 GB 附件",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"已打开浏览器窗口。登录并输入此代码以链接您的仓库。",
+	"A folder named {path} already exists on the server, so this folder's notes were moved into it":
+		"服务器上已存在名为 {path} 的文件夹，因此该文件夹中的笔记已移动到其中",
 	"A frontmatter key could not be parsed as YAML.": "无法将 YAML 格式解析为键值对。",
+	"A note with that name already exists: {path}": "已存在同名笔记：{path}",
 	"A temporary server problem — retrying automatically.": "临时服务器问题，正在自动重试。",
 	"AI / MCP setup guide": "AI / MCP 设置指南",
 	"AI searches": "AI 搜索",
@@ -36,6 +39,8 @@ const zh: Dict = {
 	"Already in sync. Nothing is deleted.": "已同步。不会删除任何内容。",
 	"Already up to date. Nothing needed syncing.": "已是最新的。无需同步任何内容。",
 	"An unexpected error — retrying automatically.": "出现意外错误，正在自动重试。",
+	"Another note on the server already has this name. Rename this note and it will sync.":
+		"服务器上已有同名笔记。重命名此笔记即可同步。",
 	"Attachment not accepted": "附件未被接受",
 	"Attachment storage full": "附件存储已满",
 	"Attachment storage is full — upgrade for more.": "存储空间已满，升级以获得更多空间。",
@@ -284,6 +289,7 @@ const zh: Dict = {
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
 		"启用诊断时，默认的最低严重级别。更高的级别发送的行数更少。默认：警告和错误。",
 	"Missing on the server": "服务器未找到",
+	"Name already taken": "名称已存在",
 	"Needs attention ({count})": "需要注意 ({count})",
 	"Network unavailable": "网络不可用",
 	"New here? Watch the setup video": "首次使用？观看设置视频",

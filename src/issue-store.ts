@@ -44,6 +44,12 @@ export class IssueStore {
 		return this.issues.get(path);
 	}
 
+	/** Keep the issue but let the file be sent again (a re-check). */
+	unpark(path: string): void {
+		const issue = this.issues.get(path);
+		if (issue) this.issues.set(path, { ...issue, parkedAt: undefined });
+	}
+
 	/** Remove the issue for `path` (called on successful push/pull). */
 	clear(path: string): void {
 		this.issues.delete(path);
@@ -262,6 +268,7 @@ export function issueDisposition(
 		case "unsupported":
 		case "auth":
 		case "conflict":
+		case "name_taken":
 		case "frontmatter":
 		case "blob_missing":
 			return "actionable";
@@ -335,6 +342,13 @@ export function remediation(
 			return {
 				title: t("Unresolved conflict"),
 				hint: t("Open the file to resolve the conflict, then sync again."),
+			};
+		case "name_taken":
+			return {
+				title: t("Name already taken"),
+				hint: t(
+					"Another note on the server already has this name. Rename this note and it will sync.",
+				),
 			};
 		case "frontmatter":
 			return {

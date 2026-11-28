@@ -20,8 +20,11 @@ const pl: Dict = {
 	"50 GB attachments": "50 GB załączników",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"Otwarto okno przeglądarki. Zaloguj się i wprowadź ten kod, aby połączyć swój sejf.",
+	"A folder named {path} already exists on the server, so this folder's notes were moved into it":
+		"Folder o nazwie {path} już istnieje na serwerze, więc notatki z tego folderu zostały do niego przeniesione",
 	"A frontmatter key could not be parsed as YAML.":
 		"Nie można zinterpretować klucza nagłówka jako YAML.",
+	"A note with that name already exists: {path}": "Notatka o tej nazwie już istnieje: {path}",
 	"A temporary server problem — retrying automatically.":
 		"Tymczasowy problem z serwerem — ponawiam próbę automatycznie.",
 	"AI / MCP setup guide": "Przewodnik konfiguracji AI / MCP",
@@ -46,6 +49,8 @@ const pl: Dict = {
 	"Already up to date. Nothing needed syncing.": "Już aktualne. Nie wymaga synchronizacji.",
 	"An unexpected error — retrying automatically.":
 		"Nieoczekiwany błąd — ponawiam próbę automatycznie.",
+	"Another note on the server already has this name. Rename this note and it will sync.":
+		"Inna notatka na serwerze ma już tę nazwę. Zmień nazwę tej notatki, a zostanie zsynchronizowana.",
 	"Attachment not accepted": "Załącznik nie został zaakceptowany",
 	"Attachment storage full": "Brak miejsca na przechowywanie załączników",
 	"Attachment storage is full — upgrade for more.":
@@ -384,6 +389,7 @@ const pl: Dict = {
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
 		"Minimalny poziom ważności, który jest przesyłany, gdy włączone są diagnostyki. Wyższe poziomy przesyłają mniej wierszy. Domyślnie: ostrzeżenia i błędy.",
 	"Missing on the server": "Brakujące na serwerze",
+	"Name already taken": "Ta nazwa jest już zajęta",
 	"Needs attention ({count})": "Wymaga uwagi ({count})",
 	"Network unavailable": "Brak połączenia z siecią",
 	"New here? Watch the setup video": "Jesteś tu pierwszy raz? Obejrzyj film instruktażowy",

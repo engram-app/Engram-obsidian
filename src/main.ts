@@ -896,13 +896,16 @@ export default class EngramSyncPlugin extends Plugin {
 						"crdt",
 						`crdt_create post-ack step failed for ${docId} ${noteRef(path)}: ${errMsg(error, path)}`,
 					),
-				onTerminal: (op, reason) =>
+				onTerminal: (op, reason) => {
 					// A create/delete that retrying cannot fix. Surface it (error log) so
 					// it never silently vanishes; the queue then drops it (no infinite retry).
 					rlog().error(
 						"crdt",
 						`crdt_${op.kind} terminally failed (${reason}), dropping op for ${op.docId}`,
-					),
+					);
+					// A name conflict also parks the file and tells the user.
+					this.syncEngine.onCrdtOpTerminal(op, reason);
+				},
 				onLimit: (op, reason) => {
 					// The user toast lives on notesCapGate's onTrip (once per closure,
 					// not once per op).

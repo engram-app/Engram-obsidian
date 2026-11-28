@@ -19,8 +19,11 @@ const ptBR: Dict = {
 	"50 GB attachments": "50 GB de anexos",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"Uma janela do navegador foi aberta. Faça login e insira este código para vincular seu cofre.",
+	"A folder named {path} already exists on the server, so this folder's notes were moved into it":
+		"Uma pasta com o nome {path} já existe no servidor, então as notas desta pasta foram movidas para ela",
 	"A frontmatter key could not be parsed as YAML.":
 		"Uma chave do frontmatter não pôde ser interpretada como YAML.",
+	"A note with that name already exists: {path}": "Uma nota com esse nome já existe: {path}",
 	"A temporary server problem — retrying automatically.":
 		"Um problema temporário no servidor — tentando novamente automaticamente.",
 	"AI / MCP setup guide": "Guia de configuração de IA / MCP",
@@ -45,6 +48,8 @@ const ptBR: Dict = {
 		"Já está atualizado. Não há nada para sincronizar.",
 	"An unexpected error — retrying automatically.":
 		"Um erro inesperado — tentando novamente automaticamente.",
+	"Another note on the server already has this name. Rename this note and it will sync.":
+		"Outra nota no servidor já possui esse nome. Renomeie esta nota e ela será sincronizada.",
 	"Attachment not accepted": "Anexo não aceito",
 	"Attachment storage full": "Armazenamento de anexos cheio",
 	"Attachment storage is full — upgrade for more.":
@@ -369,6 +374,7 @@ const ptBR: Dict = {
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
 		"Nível mínimo de severidade quando os diagnósticos estão ativados. Níveis mais altos enviam menos linhas. Padrão: Avisos e erros.",
 	"Missing on the server": "Ausente no servidor",
+	"Name already taken": "Nome já utilizado",
 	"Needs attention ({count})": "Precisa de atenção ({count})",
 	"Network unavailable": "Rede indisponível",
 	"New here? Watch the setup video": "Novo por aqui? Assista ao vídeo de configuração",

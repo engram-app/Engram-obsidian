@@ -516,6 +516,8 @@ export type SyncIssueCategory =
 	| "server"
 	| "network"
 	| "conflict"
+	/** The server already holds this name (another note or folder). */
+	| "name_taken"
 	| "needs_pro"
 	| "quota"
 	| "frontmatter"
@@ -536,8 +538,9 @@ export interface SyncIssue {
 	sizeBytes?: number;
 	/** Billing/upgrade URL — set when category is "needs_pro". */
 	upgradeUrl?: string;
-	/** The attachment's size, mtime and plan when it was refused for good
-	 *  (`parkStamp`). While they match, the file is not re-pushed. */
+	/** The file's size, mtime and plan when it was refused for good
+	 *  (`parkStamp`): an attachment the server will not take, or a note whose
+	 *  name is taken. While they match, the file is not re-pushed. */
 	parkedAt?: string;
 	/** Structured parse failure detail — set when category is "frontmatter". */
 	parseReason?: ParseReason;

@@ -45,6 +45,7 @@ const CATEGORY_ORDER: SyncIssueCategory[] = [
 	"unsupported",
 	"auth",
 	"conflict",
+	"name_taken",
 	"blob_missing",
 	"server",
 	"network",

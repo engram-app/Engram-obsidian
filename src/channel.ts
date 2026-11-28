@@ -1086,6 +1086,12 @@ export class NoteChannel {
 		// One field per connect, not per request.
 		const version = pluginVersion();
 		if (version) params.set("plugin_version", version);
+		// Capabilities the server may rely on. `name_taken`: this client parks a
+		// create refused as `id_conflict` and tells the user
+		// (docs/context/name-taken-terminal.md), so the server may send it for
+		// a taken name. Released plugins (1.36-1.40) drop that reply silently,
+		// so without this flag the server keeps the old, retried reply.
+		params.set("caps", "name_taken");
 		const url = `${wsBase}/socket/websocket?${params.toString()}`;
 
 		const openedAt = Date.now();

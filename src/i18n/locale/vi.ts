@@ -15,8 +15,11 @@ const vi: Dict = {
 	"50 GB attachments": "50 GB tệp đính kèm",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
 		"Một cửa sổ trình duyệt đã mở. Đăng nhập và nhập mã này để liên kết kho lưu trữ của bạn.",
+	"A folder named {path} already exists on the server, so this folder's notes were moved into it":
+		"Một thư mục có tên {path} đã tồn tại trên máy chủ, vì vậy các ghi chú của thư mục này đã được chuyển vào đó",
 	"A frontmatter key could not be parsed as YAML.":
 		"Không thể phân tích một khóa frontmatter thành YAML.",
+	"A note with that name already exists: {path}": "Một ghi chú với tên đó đã tồn tại: {path}",
 	"A temporary server problem — retrying automatically.":
 		"Một vấn đề tạm thời với máy chủ — đang thử lại tự động.",
 	"AI / MCP setup guide": "Hướng dẫn thiết lập AI / MCP",
@@ -40,6 +43,8 @@ const vi: Dict = {
 	"Already up to date. Nothing needed syncing.": "Đã cập nhật. Không cần đồng bộ hóa gì.",
 	"An unexpected error — retrying automatically.":
 		"Một lỗi không mong muốn — đang thử lại tự động.",
+	"Another note on the server already has this name. Rename this note and it will sync.":
+		"Một ghi chú khác trên máy chủ đã có tên này. Đổi tên ghi chú này để đồng bộ hóa.",
 	"Attachment not accepted": "Tệp đính kèm không được chấp nhận",
 	"Attachment storage full": "Bộ nhớ tệp đính kèm đã đầy",
 	"Attachment storage is full — upgrade for more.":
@@ -307,6 +312,7 @@ const vi: Dict = {
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
 		"Mức độ nghiêm trọng tối thiểu khi chế độ gỡ lỗi được bật. Các mức độ cao hơn sẽ gửi ít dòng hơn. Mặc định: Cảnh báo và lỗi.",
 	"Missing on the server": "Mất trên máy chủ",
+	"Name already taken": "Tên đã được sử dụng",
 	"Needs attention ({count})": "Cần xử lý ({count})",
 	"Network unavailable": "Mạng không khả dụng",
 	"New here? Watch the setup video": "Bạn mới bắt đầu? Xem video hướng dẫn",
