@@ -179,7 +179,9 @@ test("create race: a create racing a discovery write routes as server-known and 
 	// 2. The user's own create lands first, then the pull's create loses the race.
 	disk.set(PATH, PLUGIN_BODY);
 	folderGate.resolve();
-	while (!pullFallbackWritten) await new Promise((r) => setTimeout(r, 1));
+	for (let i = 0; !pullFallbackWritten && i < 2000; i++)
+		await new Promise((r) => setTimeout(r, 1));
+	expect(pullFallbackWritten).toBe(true);
 	expect(disk.get(PATH)).toBe(API_BODY);
 
 	// 3. The user's push (push_file_now: pushFile(file, true)), routed while the
