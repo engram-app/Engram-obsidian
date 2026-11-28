@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.41.0](https://github.com/engram-app/Engram-obsidian/compare/1.40.0...1.41.0) (2026-11-28)
+
+
+### Features
+
+* **log:** client log diet with a hard send budget ([#676](https://github.com/engram-app/Engram-obsidian/issues/676)) ([0208efc](https://github.com/engram-app/Engram-obsidian/commit/0208efc385b978731eb7444d1598976979c32bc2))
+* **sync:** recheck refusals, account_paused kind, start-up self-pause ([#714](https://github.com/engram-app/Engram-obsidian/issues/714)) ([7362b0f](https://github.com/engram-app/Engram-obsidian/commit/7362b0fde9e1d1485b2fbe080700e9b0565e7e53))
+
+
+### Bug Fixes
+
+* never re-upload a just-downloaded attachment ([#729](https://github.com/engram-app/Engram-obsidian/issues/729)) ([2256f8c](https://github.com/engram-app/Engram-obsidian/commit/2256f8c8c52bf6e08f40574c3bc657872be7d8fd))
+* **sync:** announce skips id-map repoint when id already maps to an existing file ([#707](https://github.com/engram-app/Engram-obsidian/issues/707)) ([9eb8c3a](https://github.com/engram-app/Engram-obsidian/commit/9eb8c3aa49e05f1bd327287bcc69ce06be6ff036))
+* **sync:** fence old folder path at op ack seq ([#725](https://github.com/engram-app/Engram-obsidian/issues/725)) ([0ad93d5](https://github.com/engram-app/Engram-obsidian/commit/0ad93d50f6d6e2a3839f8f3fef9b9e5654d50ba5))
+* **sync:** follow a move of a folder never learned ([#715](https://github.com/engram-app/Engram-obsidian/issues/715)) ([74d3efa](https://github.com/engram-app/Engram-obsidian/commit/74d3efa072f55fde3e1e4b02651faa9825139df4))
+* **sync:** leave old folder on batch rename ([#726](https://github.com/engram-app/Engram-obsidian/issues/726)) ([46b569d](https://github.com/engram-app/Engram-obsidian/commit/46b569d0f2eab5824084bcb343a4ff1ea11e0332))
+* **sync:** restart re-stages op claims; exact folder resolver ([#717](https://github.com/engram-app/Engram-obsidian/issues/717)) ([556a1eb](https://github.com/engram-app/Engram-obsidian/commit/556a1ebfd624381a880b64a96c6d9f4beb715ed8))
+* **sync:** send file mtime and ctime on CRDT create and edit ([#719](https://github.com/engram-app/Engram-obsidian/issues/719)) ([e12a1b0](https://github.com/engram-app/Engram-obsidian/commit/e12a1b012b315bbd1b75fcc4fef9e04320286ce7))
+* **sync:** server-known while discovery writes a note ([#730](https://github.com/engram-app/Engram-obsidian/issues/730)) ([b3d88bc](https://github.com/engram-app/Engram-obsidian/commit/b3d88bc6ca6f1336816a2a10b3eb0062fccc1f83))
+* **sync:** typed first-sync preview failures, no empty folders ([#704](https://github.com/engram-app/Engram-obsidian/issues/704)) ([0867238](https://github.com/engram-app/Engram-obsidian/commit/08672384773a07748b01a58927c2b6e91ae4f6c5))
+
 ## [1.40.0](https://github.com/engram-app/Engram-obsidian/compare/1.39.3...1.40.0) (2026-11-19)
 
 
