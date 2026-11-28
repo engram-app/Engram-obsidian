@@ -215,6 +215,8 @@ const zh: Dict = {
 	"Engram: update required": "Engram: 需要更新",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram：您的登录已过期，请在 Engram 设置中重新连接。",
+	"Engram: {count} attachments skipped. See Sync Center for why.":
+		"Engram: 跳过 {count} 个附件。原因请查看同步中心。",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
 		"Engram：{count}个文件同步失败{detail} — 打开同步中心",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
@@ -581,6 +583,7 @@ const zh: Dict = {
 	"waiting for a plugin update": "等待插件更新",
 	"waiting to retry": "正在等待重试",
 	"{count} attachments": "{count} 个附件",
+	"{count} attachments skipped. See Sync Center.": "跳过 {count} 个附件。详情请看同步中心。",
 	"{count} attachments will be skipped: this server only accepts text files.":
 		"{count} 附件将被跳过：此服务器仅接受文本文件。",
 	"{count} attempts": "{count} 次尝试",
